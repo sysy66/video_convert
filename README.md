@@ -14,7 +14,14 @@
 在 Debian VM 中，利用 Intel QSV 转码的标准命令格式如下：
 
 ```bash
-ffmpeg -hwaccel qsv -c:v h264_qsv -i input.mkv -c:v h264_qsv -b:v 5M -c:a aac output.mp4
+/usr/lib/jellyfin-ffmpeg/ffmpeg -y \
+  -hwaccel qsv -hwaccel_output_format qsv \
+  -i /mnt/test1/test.mp4 \
+  -map 0:0 -c:v hevc_qsv -profile:v main10 -global_quality 20 -preset slow \
+  -look_ahead 1 -look_ahead_depth 70 -g 240 -bf 8 -extbrc 1 -adaptive_i 1 -adaptive_b 1 \
+  -vf vpp_qsv=format=p010le -fps_mode cfr \
+  -map 0:1 -c:a aac -b:a 256k \
+  /mnt/test1/workDir2-pIYvspsjJ/1780993859653/test.mkv
 ```
 (注：实际脚本中我们会做输入格式自适应，确保顺畅触发硬解码和硬编码。)
 
