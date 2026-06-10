@@ -9,7 +9,7 @@ log = __import__("logging").getLogger(__name__)
 class History:
     def __init__(self, path):
         self._path = path
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._data = self._load()
 
     def _load(self):

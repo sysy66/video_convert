@@ -99,8 +99,7 @@ def _cleanup_temp(temp_dir):
 def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
     count = 0
     for root, dirs, _ in os.walk(watch_dir):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(temp_prefix)]
-        for d in dirs:
+        for d in list(dirs):
             if d.startswith(temp_prefix):
                 full_path = Path(root) / d
                 try:
@@ -109,6 +108,7 @@ def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
                     log.info("Removed stale temp dir: %s", full_path)
                 except OSError as e:
                     log.warning("Failed to remove stale temp dir %s: %s", full_path, e)
+        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(temp_prefix)]
     if count:
         log.info("Cleaned up %d stale temp director%s", count, "ies" if count != 1 else "y")
 
