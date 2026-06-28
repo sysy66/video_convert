@@ -10,7 +10,7 @@ MAX_WORKERS = 2
 
 TEMP_PREFIX = ".work_"
 
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wmv", ".flv", ".webm"}
+VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wmv", ".flv", ".webm", ".rmvb"}
 
 SKIP_CODECS = {"hevc", "av1"}
 
