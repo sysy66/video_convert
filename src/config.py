@@ -42,7 +42,12 @@ HISTORY_FILE = "data/history.json"
 # VMAF 质量评估 / VMAF quality assessment
 VMAF_FFMPEG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bin", "ffmpeg")
 VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "vmaf_v0.6.1.json")
-VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH) and os.path.exists(VMAF_MODEL_PATH)
+# VMAF 启用条件：需要支持 libvmaf 的 ffmpeg 二进制。模型文件可选（不提供则使用内置模型）
+# Requires ffmpeg with libvmaf. Model file is optional (built-in model used if missing).
+VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH)
+# VMAF 取样时长（秒），取前 N 秒进行对比。太长耗时，太短可能不具代表性。
+# VMAF sample duration (seconds). Longer is more accurate but slower.
+VMAF_SAMPLE_DURATION = 60
 
 _log_dir = os.path.dirname(LOG_FILE)
 if _log_dir:

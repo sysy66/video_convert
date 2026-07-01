@@ -13,7 +13,7 @@ log = __import__("logging").getLogger(__name__)
 _VMAF_RE = re.compile(r"VMAF score:\s*([\d.]+)")
 
 
-def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, model_path=None):
+def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None):
     """
     计算转码前后视频的 VMAF 分数。
     Compute VMAF score between original and transcoded video.
@@ -22,26 +22,27 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, model_path=No
     :param transcoded_path: 转码后视频路径 (Path to the transcoded video)
     :param ffmpeg_path: 支持 libvmaf 的 ffmpeg 路径，默认从 config 获取
                         (Path to ffmpeg with libvmaf, defaults to config)
-    :param model_path: VMAF 模型 JSON 路径，默认从 config 获取
-                      (Path to VMAF model JSON, defaults to config)
     :return: VMAF 分数 (0-100)，失败或不可用时返回 None
              (VMAF score 0-100, or None on failure/unavailability)
     """
     ffmpeg_path = ffmpeg_path or config.VMAF_FFMPEG_PATH
-    model_path = model_path or config.VMAF_MODEL_PATH
 
-    if not ffmpeg_path or not model_path:
+    if not ffmpeg_path:
         log.warning("VMAF not configured, skipping quality check")
         return None
 
+    vmaf_opts = ["log_fmt=json"]
+
     cmd = [
         ffmpeg_path,
+        "-t", str(config.VMAF_SAMPLE_DURATION),
         "-i", str(original_path),
+        "-t", str(config.VMAF_SAMPLE_DURATION),
         "-i", str(transcoded_path),
         "-filter_complex",
         "[0:v]setpts=PTS-STARTPTS,format=yuv420p[ref];"
         "[1:v]setpts=PTS-STARTPTS,scale=iw:ih:flags=bicubic,format=yuv420p[dist];"
-        "[dist][ref]libvmaf=model_path={}:log_fmt=json".format(model_path),
+        "[dist][ref]libvmaf={}".format(":".join(vmaf_opts)),
         "-an", "-f", "null", "-",
     ]
 
