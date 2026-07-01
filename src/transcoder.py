@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src import config
 from src.probe import get_streams_info
-from src.quality import compute_vmaf
+from src.quality import compute_vmaf, should_accept
 
 log = __import__("logging").getLogger(__name__)
 
@@ -373,24 +373,34 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
             else:
                 log.info("VMAF: %s - unavailable", final_path.name)
 
-        filepath.unlink()
-
         output_size = final_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
-        history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score)
         elapsed = _time.monotonic() - start_time
-        if vmaf_score is not None:
-            log.info(
-                "DONE: %s (%s, %s, %.1f%%, VMAF %.2f, %.1fs)",
-                final_path.name, _format_size(output_size),
-                "smaller" if ratio < 1 else "larger",
-                ratio * 100, vmaf_score, elapsed,
-            )
+
+        if should_accept(vmaf_score, ratio):
+            filepath.unlink()
+            history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
+            if vmaf_score is not None:
+                log.info(
+                    "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, %.1fs)",
+                    final_path.name, _format_size(output_size),
+                    "smaller" if ratio < 1 else "larger",
+                    ratio * 100, vmaf_score, elapsed,
+                )
+            else:
+                log.info(
+                    "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
+                    final_path.name, _format_size(output_size),
+                    "smaller" if ratio < 1 else "larger",
+                    ratio * 100, elapsed,
+                )
         else:
+            final_path.unlink()
+            history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
             log.info(
-                "DONE: %s (%s, %s, %.1f%% of original, %.1fs)",
-                final_path.name, _format_size(output_size),
-                "smaller" if ratio < 1 else "larger",
+                "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+                filepath.name,
+                "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
                 ratio * 100, elapsed,
             )
         return True

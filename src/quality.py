@@ -67,3 +67,30 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None):
     except Exception as e:
         log.warning("VMAF failed for %s: %s", transcoded_path.name, e)
         return None
+
+
+def should_accept(vmaf_score, ratio):
+    """
+    判断是否接受转码结果。规则：
+      - VMAF 不可用 → 拒绝
+      - VMAF ≥ 93 → 接受
+      - VMAF < 85 → 拒绝
+      - 85 ≤ VMAF < 93 → ratio ≤ 0.75（缩小 ≥25%）才接受
+
+    Decide whether to accept the transcoded result. Rules:
+      - VMAF unavailable → reject
+      - VMAF ≥ 93 → accept
+      - VMAF < 85 → reject
+      - 85 ≤ VMAF < 93 → accept only if ratio ≤ 0.75 (≥25% smaller)
+
+    :param vmaf_score: VMAF 分数 (VMAF score, 0-100 or None)
+    :param ratio: 输出/输入文件大小比 (output/input size ratio)
+    :return: True 接受 (accept), False 拒绝 (reject)
+    """
+    if vmaf_score is None:
+        return False
+    if vmaf_score >= 93:
+        return True
+    if vmaf_score < 85:
+        return False
+    return ratio <= 0.75
