@@ -1,6 +1,6 @@
 import json
 import time
-from history import History
+from src.history import History
 
 
 class TestHistoryLoad:

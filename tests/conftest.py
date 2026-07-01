@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from history import History
+from src.history import History
 
 
 def make_history(tmp_path):

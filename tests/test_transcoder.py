@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from transcoder import transcode, _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs
+from src.transcoder import transcode, _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs
 
 _VIDEO_AAC = {
     "streams": [
@@ -31,7 +31,7 @@ _VIDEO_ONLY = {
 
 class TestBuildFfmpegCmd:
     def test_uses_provided_paths(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/my/ffmpeg", "/ffprobe", "/in.mp4", "/out.mkv")
         assert cmd[0] == "/my/ffmpeg"
         assert "/in.mp4" in cmd
@@ -39,79 +39,79 @@ class TestBuildFfmpegCmd:
         assert duration == 120.0
 
     def test_contains_qsv_params(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "-hwaccel" in cmd
         assert "qsv" in cmd
         assert "-hwaccel_output_format" in cmd
 
     def test_uses_hevc_qsv_encoder(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         idx = cmd.index("-c:v") if "-c:v" in cmd else -1
         assert idx >= 0
         assert cmd[idx + 1] == "hevc_qsv"
 
     def test_ends_with_output_path(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert cmd[-1] == "/o.mkv"
 
     def test_maps_first_video_stream_by_type(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:v:0" in cmd
 
     def test_maps_all_audio_streams(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:a?" in cmd
 
     def test_audio_passthrough_when_all_aac(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         a_idx = cmd.index("-c:a")
         assert cmd[a_idx + 1] == "copy"
         assert "-b:a" not in cmd
 
     def test_reencodes_audio_when_not_aac(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AC3):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AC3):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         a_idx = cmd.index("-c:a")
         assert cmd[a_idx + 1] == "aac"
         assert "-b:a" in cmd
 
     def test_handles_no_audio_gracefully(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_ONLY):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_ONLY):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:a?" in cmd
         # Should still have audio codec params since no audio codecs to detect
         assert "-c:a" in cmd
 
     def test_includes_subtitle_mapping(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
-            with patch("config.KEEP_SUBTITLES", True):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
+            with patch("src.config.KEEP_SUBTITLES", True):
                 cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:s?" in cmd
         assert "-c:s" in cmd
         assert "copy" in cmd[cmd.index("-c:s") + 1]
 
     def test_omits_subtitle_mapping_when_disabled(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
-            with patch("config.KEEP_SUBTITLES", False):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
+            with patch("src.config.KEEP_SUBTITLES", False):
                 cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:s?" not in cmd
 
     def test_includes_attachment_mapping(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
-            with patch("config.KEEP_ATTACHMENTS", True):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
+            with patch("src.config.KEEP_ATTACHMENTS", True):
                 cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:t?" in cmd
         assert "-c:t" in cmd
 
     def test_omits_attachment_mapping_when_disabled(self):
-        with patch("transcoder.get_streams_info", return_value=_VIDEO_AAC):
-            with patch("config.KEEP_ATTACHMENTS", False):
+        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
+            with patch("src.config.KEEP_ATTACHMENTS", False):
                 cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:t?" not in cmd
 
@@ -130,8 +130,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -147,8 +147,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
             transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -163,8 +163,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", return_value=(1, "encode error")),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", return_value=(1, "encode error")),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -181,8 +181,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", return_value=(0, "")),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -196,8 +196,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
             transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -213,8 +213,8 @@ class TestTranscode:
         history = MagicMock()
 
         with (
-            patch("transcoder.get_streams_info", return_value=_VIDEO_AAC),
-            patch("transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -230,7 +230,7 @@ class TestTranscode:
 
         history = MagicMock()
 
-        with patch("transcoder.get_streams_info", return_value=None):
+        with patch("src.transcoder.get_streams_info", return_value=None):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
         assert result is False

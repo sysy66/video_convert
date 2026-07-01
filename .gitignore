@@ -8,5 +8,4 @@ __pycache__/
 
 .proxyai/
 
-app.log
-history.json
+data/

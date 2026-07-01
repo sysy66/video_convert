@@ -1,3 +1,4 @@
+import os
 import logging
 
 WATCH_DIR = "/mnt/test1"
@@ -30,8 +31,12 @@ AUDIO_PASSTHROUGH_CODECS = {"aac"}
 KEEP_SUBTITLES = True
 KEEP_ATTACHMENTS = True
 
-LOG_FILE = "app.log"
-HISTORY_FILE = "history.json"
+LOG_FILE = "data/app.log"
+HISTORY_FILE = "data/history.json"
+
+_log_dir = os.path.dirname(LOG_FILE)
+if _log_dir:
+    os.makedirs(_log_dir, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,

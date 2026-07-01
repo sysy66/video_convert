@@ -7,8 +7,8 @@ import subprocess
 import threading
 from pathlib import Path
 
-import config
-from probe import get_streams_info
+from src import config
+from src.probe import get_streams_info
 
 log = __import__("logging").getLogger(__name__)
 

@@ -3,10 +3,10 @@ import signal
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import config
-from history import History
-from scanner import scan
-from transcoder import transcode, cleanup_stale_temp_dirs
+from src import config
+from src.history import History
+from src.scanner import scan
+from src.transcoder import transcode, cleanup_stale_temp_dirs
 
 log = logging.getLogger(__name__)
 

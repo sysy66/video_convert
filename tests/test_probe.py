@@ -2,7 +2,7 @@ import json
 import subprocess
 from unittest.mock import patch
 
-from probe import get_video_codec, get_streams_info
+from src.probe import get_video_codec, get_streams_info
 
 
 class TestProbeSuccess:
