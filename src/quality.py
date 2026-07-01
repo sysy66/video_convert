@@ -31,13 +31,11 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None):
         log.warning("VMAF not configured, skipping quality check")
         return None
 
-    vmaf_opts = ["log_fmt=json"]
+    vmaf_opts = ["log_fmt=json", "n_subsample={}".format(config.VMAF_SUBSAMPLE)]
 
     cmd = [
         ffmpeg_path,
-        "-t", str(config.VMAF_SAMPLE_DURATION),
         "-i", str(original_path),
-        "-t", str(config.VMAF_SAMPLE_DURATION),
         "-i", str(transcoded_path),
         "-filter_complex",
         "[0:v]setpts=PTS-STARTPTS,format=yuv420p[ref];"
@@ -51,7 +49,7 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None):
             cmd,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=3600,
         )
         output = result.stderr + result.stdout
         m = _VMAF_RE.search(output)

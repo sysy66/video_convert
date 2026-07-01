@@ -45,9 +45,9 @@ VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data
 # VMAF 启用条件：需要支持 libvmaf 的 ffmpeg 二进制。模型文件可选（不提供则使用内置模型）
 # Requires ffmpeg with libvmaf. Model file is optional (built-in model used if missing).
 VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH)
-# VMAF 取样时长（秒），取前 N 秒进行对比。太长耗时，太短可能不具代表性。
-# VMAF sample duration (seconds). Longer is more accurate but slower.
-VMAF_SAMPLE_DURATION = 60
+# VMAF 采样间隔：每 N 帧只评估 1 帧。全片解码但大幅减少计算量。
+# VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
+VMAF_SUBSAMPLE = 30
 
 _log_dir = os.path.dirname(LOG_FILE)
 if _log_dir:
