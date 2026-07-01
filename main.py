@@ -58,7 +58,7 @@ def main_loop():
                 log.info("  QUEUED: %s", f)
 
             with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
-                fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH): f for f in files}
+                fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH): f for f in files}
                 for future in as_completed(fut_map):
                     f = fut_map[future]
                     try:

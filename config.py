@@ -14,6 +14,22 @@ VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wm
 
 SKIP_CODECS = {"hevc", "av1"}
 
+# 视频编码参数
+VIDEO_QUALITY = 20
+VIDEO_PRESET = "slow"
+VIDEO_GOP = 240
+VIDEO_B_FRAMES = 8
+VIDEO_LOOK_AHEAD_DEPTH = 70
+
+# 音频编码参数
+AUDIO_CODEC = "aac"
+AUDIO_BITRATE = "256k"
+AUDIO_PASSTHROUGH_CODECS = {"aac"}
+
+# 流处理策略
+KEEP_SUBTITLES = True
+KEEP_ATTACHMENTS = True
+
 LOG_FILE = "app.log"
 HISTORY_FILE = "history.json"
 
