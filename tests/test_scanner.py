@@ -80,6 +80,7 @@ class TestScannerHistoryFiltering:
         _make_tree(tmp_path, {"a.mp4": ""})
         history = MagicMock()
         history.is_done.return_value = False
+        history.is_started.return_value = False
         with patch("src.scanner.get_video_codec", return_value="h264"):
             result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
         assert len(result) == 1
@@ -88,6 +89,16 @@ class TestScannerHistoryFiltering:
         _make_tree(tmp_path, {"a.mp4": ""})
         history = MagicMock()
         history.is_done.return_value = True
+        history.is_started.return_value = False
+        with patch("src.scanner.get_video_codec", return_value="h264"):
+            result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
+        assert result == []
+
+    def test_full_scan_skips_started_entries(self, tmp_path):
+        _make_tree(tmp_path, {"a.mp4": ""})
+        history = MagicMock()
+        history.is_done.return_value = False
+        history.is_started.return_value = True
         with patch("src.scanner.get_video_codec", return_value="h264"):
             result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
         assert result == []

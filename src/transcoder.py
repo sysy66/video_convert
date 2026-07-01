@@ -1,16 +1,90 @@
 import os
 import re
 import shutil
+import signal
 import string
 import random
 import subprocess
 import threading
+import time as _time
 from pathlib import Path
 
 from src import config
 from src.probe import get_streams_info
 
 log = __import__("logging").getLogger(__name__)
+
+# 追踪所有活跃的 ffmpeg 子进程 PID，用于优雅关闭时清理孤儿进程
+# Track all active ffmpeg child process PIDs for orphan cleanup on graceful shutdown
+_active_ffmpeg_pids = set()
+_active_ffmpeg_lock = threading.Lock()
+
+
+def register_ffmpeg_pid(pid):
+    """注册 ffmpeg 子进程 PID。Register an ffmpeg child process PID."""
+    with _active_ffmpeg_lock:
+        _active_ffmpeg_pids.add(pid)
+
+
+def unregister_ffmpeg_pid(pid):
+    """注销 ffmpeg 子进程 PID。Unregister an ffmpeg child process PID."""
+    with _active_ffmpeg_lock:
+        _active_ffmpeg_pids.discard(pid)
+
+
+def kill_active_ffmpeg():
+    """
+    终止所有活跃的 ffmpeg 子进程（关闭流程调用，防止孤儿进程残留）。
+    Terminate all active ffmpeg child processes (called during shutdown to
+    prevent orphan processes from lingering).
+    """
+    with _active_ffmpeg_lock:
+        pids = list(_active_ffmpeg_pids)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            log.info("Sent SIGTERM to ffmpeg PID %d", pid)
+        except ProcessLookupError:
+            pass
+        except OSError as e:
+            log.warning("Failed to kill ffmpeg PID %d: %s", pid, e)
+
+
+def _unique_path(path):
+    """
+    如果路径已存在，自动追加编号（如 foo.mkv → foo.1.mkv），防止覆盖。
+    If the path already exists, append a counter (e.g. foo.mkv → foo.1.mkv)
+    to prevent overwriting.
+
+    :param path: 期望的路径 (Desired path)
+    :return: 不重复的路径 (A non-conflicting path)
+    """
+    if not path.exists():
+        return path
+    stem = path.stem
+    suffix = path.suffix
+    parent = path.parent
+    counter = 1
+    while True:
+        new = parent / f"{stem}.{counter}{suffix}"
+        if not new.exists():
+            return new
+        counter += 1
+
+
+def _format_size(bytes_val):
+    """
+    将字节数格式化为人类可读的字符串（KB/MB/GB）。
+    Format bytes into a human-readable string (KB/MB/GB).
+
+    :param bytes_val: 字节数 (Number of bytes)
+    :return: 格式化后的字符串，如 "1.23 GB" (Formatted string, e.g. "1.23 GB")
+    """
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(bytes_val) < 1024:
+            return f"{bytes_val:.1f} {unit}"
+        bytes_val /= 1024
+    return f"{bytes_val:.1f} TB"
 
 
 def _random_suffix(length=6):
@@ -152,11 +226,14 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
         bufsize=1,
     )
 
+    register_ffmpeg_pid(proc.pid)
+
     stderr_lines = []
     last_logged_pct = -1
     reader_done = threading.Event()
 
     def _reader():
+        nonlocal last_logged_pct
         for line in iter(proc.stderr.readline, ""):
             stderr_lines.append(line)
             if total_duration:
@@ -172,6 +249,7 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
     reader_thread.start()
 
     proc.wait()
+    unregister_ffmpeg_pid(proc.pid)
     reader_done.wait(timeout=10)
 
     return proc.returncode, "".join(stderr_lines)
@@ -203,6 +281,8 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
     suffix = _random_suffix()
     temp_dir_name = f"{config.TEMP_PREFIX}{suffix}"
     temp_dir = parent_dir / temp_dir_name
+    start_time = _time.monotonic()
+    input_size = filepath.stat().st_size
 
     output_filename = f"{stem}.mkv"
     output_path = temp_dir / output_filename
@@ -211,7 +291,10 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
 
     try:
         temp_dir.mkdir(parents=True, exist_ok=True)
-        log.info("TRANSCODE: %s -> %s (temp: %s)", filepath.name, output_filename, temp_dir_name)
+        log.info(
+            "TRANSCODE: %s (%s) -> %s (temp: %s)",
+            filepath.name, _format_size(input_size), output_filename, temp_dir_name,
+        )
 
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path)
         log.debug("FFmpeg command: %s", " ".join(str(c) for c in cmd))
@@ -220,33 +303,48 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
 
         if returncode != 0:
             error_msg = stderr.strip() or f"exit code {returncode}"
-            log.error("TRANSCODE FAILED: %s - %s", filepath.name, error_msg)
+            elapsed = _time.monotonic() - start_time
+            log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
             history.mark_failed(str(filepath), error_msg)
             _cleanup_temp(temp_dir)
             return False
 
         if not output_path.exists():
-            log.error("TRANSCODE FAILED: output not found for %s", filepath.name)
+            elapsed = _time.monotonic() - start_time
+            log.error("TRANSCODE FAILED: output not found for %s (%.1fs)", filepath.name, elapsed)
             history.mark_failed(str(filepath), "Output file not found after transcode")
             _cleanup_temp(temp_dir)
             return False
 
         log.info("REPLACE: %s -> %s", filepath.name, output_filename)
         filepath.unlink()
-        shutil.move(str(output_path), str(parent_dir / output_filename))
+        final_path = _unique_path(parent_dir / output_filename)
+        if final_path.name != output_filename:
+            log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
+        shutil.move(str(output_path), str(final_path))
         _cleanup_temp(temp_dir)
 
-        history.mark_done(str(filepath), str(parent_dir / output_filename))
-        log.info("DONE: %s", output_filename)
+        output_size = final_path.stat().st_size
+        ratio = output_size / input_size if input_size else 0
+        history.mark_done(str(filepath), str(final_path))
+        elapsed = _time.monotonic() - start_time
+        log.info(
+            "DONE: %s (%s, %s, %.1f%% of original, %.1fs)",
+            final_path.name, _format_size(output_size),
+            "smaller" if ratio < 1 else "larger",
+            ratio * 100, elapsed,
+        )
         return True
 
     except subprocess.TimeoutExpired:
-        log.error("TRANSCODE TIMEOUT: %s", filepath.name)
+        elapsed = _time.monotonic() - start_time
+        log.error("TRANSCODE TIMEOUT: %s (%.1fs)", filepath.name, elapsed)
         history.mark_failed(str(filepath), "Transcode timed out")
         _cleanup_temp(temp_dir)
         return False
     except Exception as e:
-        log.error("TRANSCODE ERROR: %s - %s", filepath.name, e)
+        elapsed = _time.monotonic() - start_time
+        log.error("TRANSCODE ERROR: %s (%.1fs) - %s", filepath.name, elapsed, e)
         history.mark_failed(str(filepath), str(e))
         _cleanup_temp(temp_dir)
         return False
@@ -260,18 +358,68 @@ def _cleanup_temp(temp_dir):
     :param temp_dir: 临时目录的 Path 对象 (Path object of the temp directory)
     """
     try:
-        if temp_dir.exists():
-            shutil.rmtree(temp_dir)
+        if temp_dir.exists() and not _rmtree_robust(temp_dir):
+            log.warning("Failed to clean up temp dir %s completely", temp_dir)
+        else:
             log.debug("Cleaned up temp dir: %s", temp_dir)
     except OSError as e:
         log.warning("Failed to clean up temp dir %s: %s", temp_dir, e)
 
 
+def _rmtree_robust(path):
+    """
+    尝试多种方式删除目录树，比 shutil.rmtree 更健壮（处理 NFS .nfs* 残留等情形）。
+    Try multiple strategies to remove a directory tree, more robust than plain
+    shutil.rmtree (handles NFS .nfs* leftovers, etc.).
+
+    :param path: 要删除的目录路径 (Path to the directory to remove)
+    :return: True 表示最终删除成功 (True if eventually successful)
+    """
+    # 策略 1：shutil.rmtree
+    # Strategy 1: shutil.rmtree
+    try:
+        shutil.rmtree(path)
+        return True
+    except OSError:
+        pass
+
+    # 策略 2：先逐个删除目录内文件，再重试 rmtree
+    # Strategy 2: remove individual files first, then retry rmtree
+    try:
+        for entry in os.listdir(path):
+            entry_path = path / entry
+            try:
+                if entry_path.is_file() or entry_path.is_symlink():
+                    entry_path.unlink()
+                elif entry_path.is_dir():
+                    shutil.rmtree(entry_path, ignore_errors=True)
+            except OSError:
+                pass
+        shutil.rmtree(path)
+        return True
+    except OSError:
+        pass
+
+    # 策略 3：subprocess rm -rf（处理某些内核级锁的情况）
+    # Strategy 3: subprocess rm -rf (handles some kernel-level locks)
+    try:
+        subprocess.run(["rm", "-rf", str(path)], capture_output=True, check=True)
+        return True
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    return False
+
+
 def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
     """
     递归扫描监视目录，清理所有残留的临时工作目录（通常因程序崩溃未清理）。
+    使用 _rmtree_robust 增强对 NFS .nfs 残留、权限问题等容错。
+
     Recursively scan the watch directory and remove any stale temporary
     working directories (usually left behind by crashes).
+    Uses _rmtree_robust for better tolerance of NFS .nfs* leftovers,
+    permission issues, etc.
 
     :param watch_dir: 监视目录的根路径 (Root path of the watched directory)
     :param temp_prefix: 临时目录的前缀 (Prefix of temporary directory names)
@@ -281,12 +429,16 @@ def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
         for d in list(dirs):
             if d.startswith(temp_prefix):
                 full_path = Path(root) / d
-                try:
-                    shutil.rmtree(full_path)
+                if _rmtree_robust(full_path):
                     count += 1
                     log.info("Removed stale temp dir: %s", full_path)
-                except OSError as e:
-                    log.warning("Failed to remove stale temp dir %s: %s", full_path, e)
+                else:
+                    log.warning(
+                        "Failed to remove stale temp dir %s — "
+                        "directory may contain NFS .nfs* locked files. "
+                        "Try: lsof +D %s  to find the holding process.",
+                        full_path, full_path,
+                    )
         dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(temp_prefix)]
     if count:
         log.info("Cleaned up %d stale temp director%s", count, "ies" if count != 1 else "y")

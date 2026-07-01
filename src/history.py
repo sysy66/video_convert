@@ -36,6 +36,10 @@ class History:
         entry = self._data["files"].get(filepath)
         return entry is not None and entry.get("status") == "done"
 
+    def is_started(self, filepath):
+        entry = self._data["files"].get(filepath)
+        return entry is not None and entry.get("status") == "started"
+
     def exists(self, filepath):
         return filepath in self._data["files"]
 

@@ -59,8 +59,9 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
             # Filter processed files based on full_scan flag and history records
             if not is_full_scan and history.exists(str(full_path)):
                 continue
-            if is_full_scan and history.is_done(str(full_path)):
-                continue
+            if is_full_scan:
+                if history.is_done(str(full_path)) or history.is_started(str(full_path)):
+                    continue
 
             candidates.append(full_path)
 

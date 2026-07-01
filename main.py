@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src import config
 from src.history import History
 from src.scanner import scan
-from src.transcoder import transcode, cleanup_stale_temp_dirs
+from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg
 
 log = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
+    kill_active_ffmpeg()
 
 
 def main_loop():
