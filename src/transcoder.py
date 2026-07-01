@@ -326,9 +326,17 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         )
 
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path)
-        log.debug("FFmpeg command: %s", " ".join(str(c) for c in cmd))
+        log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
+
+        # 将完整 stderr 写入临时目录，失败时保留，成功时随目录一起清除
+        # Write full stderr to the temp directory; kept on failure, cleaned on success
+        stderr_log = temp_dir / ".ffmpeg.log"
+        try:
+            stderr_log.write_text(stderr, encoding="utf-8")
+        except OSError:
+            pass
 
         if returncode != 0:
             error_msg = stderr.strip() or f"exit code {returncode}"
@@ -351,6 +359,8 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         if final_path.name != output_filename:
             log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
         shutil.move(str(output_path), str(final_path))
+        # 成功 —— stderr_log 随 temp_dir 一起被 _cleanup_temp 删除
+        # Success — stderr_log is removed along with temp_dir by _cleanup_temp
         _cleanup_temp(temp_dir)
 
         output_size = final_path.stat().st_size
