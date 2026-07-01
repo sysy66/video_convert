@@ -64,14 +64,15 @@ class History:
             }
             self.save()
 
-    def mark_done(self, filepath, output_path):
+    def mark_done(self, filepath, output_path, vmaf_score=None):
         with self._lock:
             self._data["files"][filepath] = {
                 "status": "done",
                 "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
                 "completed_at": time.time(),
                 "output_path": output_path,
-                "error": None
+                "vmaf_score": vmaf_score,
+                "error": None,
             }
             self.save()
 

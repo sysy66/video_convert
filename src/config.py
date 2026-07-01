@@ -39,6 +39,11 @@ KEEP_ATTACHMENTS = True
 LOG_FILE = "data/app.log"
 HISTORY_FILE = "data/history.json"
 
+# VMAF 质量评估 / VMAF quality assessment
+VMAF_FFMPEG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bin", "ffmpeg")
+VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "vmaf_v0.6.1.json")
+VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH) and os.path.exists(VMAF_MODEL_PATH)
+
 _log_dir = os.path.dirname(LOG_FILE)
 if _log_dir:
     os.makedirs(_log_dir, exist_ok=True)

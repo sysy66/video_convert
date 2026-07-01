@@ -11,6 +11,7 @@ from pathlib import Path
 
 from src import config
 from src.probe import get_streams_info
+from src.quality import compute_vmaf
 
 log = __import__("logging").getLogger(__name__)
 
@@ -354,7 +355,6 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
             return False
 
         log.info("REPLACE: %s -> %s", filepath.name, output_filename)
-        filepath.unlink()
         final_path = _unique_path(parent_dir / output_filename)
         if final_path.name != output_filename:
             log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
@@ -363,16 +363,36 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         # Success — stderr_log is removed along with temp_dir by _cleanup_temp
         _cleanup_temp(temp_dir)
 
+        # 在删除原文件前计算 VMAF（原文件尚存在）
+        # Compute VMAF before deleting the original (while it still exists)
+        vmaf_score = None
+        if config.VMAF_ENABLED:
+            vmaf_score = compute_vmaf(filepath, final_path)
+            if vmaf_score is not None:
+                log.info("VMAF: %s - %.2f", final_path.name, vmaf_score)
+            else:
+                log.info("VMAF: %s - unavailable", final_path.name)
+
+        filepath.unlink()
+
         output_size = final_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
-        history.mark_done(str(filepath), str(final_path))
+        history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score)
         elapsed = _time.monotonic() - start_time
-        log.info(
-            "DONE: %s (%s, %s, %.1f%% of original, %.1fs)",
-            final_path.name, _format_size(output_size),
-            "smaller" if ratio < 1 else "larger",
-            ratio * 100, elapsed,
-        )
+        if vmaf_score is not None:
+            log.info(
+                "DONE: %s (%s, %s, %.1f%%, VMAF %.2f, %.1fs)",
+                final_path.name, _format_size(output_size),
+                "smaller" if ratio < 1 else "larger",
+                ratio * 100, vmaf_score, elapsed,
+            )
+        else:
+            log.info(
+                "DONE: %s (%s, %s, %.1f%% of original, %.1fs)",
+                final_path.name, _format_size(output_size),
+                "smaller" if ratio < 1 else "larger",
+                ratio * 100, elapsed,
+            )
         return True
 
     except subprocess.TimeoutExpired:
