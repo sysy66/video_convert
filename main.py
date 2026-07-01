@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from src import config
 from src.history import History
 from src.scanner import scan
-from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg
+from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg, mark_stale_started_as_failed
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +33,15 @@ def main_loop():
     log.info("Max workers: %d", config.MAX_WORKERS)
     log.info("=" * 50)
 
-    cleanup_stale_temp_dirs(config.WATCH_DIR, config.TEMP_PREFIX)
+    # 首次循环会执行一次清理和状态修复
+    # First iteration will perform cleanup and stale-state repair
 
     while _running:
+        # 每个扫描周期前清理残留临时目录，并修复因停电等导致 stuck 的 started 状态
+        # Clean up stale temp dirs and repair stuck "started" entries before each scan
+        cleanup_stale_temp_dirs(config.WATCH_DIR, config.TEMP_PREFIX)
+        mark_stale_started_as_failed(history)
+
         now = time.time()
         is_full_scan = (now - last_full_scan >= config.FULL_SCAN_INTERVAL)
 

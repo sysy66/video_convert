@@ -32,6 +32,16 @@ class History:
             except OSError as e:
                 log.error("Failed to save history: %s", e)
 
+    def iter_started(self):
+        """
+        遍历所有 status == "started" 的文件路径（用于启动时清理残留状态）。
+        Yield all filepaths whose status is "started" (for stale-state cleanup on startup).
+        """
+        with self._lock:
+            for fp, entry in list(self._data["files"].items()):
+                if entry.get("status") == "started":
+                    yield fp
+
     def is_done(self, filepath):
         entry = self._data["files"].get(filepath)
         return entry is not None and entry.get("status") == "done"
