@@ -2,6 +2,11 @@ import os
 import logging
 
 WATCH_DIR = "/mnt/test1"
+# 多库支持：名称 → 路径映射。至少保留一个入口。
+# Multi-library support: name → path mapping.
+LIBRARIES = {
+    "test1": "/mnt/test1",
+}
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 

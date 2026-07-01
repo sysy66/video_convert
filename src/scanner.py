@@ -7,6 +7,7 @@ filtering based on extensions, history records, and codec formats.
 import os
 from pathlib import Path
 
+from src.config import TEMP_PREFIX
 from src.probe import get_video_codec
 
 log = __import__("logging").getLogger(__name__)
@@ -91,8 +92,3 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
     # Sort results by modification time (chronological order)
     codec_filtered.sort(key=lambda p: p.stat().st_mtime)
     return codec_filtered
-
-
-# 定义临时文件的前缀
-# Define the prefix for temporary files
-from src.config import TEMP_PREFIX

@@ -28,44 +28,51 @@ def main_loop():
 
     log.info("=" * 50)
     log.info("Video Transcoder Started")
-    log.info("Watch directory: %s", config.WATCH_DIR)
+    log.info("Libraries: %s", ", ".join(f"{k}={v}" for k, v in config.LIBRARIES.items()))
     log.info("Scan interval: %ds | Full scan interval: %ds", config.SCAN_INTERVAL, config.FULL_SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
     log.info("=" * 50)
 
-    # 首次循环会执行一次清理和状态修复
-    # First iteration will perform cleanup and stale-state repair
-
     while _running:
-        # 每个扫描周期前清理残留临时目录，并修复因停电等导致 stuck 的 started 状态
-        # Clean up stale temp dirs and repair stuck "started" entries before each scan
-        cleanup_stale_temp_dirs(config.WATCH_DIR, config.TEMP_PREFIX)
+        # 每个扫描周期前清理所有库的残留临时目录
+        # Clean up stale temp dirs across all libraries before each scan
+        for lib_path in config.LIBRARIES.values():
+            cleanup_stale_temp_dirs(lib_path, config.TEMP_PREFIX)
+        # 修复因停电等导致 stuck 的 started 状态
+        # Repair stuck "started" entries left by power outages
         mark_stale_started_as_failed(history)
 
         now = time.time()
         is_full_scan = (now - last_full_scan >= config.FULL_SCAN_INTERVAL)
 
         if is_full_scan:
-            log.info("FULL SCAN: re-scanning entire library")
+            log.info("FULL SCAN: re-scanning all libraries")
         else:
             log.info("INCREMENTAL SCAN: checking for new files")
 
-        files = scan(
-            config.WATCH_DIR,
-            config.VIDEO_EXTENSIONS,
-            config.SKIP_CODECS,
-            config.FFPROBE_PATH,
-            history,
-            is_full_scan
-        )
+        all_files = []
+        for lib_name, lib_path in config.LIBRARIES.items():
+            lib_files = scan(
+                lib_path,
+                config.VIDEO_EXTENSIONS,
+                config.SKIP_CODECS,
+                config.FFPROBE_PATH,
+                history,
+                is_full_scan,
+            )
+            if lib_files:
+                log.info("  [%s] found %d file(s)", lib_name, len(lib_files))
+            all_files.extend(lib_files)
 
-        if files:
-            log.info("SCAN: found %d file(s) to process", len(files))
-            for f in files:
+        if all_files:
+            log.info("SCAN: %d file(s) to process across %d librar%s",
+                      len(all_files), len(config.LIBRARIES),
+                      "y" if len(config.LIBRARIES) == 1 else "ies")
+            for f in all_files:
                 log.info("  QUEUED: %s", f)
 
             with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
-                fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH): f for f in files}
+                fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH): f for f in all_files}
                 for future in as_completed(fut_map):
                     f = fut_map[future]
                     try:
