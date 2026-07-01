@@ -8,5 +8,6 @@ __pycache__/
 
 .proxyai/
 
-data/
+data/app.log
+data/history.json
 bin/
