@@ -83,7 +83,7 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
         # 如果编码在跳过列表中，则忽略
         # Skip if the codec is in the skip list
         if codec in skip_codecs:
-            log.info("SKIP (codec=%s): %s", codec, p)
+            log.debug("SKIP (codec=%s): %s", codec, p)
             continue
 
         codec_filtered.append(p)

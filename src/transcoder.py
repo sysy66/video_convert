@@ -327,7 +327,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         )
 
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path)
-        log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
+        log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
 
@@ -397,7 +397,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         else:
             final_path.unlink()
             history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
-            log.info(
+            log.warning(
                 "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
                 filepath.name,
                 "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
