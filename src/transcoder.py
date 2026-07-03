@@ -354,30 +354,22 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
             _cleanup_temp(temp_dir)
             return False
 
-        log.info("REPLACE: %s -> %s", filepath.name, output_filename)
-        final_path = _unique_path(parent_dir / output_filename)
-        if final_path.name != output_filename:
-            log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-        shutil.move(str(output_path), str(final_path))
-        # 成功 —— stderr_log 随 temp_dir 一起被 _cleanup_temp 删除
-        # Success — stderr_log is removed along with temp_dir by _cleanup_temp
-        _cleanup_temp(temp_dir)
-
-        # 在删除原文件前计算 VMAF（原文件尚存在）
-        # Compute VMAF before deleting the original (while it still exists)
+        # 在移动文件前计算 VMAF（输出仍在临时目录，原文件尚存在）
+        # Compute VMAF before moving the file (output still in temp, original still exists)
         vmaf_score = None
         if config.VMAF_ENABLED:
-            vmaf_score = compute_vmaf(filepath, final_path)
-            if vmaf_score is not None:
-                log.info("VMAF: %s - %.2f", final_path.name, vmaf_score)
-            else:
-                log.info("VMAF: %s - unavailable", final_path.name)
+            vmaf_score = compute_vmaf(filepath, output_path)
 
-        output_size = final_path.stat().st_size
+        output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
         elapsed = _time.monotonic() - start_time
 
         if should_accept(vmaf_score, ratio):
+            final_path = _unique_path(parent_dir / output_filename)
+            if final_path.name != output_filename:
+                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
+            shutil.move(str(output_path), str(final_path))
+            _cleanup_temp(temp_dir)
             filepath.unlink()
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
             if vmaf_score is not None:
@@ -395,7 +387,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
                     ratio * 100, elapsed,
                 )
         else:
-            final_path.unlink()
+            _cleanup_temp(temp_dir)
             history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
             log.warning(
                 "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",

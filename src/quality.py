@@ -55,7 +55,6 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None):
         m = _VMAF_RE.search(output)
         if m:
             score = float(m.group(1))
-            log.info("VMAF: %s - %.2f", transcoded_path.name, score)
             return score
         log.warning("VMAF score not found in ffmpeg output for %s", transcoded_path.name)
         return None
