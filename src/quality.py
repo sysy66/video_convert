@@ -70,15 +70,15 @@ def should_accept(vmaf_score, ratio):
     """
     判断是否接受转码结果。规则：
       - VMAF 不可用 → 拒绝
-      - VMAF ≥ 93 → 接受
-      - VMAF < 85 → 拒绝
-      - 85 ≤ VMAF < 93 → ratio ≤ 0.75（缩小 ≥25%）才接受
+      - VMAF ≥ VMAF_ACCEPT_HIGH → ratio ≤ ACCEPT_RATIO_MAX 才接受
+      - VMAF < VMAF_ACCEPT_LOW → 拒绝
+      - 中间区间 → ratio ≤ ACCEPT_RATIO_LOW（缩小 ≥25%）才接受
 
     Decide whether to accept the transcoded result. Rules:
       - VMAF unavailable → reject
-      - VMAF ≥ 93 → accept
-      - VMAF < 85 → reject
-      - 85 ≤ VMAF < 93 → accept only if ratio ≤ 0.75 (≥25% smaller)
+      - VMAF ≥ VMAF_ACCEPT_HIGH → accept only if ratio ≤ ACCEPT_RATIO_MAX
+      - VMAF < VMAF_ACCEPT_LOW → reject
+      - Middle range → accept only if ratio ≤ ACCEPT_RATIO_LOW (≥25% smaller)
 
     :param vmaf_score: VMAF 分数 (VMAF score, 0-100 or None)
     :param ratio: 输出/输入文件大小比 (output/input size ratio)
@@ -86,8 +86,8 @@ def should_accept(vmaf_score, ratio):
     """
     if vmaf_score is None:
         return False
-    if vmaf_score >= 93:
-        return True
-    if vmaf_score < 85:
+    if vmaf_score >= config.VMAF_ACCEPT_HIGH:
+        return ratio <= config.ACCEPT_RATIO_MAX
+    if vmaf_score < config.VMAF_ACCEPT_LOW:
         return False
-    return ratio <= 0.75
+    return ratio <= config.ACCEPT_RATIO_LOW

@@ -74,6 +74,12 @@ VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH)
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
 
+# 质量接受规则阈值 / Quality acceptance thresholds
+VMAF_ACCEPT_HIGH = 93     # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
+VMAF_ACCEPT_LOW = 85      # VMAF < 此值时直接拒绝
+ACCEPT_RATIO_MAX = 1.00   # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
+ACCEPT_RATIO_LOW = 0.75   # VMAF 在中间区间时允许的最大 ratio
+
 _log_dir = os.path.dirname(LOG_FILE)
 if _log_dir:
     os.makedirs(_log_dir, exist_ok=True)
