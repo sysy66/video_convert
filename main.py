@@ -28,16 +28,24 @@ def main_loop():
 
     log.info("=" * 50)
     log.info("Video Transcoder Started")
-    log.info("Libraries: %s", ", ".join(f"{k}={v}" for k, v in config.LIBRARIES.items()))
+    for name, info in config.LIBRARIES.items():
+        parts = [f"input={info['input']}"]
+        if info["output"] != info["input"]:
+            parts.append(f"output={info['output']}")
+        if info["cache"] != info["input"]:
+            parts.append(f"cache={info['cache']}")
+        log.info("  [%s] %s", name, ", ".join(parts))
     log.info("Scan interval: %ds | Full scan interval: %ds", config.SCAN_INTERVAL, config.FULL_SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
     log.info("=" * 50)
 
     while _running:
-        # 每个扫描周期前清理所有库的残留临时目录
-        # Clean up stale temp dirs across all libraries before each scan
-        for lib_path in config.LIBRARIES.values():
-            cleanup_stale_temp_dirs(lib_path, config.TEMP_PREFIX)
+        # 每个扫描周期前清理所有库的缓存/输入目录中的残留临时目录
+        # Clean up stale temp dirs in each library's cache (and input) directory
+        for lib_info in config.LIBRARIES.values():
+            cleanup_stale_temp_dirs(lib_info["cache"], config.TEMP_PREFIX)
+            if lib_info["cache"] != lib_info["input"]:
+                cleanup_stale_temp_dirs(lib_info["input"], config.TEMP_PREFIX)
         # 修复因停电等导致 stuck 的 started 状态
         # Repair stuck "started" entries left by power outages
         mark_stale_started_as_failed(history)
@@ -51,9 +59,9 @@ def main_loop():
             log.info("INCREMENTAL SCAN: checking for new files")
 
         all_files = []
-        for lib_name, lib_path in config.LIBRARIES.items():
+        for lib_name, lib_info in config.LIBRARIES.items():
             lib_files = scan(
-                lib_path,
+                lib_info["input"],
                 config.VIDEO_EXTENSIONS,
                 config.SKIP_CODECS,
                 config.FFPROBE_PATH,
@@ -62,20 +70,24 @@ def main_loop():
             )
             if lib_files:
                 log.info("  [%s] found %d file(s)", lib_name, len(lib_files))
-            all_files.extend(lib_files)
+            for f in lib_files:
+                all_files.append((f, lib_info.get("output"), lib_info.get("cache")))
 
         if all_files:
             BATCH_TIMEOUT = 14400  # 4小时超时防止 NFS hang 导致永久假死 / 4h timeout to prevent permanent freeze on NFS hang
             log.info("SCAN: %d file(s) to process across %d librar%s",
                       len(all_files), len(config.LIBRARIES),
                       "y" if len(config.LIBRARIES) == 1 else "ies")
-            for f in all_files:
+            for f, _, _ in all_files:
                 log.info("  QUEUED: %s", f)
 
             batch_start = time.time()
             executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
             try:
-                fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH): f for f in all_files}
+                fut_map = {}
+                for f, output_dir, cache_dir in all_files:
+                    future = executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH, output_dir, cache_dir)
+                    fut_map[future] = f
                 pending = set(fut_map.keys())
                 while pending and _running:
                     done, pending = wait(pending, timeout=60)

@@ -2,11 +2,36 @@ import os
 import logging
 
 WATCH_DIR = "/mnt/test1"
-# 多库支持：名称 → 路径映射。至少保留一个入口。
-# Multi-library support: name → path mapping.
-LIBRARIES = {
+# 多库支持：名称 → {input, output, cache} 映射。
+# Multi-library support: name → {input, output, cache} mapping.
+#
+# 简单字符串格式（input=output=cache 相同）：
+#   LIBRARIES = {"test1": "/mnt/test1"}
+# 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
+#   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
+_LIBRARIES_RAW = {
     "test1": "/mnt/test1",
 }
+
+
+def _normalize_libraries(raw):
+    normalized = {}
+    for name, value in raw.items():
+        if isinstance(value, str):
+            normalized[name] = {"input": value, "output": value, "cache": value}
+        elif isinstance(value, dict):
+            inp = value["input"]
+            normalized[name] = {
+                "input": inp,
+                "output": value.get("output", inp),
+                "cache": value.get("cache", inp),
+            }
+        else:
+            raise TypeError(f"Invalid LIBRARIES entry for {name}: {value!r}")
+    return normalized
+
+
+LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 

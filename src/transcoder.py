@@ -315,7 +315,7 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
     return proc.returncode, "".join(stderr_lines)
 
 
-def transcode(filepath, history, ffmpeg_path, ffprobe_path):
+def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cache_dir=None):
     """
     对单个视频文件执行转码的完整流程：
       1. 创建临时工作目录
@@ -333,14 +333,19 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
     :param history: 历史记录对象 (History tracking object)
     :param ffmpeg_path: FFmpeg 可执行文件路径 (Path to the FFmpeg executable)
     :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :param output_dir: 输出目录，不设置则同源目录 (Output directory, defaults to source parent)
+    :param cache_dir: 缓存（临时）目录，不设置则同源目录 (Cache/temp directory, defaults to source parent)
     :return: True 表示成功 (True on success), False 表示失败 (False on failure)
     """
     filepath = Path(filepath)
-    parent_dir = filepath.parent
     stem = filepath.stem
     suffix = _random_suffix()
-    temp_dir_name = f"{config.TEMP_PREFIX}{suffix}"
-    temp_dir = parent_dir / temp_dir_name
+    if cache_dir:
+        cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        temp_dir = cache_dir / f"{config.TEMP_PREFIX}{suffix}"
+    else:
+        temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
     start_time = _time.monotonic()
     input_size = filepath.stat().st_size
 
@@ -408,7 +413,12 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
         elapsed = _time.monotonic() - start_time
 
         if should_accept(vmaf_score, ratio):
-            final_path = _unique_path(parent_dir / output_filename)
+            if output_dir:
+                output_dir = Path(output_dir)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                final_path = _unique_path(output_dir / output_filename)
+            else:
+                final_path = _unique_path(filepath.parent / output_filename)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
             shutil.move(str(output_path), str(final_path))
