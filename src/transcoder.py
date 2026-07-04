@@ -127,7 +127,7 @@ def _random_suffix(length=6):
     return "".join(random.choices(chars, k=length))
 
 
-def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path):
+def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fallback=False):
     """
     构建 FFmpeg 命令行参数列表。
     通过 ffprobe 探测输入文件流信息，动态选择视频/音频/字幕/附件流，
@@ -142,6 +142,9 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path):
     :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
     :param input_path: 输入视频文件路径 (Path to the input video file)
     :param output_path: 输出视频文件路径 (Path to the output video file)
+    :param sw_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
+                        Whether to use software-scale fallback (bypass vpp_qsv filter
+                        compatibility issues during hwaccel reconfiguration)
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
              (cmd_list, total_duration) where duration is in seconds, or None if unknown
     :raises RuntimeError: 当流探测失败时抛出 (Raised when stream probing fails)
@@ -166,7 +169,18 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path):
         # 基础参数 / Basic parameters
         ffmpeg_path, "-y",
         # Intel QSV 硬件加速 / Intel QSV hardware acceleration
-        "-hwaccel", "qsv", "-hwaccel_output_format", "qsv",
+        "-hwaccel", "qsv",
+    ]
+
+    if sw_fallback:
+        # 软件缩放回退：帧保持在系统内存，用软件 format 转换后 hwupload 上传
+        # Software-scale fallback: keep frames in system memory, convert with
+        # software format filter, then upload to QSV via hwupload
+        pass  # no -hwaccel_output_format, defaults yield system-memory frames
+    else:
+        cmd.extend(["-hwaccel_output_format", "qsv"])
+
+    cmd.extend([
         # 输入文件 / Input file
         "-i", str(input_path),
         # --- 视频流 / Video stream ---
@@ -180,13 +194,17 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path):
         "-g", str(config.VIDEO_GOP), "-bf", str(config.VIDEO_B_FRAMES),
         "-extbrc", "1",
         "-adaptive_i", "1", "-adaptive_b", "1",
-        # 像素格式转换 + 恒定帧率 / Pixel format conversion + constant frame rate
-        "-vf", "vpp_qsv=format=p010le", "-fps_mode", "cfr",
+        "-fps_mode", "cfr",
         # --- 音频流 / Audio stream ---
         # 选择所有音频流（'?' 表示无音频时不报错）
         # Select all audio streams ('?' means don't fail if none exist)
         "-map", "0:a?",
-    ]
+    ])
+
+    if sw_fallback:
+        cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
+    else:
+        cmd.extend(["-vf", "vpp_qsv=format=p010le"])
 
     # 音频编码策略：若源全部为 AAC 等直通格式则直接复制，否则重新编码
     # Audio encoding strategy: copy if all source streams are passthrough codecs, else re-encode
@@ -326,7 +344,11 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
             filepath.name, _format_size(input_size), output_filename, temp_dir_name,
         )
 
-        cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path)
+        sw_fallback = history.get_fallback(str(filepath))
+        if sw_fallback:
+            log.info("SW FALLBACK: %s - using software scale (previous attempt failed with vpp_qsv)", filepath.name)
+
+        cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback)
         log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
@@ -343,7 +365,14 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path):
             error_msg = stderr.strip() or f"exit code {returncode}"
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
-            history.mark_failed(str(filepath), error_msg)
+            if not sw_fallback and "Error reinitializing filters" in stderr:
+                log.warning(
+                    "QSV filter reinit failed for %s — marking for sw_fallback retry on next FULL SCAN",
+                    filepath.name,
+                )
+                history.mark_failed(str(filepath), error_msg, sw_fallback=True)
+            else:
+                history.mark_failed(str(filepath), error_msg)
             _cleanup_temp(temp_dir)
             return False
 
