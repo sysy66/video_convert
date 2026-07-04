@@ -360,7 +360,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         temp_dir.mkdir(parents=True, exist_ok=True)
         log.info(
             "TRANSCODE: %s (%s) -> %s (temp: %s)",
-            filepath.name, _format_size(input_size), output_filename, temp_dir_name,
+            filepath.name, _format_size(input_size), output_filename, temp_dir.name,
         )
 
         sw_fallback = history.get_fallback(str(filepath))
