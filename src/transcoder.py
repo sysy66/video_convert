@@ -41,11 +41,16 @@ def unregister_ffmpeg_pid(pid):
 def kill_active_ffmpeg():
     """
     终止所有活跃的 ffmpeg 子进程（关闭流程调用，防止孤儿进程残留）。
+    先 SIGTERM，2 秒后仍未退出则 SIGKILL，应对 NFS D-state 阻塞场景。
+
     Terminate all active ffmpeg child processes (called during shutdown to
-    prevent orphan processes from lingering).
+    prevent orphan processes from lingering). Sends SIGTERM first, then
+    SIGKILL after 2 seconds for stuck (D-state) processes.
     """
     with _active_ffmpeg_lock:
         pids = list(_active_ffmpeg_pids)
+    if not pids:
+        return
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
@@ -54,6 +59,15 @@ def kill_active_ffmpeg():
             pass
         except OSError as e:
             log.warning("Failed to kill ffmpeg PID %d: %s", pid, e)
+    _time.sleep(2)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            log.info("Sent SIGKILL to ffmpeg PID %d", pid)
+        except ProcessLookupError:
+            pass
+        except OSError as e:
+            log.warning("Failed to SIGKILL ffmpeg PID %d: %s", pid, e)
 
 
 def mark_stale_started_as_failed(history):

@@ -1,7 +1,7 @@
 import logging
 import signal
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, wait
 
 from src import config
 from src.history import History
@@ -65,24 +65,46 @@ def main_loop():
             all_files.extend(lib_files)
 
         if all_files:
+            BATCH_TIMEOUT = 14400  # 4小时超时防止 NFS hang 导致永久假死 / 4h timeout to prevent permanent freeze on NFS hang
             log.info("SCAN: %d file(s) to process across %d librar%s",
                       len(all_files), len(config.LIBRARIES),
                       "y" if len(config.LIBRARIES) == 1 else "ies")
             for f in all_files:
                 log.info("  QUEUED: %s", f)
 
-            with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
+            batch_start = time.time()
+            executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
+            try:
                 fut_map = {executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH): f for f in all_files}
-                for future in as_completed(fut_map):
-                    f = fut_map[future]
-                    try:
-                        ok = future.result()
-                        if ok:
-                            log.info("RESULT: %s -> done", f.name)
-                        else:
-                            log.warning("RESULT: %s -> failed", f.name)
-                    except Exception as e:
-                        log.error("RESULT: %s -> unhandled exception: %s", f.name, e)
+                pending = set(fut_map.keys())
+                while pending and _running:
+                    done, pending = wait(pending, timeout=60)
+                    for future in done:
+                        f = fut_map[future]
+                        try:
+                            ok = future.result()
+                            if ok:
+                                log.info("RESULT: %s -> done", f.name)
+                            else:
+                                log.warning("RESULT: %s -> failed", f.name)
+                        except Exception as e:
+                            log.error("RESULT: %s -> unhandled exception: %s", f.name, e)
+                    if not pending:
+                        break
+                    if time.time() - batch_start >= BATCH_TIMEOUT:
+                        log.warning(
+                            "BATCH TIMEOUT: 4 hours elapsed, killing %d remaining task(s)",
+                            len(pending),
+                        )
+                        kill_active_ffmpeg()
+                        for future in pending:
+                            f = fut_map[future]
+                            future.cancel()
+                            history.mark_failed(str(f), "Timeout: batch exceeded 4h")
+                            log.warning("TIMEOUT: %s -> killed after 4h", f.name)
+                        break
+            finally:
+                executor.shutdown(wait=False)
         else:
             log.info("SCAN: no files to process")
 
