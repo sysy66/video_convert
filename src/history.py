@@ -42,6 +42,10 @@ class History:
                 if entry.get("status") == "started":
                     yield fp
 
+    def is_rejected(self, filepath):
+        entry = self._data["files"].get(filepath)
+        return entry is not None and entry.get("status") == "rejected"
+
     def is_success(self, filepath):
         entry = self._data["files"].get(filepath)
         return entry is not None and entry.get("status") == "success"
@@ -70,15 +74,24 @@ class History:
 
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
         with self._lock:
-            self._data["files"][filepath] = {
-                "status": "success",
-                "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
-                "completed_at": time.time(),
-                "output_path": output_path,
-                "vmaf_score": vmaf_score,
-                "rejected": rejected,
-                "error": None,
-            }
+            if rejected:
+                self._data["files"][filepath] = {
+                    "status": "rejected",
+                    "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
+                    "completed_at": time.time(),
+                    "output_path": None,
+                    "vmaf_score": vmaf_score,
+                    "error": None,
+                }
+            else:
+                self._data["files"][filepath] = {
+                    "status": "success",
+                    "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
+                    "completed_at": time.time(),
+                    "output_path": output_path,
+                    "vmaf_score": vmaf_score,
+                    "error": None,
+                }
             self.save()
 
     def mark_skipped(self, filepath, codec):

@@ -51,6 +51,14 @@ class TestHistoryMarks:
         assert h._data["files"]["/v.mp4"]["output_path"] == "/v.mkv"
         assert h._data["files"]["/v.mp4"]["completed_at"] is not None
 
+    def test_mark_done_rejected(self, tmp_path):
+        h = History(str(tmp_path / "h.json"))
+        h.mark_done("/v.mp4", None, vmaf_score=65.0, rejected=True)
+        assert h.is_rejected("/v.mp4")
+        assert h.is_success("/v.mp4") is False
+        assert h._data["files"]["/v.mp4"]["vmaf_score"] == 65.0
+        assert h._data["files"]["/v.mp4"]["completed_at"] is not None
+
     def test_mark_failed(self, tmp_path):
         h = History(str(tmp_path / "h.json"))
         h.mark_failed("/v.mp4", "some error")

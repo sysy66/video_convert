@@ -112,6 +112,18 @@ class TestScannerHistoryFiltering:
             result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
         assert result == []
 
+    def test_full_scan_skips_rejected_entries(self, tmp_path):
+        _make_tree(tmp_path, {"a.mp4": ""})
+        history = MagicMock()
+        history.is_success.return_value = False
+        history.is_started.return_value = False
+        history.is_not_required.return_value = False
+        history.is_rejected.return_value = True
+        history.get_cached_codec.return_value = None
+        with patch("src.scanner.get_video_codec", return_value="h264"):
+            result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
+        assert result == []
+
 
 class TestScannerCodecFilter:
     def test_skips_hevc(self, tmp_path):
