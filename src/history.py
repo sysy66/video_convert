@@ -42,9 +42,13 @@ class History:
                 if entry.get("status") == "started":
                     yield fp
 
-    def is_done(self, filepath):
+    def is_success(self, filepath):
         entry = self._data["files"].get(filepath)
-        return entry is not None and entry.get("status") == "done"
+        return entry is not None and entry.get("status") == "success"
+
+    def is_not_required(self, filepath):
+        entry = self._data["files"].get(filepath)
+        return entry is not None and entry.get("status") == "not required"
 
     def is_started(self, filepath):
         entry = self._data["files"].get(filepath)
@@ -67,7 +71,7 @@ class History:
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
         with self._lock:
             self._data["files"][filepath] = {
-                "status": "done",
+                "status": "success",
                 "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
                 "completed_at": time.time(),
                 "output_path": output_path,
@@ -76,6 +80,21 @@ class History:
                 "error": None,
             }
             self.save()
+
+    def mark_skipped(self, filepath, codec):
+        with self._lock:
+            self._data["files"][filepath] = {
+                "status": "not required",
+                "codec": codec,
+                "skipped_at": time.time(),
+            }
+            self.save()
+
+    def get_cached_codec(self, filepath):
+        entry = self._data["files"].get(filepath)
+        if entry and entry.get("codec"):
+            return entry["codec"]
+        return None
 
     def mark_failed(self, filepath, error):
         with self._lock:

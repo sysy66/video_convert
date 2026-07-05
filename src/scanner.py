@@ -61,7 +61,7 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
             if not is_full_scan and history.exists(str(full_path)):
                 continue
             if is_full_scan:
-                if history.is_done(str(full_path)) or history.is_started(str(full_path)):
+                if history.is_success(str(full_path)) or history.is_started(str(full_path)) or history.is_not_required(str(full_path)):
                     continue
 
             candidates.append(full_path)
@@ -71,18 +71,15 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
 
     codec_filtered = []
     for p in candidates:
-        # 获取视频编码
-        # Get the video codec
-        codec = get_video_codec(p, ffprobe_path)
+        codec = history.get_cached_codec(str(p))
         if codec is None:
-            # 如果探测失败，记录警告并跳过
-            # Log warning and skip if probing fails
-            log.warning("SKIP (probe failed): %s", p)
-            continue
+            codec = get_video_codec(p, ffprobe_path)
+            if codec is None:
+                log.warning("SKIP (probe failed): %s", p)
+                continue
 
-        # 如果编码在跳过列表中，则忽略
-        # Skip if the codec is in the skip list
         if codec in skip_codecs:
+            history.mark_skipped(str(p), codec)
             log.debug("SKIP (codec=%s): %s", codec, p)
             continue
 
