@@ -132,6 +132,7 @@ class TestTranscode:
         with (
             patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -215,6 +216,7 @@ class TestTranscode:
         with (
             patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 

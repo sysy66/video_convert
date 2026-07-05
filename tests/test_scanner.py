@@ -85,6 +85,7 @@ class TestScannerHistoryFiltering:
         history.is_success.return_value = False
         history.is_started.return_value = False
         history.is_not_required.return_value = False
+        history.is_rejected.return_value = False
         history.get_cached_codec.return_value = None
         with patch("src.scanner.get_video_codec", return_value="h264"):
             result = scan(str(tmp_path), {".mp4"}, set(), "/ffprobe", history, True)
