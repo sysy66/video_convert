@@ -190,7 +190,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         # 软件缩放回退：帧保持在系统内存，用软件 format 转换后 hwupload 上传
         # Software-scale fallback: keep frames in system memory, convert with
         # software format filter, then upload to QSV via hwupload
-        pass  # no -hwaccel_output_format, defaults yield system-memory frames
+        cmd.extend(["-hwaccel_output_format", "none"])
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
