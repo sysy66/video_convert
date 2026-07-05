@@ -363,20 +363,27 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             filepath.name, _format_size(input_size), output_filename, temp_dir.name,
         )
 
-        sw_fallback = history.get_fallback(str(filepath))
-        if sw_fallback:
-            log.info("SW FALLBACK: %s - using software scale (previous attempt failed with vpp_qsv)", filepath.name)
-
-        cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback)
+        cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False)
         log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
 
-        # 将完整 stderr 写入临时目录，失败时保留，成功时随目录一起清除
-        # Write full stderr to the temp directory; kept on failure, cleaned on success
-        stderr_log = temp_dir / ".ffmpeg.log"
+        # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
         try:
-            stderr_log.write_text(stderr, encoding="utf-8")
+            (temp_dir / ".ffmpeg.log.qsv").write_text(stderr, encoding="utf-8")
+        except OSError:
+            pass
+
+        # QSV filter reinit 失败则立即用软件缩放重试
+        if returncode != 0 and "Error reinitializing filters" in stderr:
+            log.warning("QSV SW FALLBACK: %s - re-trying with software scale", filepath.name)
+            cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
+            log.debug("FFMPEG CMD (sw fallback): %s ...", filepath.name)
+            returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
+
+        # 最终 stderr 写入 .ffmpeg.log
+        try:
+            (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
         except OSError:
             pass
 
@@ -384,14 +391,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             error_msg = stderr.strip() or f"exit code {returncode}"
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
-            if not sw_fallback and "Error reinitializing filters" in stderr:
-                log.warning(
-                    "QSV filter reinit failed for %s — marking for sw_fallback retry on next FULL SCAN",
-                    filepath.name,
-                )
-                history.mark_failed(str(filepath), error_msg, sw_fallback=True)
-            else:
-                history.mark_failed(str(filepath), error_msg)
+            history.mark_failed(str(filepath), error_msg)
             _cleanup_temp(temp_dir)
             return False
 

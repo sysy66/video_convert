@@ -77,7 +77,7 @@ class History:
             }
             self.save()
 
-    def mark_failed(self, filepath, error, sw_fallback=False):
+    def mark_failed(self, filepath, error):
         with self._lock:
             entry = {
                 "status": "failed",
@@ -86,15 +86,8 @@ class History:
                 "output_path": None,
                 "error": str(error),
             }
-            if sw_fallback:
-                entry["sw_fallback"] = True
             self._data["files"][filepath] = entry
             self.save()
-
-    def get_fallback(self, filepath):
-        with self._lock:
-            entry = self._data["files"].get(filepath)
-            return bool(entry and entry.get("sw_fallback"))
 
     def get_last_full_scan(self):
         return self._data.get("last_full_scan", 0)
