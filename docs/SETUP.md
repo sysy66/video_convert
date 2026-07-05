@@ -71,8 +71,9 @@ Edit `src/config.py`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LIBRARIES` | `{"test1": "/mnt/test1"}` | Watch directories (name → path) |
-| `SCAN_INTERVAL` | 3600 | Incremental scan interval (seconds) |
-| `FULL_SCAN_INTERVAL` | 604800 | Full scan interval (seconds) |
+| `SCAN_INTERVAL` | 1200 | Scan interval (seconds) |
+| `FAILED_RETRY_BASE` | 3600 | Failed retry base delay (seconds) |
+| `FAILED_RETRY_MAX` | 604800 | Failed retry max delay (seconds) |
 | `MAX_WORKERS` | 2 | Parallel transcode jobs |
 | `VIDEO_QUALITY` | 20 | QSV quality (lower = better) |
 

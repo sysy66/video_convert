@@ -14,13 +14,13 @@ class History:
 
     def _load(self):
         if not os.path.exists(self._path):
-            return {"files": {}, "last_full_scan": 0}
+            return {"files": {}}
         try:
             with open(self._path, "r") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError) as e:
             log.error("Failed to load history: %s", e)
-            return {"files": {}, "last_full_scan": 0}
+            return {"files": {}}
 
     def save(self):
         with self._lock:
@@ -31,6 +31,9 @@ class History:
                 os.replace(tmp, self._path)
             except OSError as e:
                 log.error("Failed to save history: %s", e)
+
+    def get_entry(self, filepath):
+        return self._data["files"].get(filepath)
 
     def iter_started(self):
         """
@@ -74,24 +77,14 @@ class History:
 
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
         with self._lock:
-            if rejected:
-                self._data["files"][filepath] = {
-                    "status": "rejected",
-                    "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
-                    "completed_at": time.time(),
-                    "output_path": None,
-                    "vmaf_score": vmaf_score,
-                    "error": None,
-                }
-            else:
-                self._data["files"][filepath] = {
-                    "status": "success",
-                    "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
-                    "completed_at": time.time(),
-                    "output_path": output_path,
-                    "vmaf_score": vmaf_score,
-                    "error": None,
-                }
+            self._data["files"][filepath] = {
+                "status": "rejected" if rejected else "success",
+                "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
+                "completed_at": time.time(),
+                "output_path": None if rejected else output_path,
+                "vmaf_score": vmaf_score,
+                "error": None,
+            }
             self.save()
 
     def mark_skipped(self, filepath, codec):
@@ -111,20 +104,14 @@ class History:
 
     def mark_failed(self, filepath, error):
         with self._lock:
-            entry = {
+            old = self._data["files"].get(filepath, {})
+            retry_count = old.get("retry_count", -1) + 1
+            self._data["files"][filepath] = {
                 "status": "failed",
-                "started_at": self._data["files"].get(filepath, {}).get("started_at", time.time()),
+                "started_at": old.get("started_at", time.time()),
                 "completed_at": time.time(),
                 "output_path": None,
                 "error": str(error),
+                "retry_count": retry_count,
             }
-            self._data["files"][filepath] = entry
-            self.save()
-
-    def get_last_full_scan(self):
-        return self._data.get("last_full_scan", 0)
-
-    def set_last_full_scan(self, timestamp):
-        with self._lock:
-            self._data["last_full_scan"] = timestamp
             self.save()

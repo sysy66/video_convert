@@ -24,7 +24,6 @@ def main_loop():
     global _running
 
     history = History(config.HISTORY_FILE)
-    last_full_scan = history.get_last_full_scan()
 
     log.info("=" * 50)
     log.info("Video Transcoder Started")
@@ -35,28 +34,18 @@ def main_loop():
         if info["cache"] != info["input"]:
             parts.append(f"cache={info['cache']}")
         log.info("  [%s] %s", name, ", ".join(parts))
-    log.info("Scan interval: %ds | Full scan interval: %ds", config.SCAN_INTERVAL, config.FULL_SCAN_INTERVAL)
+    log.info("Scan interval: %ds", config.SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
     log.info("=" * 50)
 
     while _running:
-        # 每个扫描周期前清理所有库的缓存/输入目录中的残留临时目录
-        # Clean up stale temp dirs in each library's cache (and input) directory
         for lib_info in config.LIBRARIES.values():
             cleanup_stale_temp_dirs(lib_info["cache"], config.TEMP_PREFIX)
             if lib_info["cache"] != lib_info["input"]:
                 cleanup_stale_temp_dirs(lib_info["input"], config.TEMP_PREFIX)
-        # 修复因停电等导致 stuck 的 started 状态
-        # Repair stuck "started" entries left by power outages
         mark_stale_started_as_failed(history)
 
-        now = time.time()
-        is_full_scan = (now - last_full_scan >= config.FULL_SCAN_INTERVAL)
-
-        if is_full_scan:
-            log.info("FULL SCAN: re-scanning all libraries")
-        else:
-            log.info("INCREMENTAL SCAN: checking for new files")
+        log.info("SCAN: checking all libraries")
 
         all_files = []
         for lib_name, lib_info in config.LIBRARIES.items():
@@ -66,7 +55,6 @@ def main_loop():
                 config.SKIP_CODECS,
                 config.FFPROBE_PATH,
                 history,
-                is_full_scan,
             )
             if lib_files:
                 log.info("  [%s] found %d file(s)", lib_name, len(lib_files))
@@ -74,7 +62,7 @@ def main_loop():
                 all_files.append((f, lib_info.get("output"), lib_info.get("cache")))
 
         if all_files:
-            BATCH_TIMEOUT = 14400  # 4小时超时防止 NFS hang 导致永久假死 / 4h timeout to prevent permanent freeze on NFS hang
+            BATCH_TIMEOUT = 14400
             log.info("SCAN: %d file(s) to process across %d librar%s",
                       len(all_files), len(config.LIBRARIES),
                       "y" if len(config.LIBRARIES) == 1 else "ies")
@@ -119,10 +107,6 @@ def main_loop():
                 executor.shutdown(wait=False)
         else:
             log.info("SCAN: no files to process")
-
-        if is_full_scan:
-            last_full_scan = time.time()
-            history.set_last_full_scan(last_full_scan)
 
         if not _running:
             break

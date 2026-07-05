@@ -35,8 +35,9 @@ LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 
-SCAN_INTERVAL = 3600
-FULL_SCAN_INTERVAL = 604800
+SCAN_INTERVAL = 1200
+FAILED_RETRY_BASE = 3600
+FAILED_RETRY_MAX = 604800
 MAX_WORKERS = 2
 
 TEMP_PREFIX = ".work_"

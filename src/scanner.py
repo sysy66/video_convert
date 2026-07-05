@@ -5,15 +5,16 @@ filtering based on extensions, history records, and codec formats.
 """
 
 import os
+import time
 from pathlib import Path
 
-from src.config import TEMP_PREFIX
+from src import config
 from src.probe import get_video_codec
 
 log = __import__("logging").getLogger(__name__)
 
 
-def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_full_scan):
+def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history):
     """
     扫描指定的目录以查找可处理的视频文件。
     Scan the specified directory to find processable video files.
@@ -23,46 +24,39 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history, is_ful
     :param skip_codecs: 需要跳过的编码格式列表 (List of codecs to skip)
     :param ffprobe_path: ffprobe 可执行文件的路径 (Path to ffprobe executable)
     :param history: 记录已处理文件的历史对象 (History object for processed files)
-    :param is_full_scan: 是否进行全量扫描 (Whether to perform a full scan)
     :return: 过滤后的视频文件路径列表 (List of filtered video file paths)
     """
     watch_dir = Path(watch_dir)
-    # 检查目录是否存在，如果不存在则记录错误并返回空列表
-    # Check if directory exists; log error and return empty list if not
     if not watch_dir.exists():
         log.error("Watch directory does not exist: %s", watch_dir)
         return []
 
     candidates = []
 
-    # 递归遍历目录
-    # Recursively traverse the directory
     for root, dirs, files in os.walk(watch_dir):
-        # 过滤掉以 "." 开头的隐藏目录和临时目录
-        # Filter out hidden directories and temporary directories
-        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(TEMP_PREFIX)]
+        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(config.TEMP_PREFIX)]
 
         for f in files:
-            # 跳过隐藏文件
-            # Skip hidden files
             if f.startswith("."):
                 continue
 
-            # 根据后缀名过滤文件
-            # Filter files based on extensions
             ext = Path(f).suffix.lower()
             if ext not in video_extensions:
                 continue
 
             full_path = Path(root) / f
-
-            # 根据全量扫描标志和历史记录过滤已处理的文件
-            # Filter processed files based on full_scan flag and history records
-            if not is_full_scan and history.exists(str(full_path)):
-                continue
-            if is_full_scan:
-                if history.is_success(str(full_path)) or history.is_started(str(full_path)) or history.is_not_required(str(full_path)) or history.is_rejected(str(full_path)):
+            entry = history.get_entry(str(full_path))
+            if entry:
+                status = entry.get("status")
+                if status in ("success", "rejected", "not required", "started"):
                     continue
+                if status == "failed":
+                    completed = entry.get("completed_at", 0)
+                    retry_count = entry.get("retry_count", 0)
+                    delay = min(config.FAILED_RETRY_BASE * (2 ** retry_count), config.FAILED_RETRY_MAX)
+                    if time.time() - completed < delay:
+                        log.debug("SKIP (cooldown %.1fh): %s", delay / 3600, f)
+                        continue
 
             candidates.append(full_path)
 

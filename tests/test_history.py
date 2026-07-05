@@ -7,15 +7,13 @@ class TestHistoryLoad:
     def test_new_file_returns_empty(self, tmp_path):
         h = History(str(tmp_path / "history.json"))
         assert h._data["files"] == {}
-        assert h.get_last_full_scan() == 0
 
     def test_load_existing_file(self, tmp_path):
         p = str(tmp_path / "history.json")
         with open(p, "w") as f:
-            json.dump({"files": {"/a.mp4": {"status": "success"}}, "last_full_scan": 100}, f)
+            json.dump({"files": {"/a.mp4": {"status": "success"}}}, f)
         h = History(p)
         assert h.is_success("/a.mp4")
-        assert h.get_last_full_scan() == 100
 
     def test_corrupted_file_returns_empty(self, tmp_path):
         p = str(tmp_path / "history.json")
@@ -23,7 +21,6 @@ class TestHistoryLoad:
             f.write("not json")
         h = History(p)
         assert h._data["files"] == {}
-        assert h.get_last_full_scan() == 0
 
 
 class TestHistoryQueries:
@@ -87,11 +84,9 @@ class TestHistoryPersistence:
         p = str(tmp_path / "h.json")
         h1 = History(p)
         h1.mark_done("/a.mp4", "/a.mkv")
-        h1.set_last_full_scan(999)
 
         h2 = History(p)
         assert h2.is_success("/a.mp4")
-        assert h2.get_last_full_scan() == 999
 
     def test_file_written_to_disk(self, tmp_path):
         p = str(tmp_path / "h.json")
@@ -102,12 +97,4 @@ class TestHistoryPersistence:
         assert data["files"]["/v.mp4"]["status"] == "success"
 
 
-class TestHistoryFullScan:
-    def test_default_is_zero(self, tmp_path):
-        h = History(str(tmp_path / "h.json"))
-        assert h.get_last_full_scan() == 0
 
-    def test_set_and_get(self, tmp_path):
-        h = History(str(tmp_path / "h.json"))
-        h.set_last_full_scan(12345)
-        assert h.get_last_full_scan() == 12345
