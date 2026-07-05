@@ -374,9 +374,17 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         except OSError:
             pass
 
-        # QSV filter reinit 失败则立即用软件缩放重试
+        # QSV filter reinit 失败则立即用软件缩放重试（新建临时目录避免冲突）
         if returncode != 0 and "Error reinitializing filters" in stderr:
             log.warning("QSV SW FALLBACK: %s - re-trying with software scale", filepath.name)
+            _cleanup_temp(temp_dir)
+            suffix = _random_suffix()
+            if cache_dir:
+                temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
+            else:
+                temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
             log.debug("FFMPEG CMD (sw fallback): %s ...", filepath.name)
             returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
