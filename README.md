@@ -51,3 +51,4 @@ src/
 ```
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed setup, configuration reference, and troubleshooting.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for development roadmap and known issues.
