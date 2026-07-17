@@ -35,7 +35,6 @@
 - [x] **Granular audio stream mapping** — per-stream codec decision instead of all-or-nothing passthrough (e.g., `-c:a:0 copy -c:a:1 aac`)
 - [x] **Graceful shutdown** — drain in-flight transcodes on SIGTERM instead of killing them immediately
 - [x] **VMAF soft-fail mode** — configurable `VMAF_REQUIRED` flag: when False, unavailable VMAF defaults to accept instead of reject
-- [ ] **Automated test suite** — CI-ready pytest suite with mocked ffprobe/ffmpeg
 
 ### Medium-term / 中期
 
@@ -68,3 +67,4 @@ Old roadmap items from the original `README.md` have been migrated here:
 
 - Web UI stage (moved to v2.0)
 - Golang port (moved to v3.0)
+- **Automated test suite** — 实值低，撤销；单人工具实测 > mock CI 测试
