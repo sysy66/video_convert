@@ -171,7 +171,9 @@ def should_accept(vmaf_score, ratio):
     :return: True 接受 (accept), False 拒绝 (reject)
     """
     if vmaf_score is None:
-        return not config.VMAF_REQUIRED
+        if config.VMAF_REQUIRED:
+            return False
+        return ratio <= config.ACCEPT_RATIO_MAX
     if vmaf_score >= config.VMAF_ACCEPT_HIGH:
         return ratio <= config.ACCEPT_RATIO_MAX
     if vmaf_score < config.VMAF_ACCEPT_LOW:
