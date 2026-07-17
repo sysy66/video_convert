@@ -70,23 +70,24 @@ class TestBuildFfmpegCmd:
     def test_audio_passthrough_when_all_aac(self):
         with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
-        a_idx = cmd.index("-c:a")
-        assert cmd[a_idx + 1] == "copy"
-        assert "-b:a" not in cmd
+        idx = cmd.index("-c:a:0")
+        assert cmd[idx + 1] == "copy"
+        assert not any(a.startswith("-b:a:") for a in cmd)
 
     def test_reencodes_audio_when_not_aac(self):
         with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AC3):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
-        a_idx = cmd.index("-c:a")
-        assert cmd[a_idx + 1] == "aac"
-        assert "-b:a" in cmd
+        idx = cmd.index("-c:a:0")
+        assert cmd[idx + 1] == "aac"
+        assert "-b:a:0" in cmd
 
     def test_handles_no_audio_gracefully(self):
         with patch("src.transcoder.get_streams_info", return_value=_VIDEO_ONLY):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:a?" in cmd
-        # Should still have audio codec params since no audio codecs to detect
-        assert "-c:a" in cmd
+        # 无音轨 → 不生成逐流音频参数
+        assert not any(a.startswith("-c:a:") for a in cmd)
+        assert not any(a.startswith("-b:a:") for a in cmd)
 
     def test_includes_subtitle_mapping(self):
         with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
