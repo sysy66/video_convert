@@ -170,15 +170,6 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     streams = info["streams"]
     duration = info["duration"]
 
-    # 收集所有音频流的编码格式，用于判断是否需要直通
-    # Collect all audio codecs to decide whether passthrough is possible
-    audio_codecs = set()
-    for s in streams:
-        if s.get("codec_type") == "audio":
-            codec = s.get("codec_name", "").lower()
-            if codec:
-                audio_codecs.add(codec)
-
     cmd = [
         # 基础参数 / Basic parameters
         ffmpeg_path, "-y",
@@ -220,12 +211,21 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     else:
         cmd.extend(["-vf", "vpp_qsv=format=p010le"])
 
-    # 音频编码策略：若源全部为 AAC 等直通格式则直接复制，否则重新编码
-    # Audio encoding strategy: copy if all source streams are passthrough codecs, else re-encode
-    if audio_codecs and audio_codecs.issubset(config.AUDIO_PASSTHROUGH_CODECS):
-        cmd.extend(["-c:a", "copy"])
-    else:
-        cmd.extend(["-c:a", config.AUDIO_CODEC, "-b:a", config.AUDIO_BITRATE])
+    # 逐流音频编码策略：直通格式复制，其余重新编码
+    # Per-stream audio encoding: passthrough for compatible codecs, re-encode for others
+    audio_idx = 0
+    for s in streams:
+        if s.get("codec_type") == "audio":
+            codec = s.get("codec_name", "").lower()
+            if codec in config.AUDIO_PASSTHROUGH_CODECS:
+                cmd.append(f"-c:a:{audio_idx}")
+                cmd.append("copy")
+            else:
+                cmd.append(f"-c:a:{audio_idx}")
+                cmd.append(config.AUDIO_CODEC)
+                cmd.append(f"-b:a:{audio_idx}")
+                cmd.append(config.AUDIO_BITRATE)
+            audio_idx += 1
 
     # --- 字幕流 / Subtitle stream ---
     # 直通复制所有字幕流（受配置 KEEP_SUBTITLES 控制）

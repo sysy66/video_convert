@@ -32,7 +32,7 @@
 ### Short-term / 短期
 
 - [x] **Localise temp directories** — default `cache` to `data/temp` instead of CIFS mount, eliminating `Stale file handle` errors
-- [ ] **Granular audio stream mapping** — per-stream codec decision instead of all-or-nothing passthrough (e.g., `-c:a:0 copy -c:a:1 aac`)
+- [x] **Granular audio stream mapping** — per-stream codec decision instead of all-or-nothing passthrough (e.g., `-c:a:0 copy -c:a:1 aac`)
 - [x] **Graceful shutdown** — drain in-flight transcodes on SIGTERM instead of killing them immediately
 - [x] **VMAF soft-fail mode** — configurable `VMAF_REQUIRED` flag: when False, unavailable VMAF defaults to accept instead of reject
 - [ ] **Automated test suite** — CI-ready pytest suite with mocked ffprobe/ffmpeg
