@@ -59,6 +59,28 @@ class History:
                 """
             )
 
+    def close(self):
+        """
+        关闭数据库连接，执行 WAL checkpoint 合并 -wal/-shm 文件后正常关闭。
+        Should be called on shutdown so that .db-wal / .db-shm are merged and removed.
+
+        Close the database connection after a WAL checkpoint, so that the
+        .db-wal / .db-shm ancillary files are merged into the main .db file
+        and removed.
+        """
+        with self._lock:
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        self.close()
+
     def save(self):
         """
         自动提交模式下无需显式保存；保留此方法仅为兼容旧接口。

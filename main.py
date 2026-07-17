@@ -120,17 +120,22 @@ def main_loop():
             time.sleep(1)
 
     log.info("Shutdown complete")
+    return history
 
 
 def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    history = None
     try:
-        main_loop()
+        history = main_loop()
     except Exception as e:
         log.critical("Fatal error: %s", e, exc_info=True)
         raise
+    finally:
+        if history is not None:
+            history.close()
 
 
 if __name__ == "__main__":
