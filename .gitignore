@@ -10,4 +10,5 @@ __pycache__/
 
 data/app.log
 data/history.json
+data/vmaf_logs/
 bin/

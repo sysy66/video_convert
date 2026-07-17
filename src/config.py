@@ -75,6 +75,10 @@ VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH)
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
 
+# VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
+# Directory for per-run VMAF json logs; kept even when the result is rejected, for auditing.
+VMAF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "vmaf_logs")
+
 # 质量接受规则阈值 / Quality acceptance thresholds
 VMAF_ACCEPT_HIGH = 93     # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 85      # VMAF < 此值时直接拒绝
