@@ -5,7 +5,7 @@ from src.history import History
 
 
 def make_history(tmp_path):
-    path = str(tmp_path / "history.json")
+    path = str(tmp_path / "history.db")
     return History(path)
 
 

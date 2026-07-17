@@ -63,7 +63,8 @@ KEEP_SUBTITLES = True
 KEEP_ATTACHMENTS = True
 
 LOG_FILE = "data/app.log"
-HISTORY_FILE = "data/history.json"
+# 转码历史数据库（SQLite）/ Transcoding history database (SQLite)
+HISTORY_FILE = "data/history.db"
 
 # VMAF 质量评估 / VMAF quality assessment
 VMAF_FFMPEG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "bin", "ffmpeg")

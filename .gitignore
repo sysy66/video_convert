@@ -10,5 +10,8 @@ __pycache__/
 
 data/app.log
 data/history.json
+data/*.db
+data/*.db-wal
+data/*.db-shm
 data/vmaf_logs/
 bin/
