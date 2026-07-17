@@ -82,6 +82,9 @@ VMAF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", 
 # VMAF 日志保留天数，超出此期限的逐帧 json 日志将被自动清理。
 # VMAF log retention in days; older per-frame json logs are auto-purged.
 VMAF_LOG_RETENTION_DAYS = 7
+# VMAF 是否为转码的硬性要求：True=不可用时拒绝，False=不可用时仍接受（仅按大小比判断）。
+# Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
+VMAF_REQUIRED = True
 
 # 质量接受规则阈值 / Quality acceptance thresholds
 VMAF_ACCEPT_HIGH = 93     # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX

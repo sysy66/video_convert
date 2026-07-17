@@ -155,13 +155,13 @@ def cleanup_vmaf_logs():
 def should_accept(vmaf_score, ratio):
     """
     判断是否接受转码结果。规则：
-      - VMAF 不可用 → 拒绝
+      - VMAF 不可用 → 取决于 VMAF_REQUIRED 配置（默认拒绝）
       - VMAF ≥ VMAF_ACCEPT_HIGH → ratio ≤ ACCEPT_RATIO_MAX 才接受
       - VMAF < VMAF_ACCEPT_LOW → 拒绝
       - 中间区间 → ratio ≤ ACCEPT_RATIO_LOW（缩小 ≥25%）才接受
 
     Decide whether to accept the transcoded result. Rules:
-      - VMAF unavailable → reject
+      - VMAF unavailable → depends on VMAF_REQUIRED (default reject)
       - VMAF ≥ VMAF_ACCEPT_HIGH → accept only if ratio ≤ ACCEPT_RATIO_MAX
       - VMAF < VMAF_ACCEPT_LOW → reject
       - Middle range → accept only if ratio ≤ ACCEPT_RATIO_LOW (≥25% smaller)
@@ -171,7 +171,7 @@ def should_accept(vmaf_score, ratio):
     :return: True 接受 (accept), False 拒绝 (reject)
     """
     if vmaf_score is None:
-        return False
+        return not config.VMAF_REQUIRED
     if vmaf_score >= config.VMAF_ACCEPT_HIGH:
         return ratio <= config.ACCEPT_RATIO_MAX
     if vmaf_score < config.VMAF_ACCEPT_LOW:
