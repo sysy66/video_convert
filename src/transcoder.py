@@ -418,7 +418,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             # Write the json log to a persistent dir (not temp) so it survives rejection.
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
-            vmaf_score = compute_vmaf(filepath, output_path, ffprobe_path=ffprobe_path, log_path=vmaf_log)
+            vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
 
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
