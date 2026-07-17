@@ -14,11 +14,13 @@ log = logging.getLogger(__name__)
 _running = True
 
 
+_DRAIN_TIMEOUT = 120
+
+
 def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
-    kill_active_ffmpeg()
 
 
 def main_loop():
@@ -105,6 +107,22 @@ def main_loop():
                             history.mark_failed(str(f), "Timeout: batch exceeded 4h")
                             log.warning("TIMEOUT: %s -> killed after 4h", f.name)
                         break
+                # Graceful shutdown: if signal received, drain in-flight transcodes
+                # before proceeding. A safety-net kill still happens in main().
+                if not _running and pending:
+                    drain_deadline = time.time() + _DRAIN_TIMEOUT
+                    while pending and time.time() < drain_deadline:
+                        done, pending = wait(pending, timeout=min(15, drain_deadline - time.time()))
+                        for future in done:
+                            f = fut_map[future]
+                            try:
+                                ok = future.result()
+                                if ok:
+                                    log.info("DRAIN DONE: %s", f.name)
+                                else:
+                                    log.warning("DRAIN FAILED: %s", f.name)
+                            except Exception as e:
+                                log.error("DRAIN ERROR: %s -> %s", f.name, e)
             finally:
                 executor.shutdown(wait=False)
         else:
@@ -136,6 +154,7 @@ def main():
     finally:
         if history is not None:
             history.close()
+        kill_active_ffmpeg()
 
 
 if __name__ == "__main__":

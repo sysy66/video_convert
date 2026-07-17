@@ -21,8 +21,8 @@
 ### Known Issues / 已知问题
 
 - [x] **CIFS `Stale file handle`** — resolved by defaulting cache to local `data/temp/`
-- [ ] **vpp_qsv filter reinit failure** — some H.264 files trigger `Error reinitializing filters`. Software-scale fallback works but adds latency.
-- [ ] **No graceful shutdown for in-flight transcodes** — SIGTERM sends SIGKILL after 2s; transcodes are lost entirely (no checkpoint/resume).
+- [x] **vpp_qsv filter reinit failure** — some H.264 files trigger `Error reinitializing filters`. Software-scale fallback works but adds latency.
+- [x] **No graceful shutdown for in-flight transcodes** — SIGTERM now drains pending tasks (up to 120s) before exit; SIGKILL only as last resort.
 - [ ] **VMAF is all-or-nothing** — if unavailable, result is rejected. No option to accept without quality gate.
 
 ---
@@ -33,7 +33,7 @@
 
 - [x] **Localise temp directories** — default `cache` to `data/temp` instead of CIFS mount, eliminating `Stale file handle` errors
 - [ ] **Granular audio stream mapping** — per-stream codec decision instead of all-or-nothing passthrough (e.g., `-c:a:0 copy -c:a:1 aac`)
-- [ ] **Graceful shutdown** — drain in-flight transcodes on SIGTERM instead of killing them immediately
+- [x] **Graceful shutdown** — drain in-flight transcodes on SIGTERM instead of killing them immediately
 - [ ] **VMAF soft-fail mode** — configurable `VMAF_REQUIRED` flag: when False, unavailable VMAF defaults to accept instead of reject
 - [ ] **Automated test suite** — CI-ready pytest suite with mocked ffprobe/ffmpeg
 
