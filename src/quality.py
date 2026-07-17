@@ -7,6 +7,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 from src import config
 
@@ -122,6 +123,33 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
     except Exception as e:
         log.warning("VMAF failed for %s: %s", transcoded_path.name, e)
         return None
+
+
+def cleanup_vmaf_logs():
+    """
+    删除 data/vmaf_logs/ 中超过 VMAF_LOG_RETENTION_DAYS 天的 json 日志。
+    Delete VMAF json logs older than VMAF_LOG_RETENTION_DAYS from data/vmaf_logs/.
+
+    :return: 删除的文件数量 (Number of deleted files)
+    """
+    log_dir = config.VMAF_LOG_DIR
+    if not os.path.isdir(log_dir):
+        return 0
+    cutoff = time.time() - config.VMAF_LOG_RETENTION_DAYS * 86400
+    count = 0
+    for entry in os.listdir(log_dir):
+        if not entry.endswith(".json"):
+            continue
+        path = os.path.join(log_dir, entry)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                count += 1
+        except OSError:
+            pass
+    if count:
+        log.info("Cleaned %d expired VMAF log file(s)", count)
+    return count
 
 
 def should_accept(vmaf_score, ratio):

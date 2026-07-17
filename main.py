@@ -7,6 +7,7 @@ from src import config
 from src.history import History
 from src.scanner import scan
 from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg, mark_stale_started_as_failed
+from src.quality import cleanup_vmaf_logs
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def main_loop():
             if lib_info["cache"] != lib_info["input"]:
                 cleanup_stale_temp_dirs(lib_info["input"], config.TEMP_PREFIX)
         mark_stale_started_as_failed(history)
+        cleanup_vmaf_logs()
 
         log.info("SCAN: checking all libraries")
 
