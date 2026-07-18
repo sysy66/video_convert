@@ -280,10 +280,8 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
     """
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
     )
 
     register_ffmpeg_pid(proc.pid)
@@ -294,7 +292,8 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
 
     def _reader():
         nonlocal last_logged_pct
-        for line in iter(proc.stderr.readline, ""):
+        for raw_line in iter(proc.stderr.readline, b""):
+            line = raw_line.decode("utf-8", errors="replace")
             stderr_lines.append(line)
             if total_duration:
                 secs = _parse_progress_time(line)

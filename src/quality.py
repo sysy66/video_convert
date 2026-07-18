@@ -100,7 +100,6 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
         result = subprocess.run(
             cmd,
             capture_output=True,
-            text=True,
             timeout=3600,
         )
         # 优先从 json 日志读取聚合均值（更稳定），回退到 stderr 正则。
@@ -110,7 +109,7 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             if mean is not None:
                 return mean
 
-        output = result.stderr + result.stdout
+        output = (result.stderr + result.stdout).decode("utf-8", errors="replace")
         m = _VMAF_RE.search(output)
         if m:
             return float(m.group(1))
