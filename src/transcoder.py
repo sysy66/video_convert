@@ -432,14 +432,21 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
                 final_path = _unique_path(filepath.parent / output_filename)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            # 跨文件系统（如本地缓存 -> NFS 输出）时 os.rename 不可用，
-            # 且 copy2/copymode 的 chmod/chown 会 EPERM，改用 copyfile + unlink。
-            # Cross-filesystem move: os.rename fails across devices, and
-            # copy2/copymode chmod/chown raises EPERM on NFS, so use copyfile.
-            shutil.copyfile(str(output_path), str(final_path))
-            output_path.unlink()
-            _cleanup_temp(temp_dir)
-            filepath.unlink()
+            # 先移动文件，成功后再记录 history；失败不影响 VMAF 日志
+            # Copy output before logging acceptance — file I/O may fail on NFS
+            try:
+                # 跨文件系统时 os.rename 不可用，且 copy2/chmod 在 NFS 上 EPERM
+                # os.rename fails across filesystems; copy2/copymode raises EPERM on NFS
+                shutil.copyfile(str(output_path), str(final_path))
+                output_path.unlink()
+                _cleanup_temp(temp_dir)
+                filepath.unlink()
+            except OSError as e:
+                log.error("FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
+                          final_path.name, vmaf_score or 0, ratio * 100, e)
+                history.mark_failed(str(filepath), f"File move failed: {e}")
+                _cleanup_temp(temp_dir)
+                return False
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
             if vmaf_score is not None:
                 log.info(
