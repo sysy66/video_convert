@@ -432,7 +432,12 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
                 final_path = _unique_path(filepath.parent / output_filename)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            shutil.move(str(output_path), str(final_path))
+            # 跨文件系统（如本地缓存 -> NFS 输出）时 os.rename 不可用，
+            # 且 copy2/copymode 的 chmod/chown 会 EPERM，改用 copyfile + unlink。
+            # Cross-filesystem move: os.rename fails across devices, and
+            # copy2/copymode chmod/chown raises EPERM on NFS, so use copyfile.
+            shutil.copyfile(str(output_path), str(final_path))
+            output_path.unlink()
             _cleanup_temp(temp_dir)
             filepath.unlink()
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
