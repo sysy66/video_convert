@@ -17,6 +17,7 @@
 - [x] 4-hour batch timeout to prevent NFS hang freeze
 - [x] Per-transcode VMAF JSON audit logs with 7-day auto-purge
 - [x] Thread-safe History (SQLite WAL mode + RLock)
+- [x] **Startup validation** — verify library paths, executables, VMAF deps, and disk space before entering scan loop
 
 ### Known Issues / 已知问题
 
@@ -37,9 +38,6 @@
 - [x] **VMAF soft-fail mode** — configurable `VMAF_REQUIRED` flag: when False, unavailable VMAF defaults to accept instead of reject
 
 ### Medium-term / 中期
-
-- [ ] **Transcode checkpoint / resume** — save encoding progress metadata to resume interrupted long transcodes
-- [ ] **`config.py` validation** — validate library paths exist and are writable on startup
 
 ---
 
@@ -68,3 +66,4 @@ Old roadmap items from the original `README.md` have been migrated here:
 - Golang port (moved to v3.0)
 - **Automated test suite** — 实值低，撤销；单人工具实测 > mock CI 测试
 - **Smart pass-through** — 已 HEVC/AV1 的文件已在前端跳过，remux 容器无实际收益，取消
+- **Transcode checkpoint / resume** — 实现复杂且 ROI 低（hevc_qsv 编码器无法从中间帧恢复），取消

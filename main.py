@@ -1,5 +1,6 @@
 import logging
 import signal
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
@@ -8,6 +9,7 @@ from src.history import History
 from src.scanner import scan
 from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg, mark_stale_started_as_failed
 from src.quality import cleanup_vmaf_logs
+from src.validation import validate_config
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +29,15 @@ def main_loop():
     global _running
 
     history = History(config.HISTORY_FILE)
+
+    errors, warnings = validate_config()
+    for w in warnings:
+        log.warning("VALIDATION: %s", w)
+    if errors:
+        for e in errors:
+            log.critical("VALIDATION FAILED: %s", e)
+        history.close()
+        sys.exit(1)
 
     log.info("=" * 50)
     log.info("Video Transcoder Started")
