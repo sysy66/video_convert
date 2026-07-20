@@ -421,15 +421,15 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             error_msg = stderr.strip() or f"exit code {returncode}"
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
-            history.mark_failed(str(filepath), error_msg)
             _cleanup_temp(temp_dir)
+            history.mark_failed(str(filepath), error_msg)
             return False
 
         if not output_path.exists():
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: output not found for %s (%.1fs)", filepath.name, elapsed)
-            history.mark_failed(str(filepath), "Output file not found after transcode")
             _cleanup_temp(temp_dir)
+            history.mark_failed(str(filepath), "Output file not found after transcode")
             return False
 
         # 在移动文件前计算 VMAF（输出仍在临时目录，原文件尚存在）
@@ -467,8 +467,8 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             except OSError as e:
                 log.error("FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
                           final_path.name, vmaf_score or 0, ratio * 100, e)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
                 _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), f"File move failed: {e}")
                 return False
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
             if vmaf_score is not None:
@@ -499,14 +499,14 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
     except subprocess.TimeoutExpired:
         elapsed = _time.monotonic() - start_time
         log.error("TRANSCODE TIMEOUT: %s (%.1fs)", filepath.name, elapsed)
-        history.mark_failed(str(filepath), "Transcode timed out")
         _cleanup_temp(temp_dir)
+        history.mark_failed(str(filepath), "Transcode timed out")
         return False
     except Exception as e:
         elapsed = _time.monotonic() - start_time
         log.error("TRANSCODE ERROR: %s (%.1fs) - %s", filepath.name, elapsed, e)
-        history.mark_failed(str(filepath), str(e))
         _cleanup_temp(temp_dir)
+        history.mark_failed(str(filepath), str(e))
         return False
     finally:
         with _active_transcodes_lock:
