@@ -1,8 +1,6 @@
 # Roadmap / 开发路线图
 
-## v1.0 — Core Stable (当前)
-
-### Done / 已完成
+## ✔ v1.0 — Core Stable (已发布)
 
 - [x] Intel QSV hardware encoding (`hevc_qsv`, main10) with automatic software-scale fallback
 - [x] VMAF quality gate with configurable thresholds
@@ -18,30 +16,18 @@
 - [x] Per-transcode VMAF JSON audit logs with 7-day auto-purge
 - [x] Thread-safe History (SQLite WAL mode + RLock)
 - [x] **Startup validation** — verify library paths, executables, VMAF deps, and disk space before entering scan loop
-
-### Known Issues / 已知问题
-
-- [x] **CIFS `Stale file handle`** — resolved by defaulting cache to local `data/temp/`
-- [x] **vpp_qsv filter reinit failure** — some H.264 files trigger `Error reinitializing filters`. Software-scale fallback works but adds latency.
-- [x] **No graceful shutdown for in-flight transcodes** — SIGTERM now drains pending tasks (up to 120s) before exit; SIGKILL only as last resort.
-- [x] **VMAF is all-or-nothing** — resolved by `VMAF_REQUIRED` toggle; set to `False` to accept without quality gate.
-
 ---
 
-## v1.1 — Resilience & Polish
-
-### Short-term / 短期
+## ✔ v1.1 — Resilience & Polish (已发布)
 
 - [x] **Localise temp directories** — default `cache` to `data/temp` instead of CIFS mount, eliminating `Stale file handle` errors
 - [x] **Granular audio stream mapping** — per-stream codec decision instead of all-or-nothing passthrough (e.g., `-c:a:0 copy -c:a:1 aac`)
 - [x] **Graceful shutdown** — drain in-flight transcodes on SIGTERM instead of killing them immediately
 - [x] **VMAF soft-fail mode** — configurable `VMAF_REQUIRED` flag: when False, unavailable VMAF defaults to accept instead of reject
 
-### Medium-term / 中期
-
 ---
 
-## v2.0 — Web UI & API
+## 🔄 v2.0 — Web UI & API (规划中)
 
 - [ ] **REST API** (FastAPI) — expose transcode queue, history, and progress
 - [ ] **Web dashboard** — browse libraries, view history, trigger manual transcodes
@@ -50,7 +36,7 @@
 
 ---
 
-## v3.0 — Golang Port
+## 🔄 v3.0 — Golang Port (规划中)
 
 - [ ] Port core scanner + transcoder + quality gate to Go
 - [ ] Compare concurrency models (goroutines vs ThreadPoolExecutor)
@@ -58,12 +44,8 @@
 
 ---
 
-## Archive / 归档
+## ❌ Cancelled / 已取消
 
-Old roadmap items from the original `README.md` have been migrated here:
-
-- Web UI stage (moved to v2.0)
-- Golang port (moved to v3.0)
-- **Automated test suite** — 实值低，撤销；单人工具实测 > mock CI 测试
+- **Automated test suite** — 已停止维护，`tests/` 保留供参考；单人工具实测 > mock CI 测试
 - **Smart pass-through** — 已 HEVC/AV1 的文件已在前端跳过，remux 容器无实际收益，取消
 - **Transcode checkpoint / resume** — 实现复杂且 ROI 低（hevc_qsv 编码器无法从中间帧恢复），取消
