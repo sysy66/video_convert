@@ -118,7 +118,7 @@ class TestBuildFfmpegCmd:
 
 
 class TestTranscode:
-    def _fake_progress(self, cmd, total_duration, file_stem):
+    def _fake_progress(self, cmd, total_duration, file_stem, **kwargs):
         output_path = Path(cmd[-1])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("transcoded")
