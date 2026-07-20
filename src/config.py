@@ -10,7 +10,7 @@ WATCH_DIR = "/mnt/test1"
 # 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
 #   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
 _LIBRARIES_RAW = {
-    "test1": {"input": "/mnt/test1", "cache": "data/temp"},
+    "test1": "/mnt/test1",
 }
 
 
