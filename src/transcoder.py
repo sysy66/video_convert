@@ -15,10 +15,6 @@ from src.quality import compute_vmaf, should_accept
 
 log = __import__("logging").getLogger(__name__)
 
-# 单文件超时秒数（4 小时），防止 NFS 卡死或无限编码
-# Per-file timeout in seconds (4 hours) to prevent NFS hangs or infinite encoding
-PER_FILE_TIMEOUT = 14400
-
 # 追踪所有活跃的 ffmpeg 子进程 PID，用于优雅关闭时清理孤儿进程
 # Track all active ffmpeg child process PIDs for orphan cleanup on graceful shutdown
 _active_ffmpeg_pids = set()
@@ -388,7 +384,9 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False)
         log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
-        returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name, timeout=PER_FILE_TIMEOUT)
+        returncode, stderr = _run_ffmpeg_with_progress(
+            cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
+        )
 
         # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
         try:
@@ -409,7 +407,9 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
             log.debug("FFMPEG CMD (sw fallback): %s ...", filepath.name)
-            returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name, timeout=PER_FILE_TIMEOUT)
+            returncode, stderr = _run_ffmpeg_with_progress(
+                cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
+            )
 
         # 最终 stderr 写入 .ffmpeg.log
         try:
