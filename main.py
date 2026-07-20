@@ -77,14 +77,12 @@ def main_loop():
                 all_files.append((f, lib_info.get("output"), lib_info.get("cache")))
 
         if all_files:
-            BATCH_TIMEOUT = 14400
             log.info("SCAN: %d file(s) to process across %d librar%s",
                       len(all_files), len(config.LIBRARIES),
                       "y" if len(config.LIBRARIES) == 1 else "ies")
             for f, _, _ in all_files:
                 log.info("  QUEUED: %s", f)
 
-            batch_start = time.time()
             executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
             try:
                 fut_map = {}
@@ -105,18 +103,6 @@ def main_loop():
                         except Exception as e:
                             log.error("RESULT: %s -> unhandled exception: %s", f.name, e)
                     if not pending:
-                        break
-                    if time.time() - batch_start >= BATCH_TIMEOUT:
-                        log.warning(
-                            "BATCH TIMEOUT: 4 hours elapsed, killing %d remaining task(s)",
-                            len(pending),
-                        )
-                        kill_active_ffmpeg()
-                        for future in pending:
-                            f = fut_map[future]
-                            future.cancel()
-                            history.mark_failed(str(f), "Timeout: batch exceeded 4h")
-                            log.warning("TIMEOUT: %s -> killed after 4h", f.name)
                         break
                 # Graceful shutdown: if signal received, drain in-flight transcodes
                 # before proceeding. A safety-net kill still happens in main().

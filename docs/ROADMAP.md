@@ -12,7 +12,7 @@
 - [x] Exponential-backoff retry for failed entries
 - [x] Stale `.work_*` temp dir cleanup on each scan cycle
 - [x] Stale `started` history entries marked `failed` on startup (power outage resilience)
-- [x] 4-hour batch timeout to prevent NFS hang freeze
+- [x] Per-file 4-hour timeout — kill stuck transcodes individually instead of halting the entire batch
 - [x] Per-transcode VMAF JSON audit logs with 7-day auto-purge
 - [x] Thread-safe History (SQLite WAL mode + RLock)
 - [x] **Startup validation** — verify library paths, executables, VMAF deps, and disk space before entering scan loop

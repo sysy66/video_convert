@@ -15,6 +15,10 @@ from src.quality import compute_vmaf, should_accept
 
 log = __import__("logging").getLogger(__name__)
 
+# 单文件超时秒数（4 小时），防止 NFS 卡死或无限编码
+# Per-file timeout in seconds (4 hours) to prevent NFS hangs or infinite encoding
+PER_FILE_TIMEOUT = 14400
+
 # 追踪所有活跃的 ffmpeg 子进程 PID，用于优雅关闭时清理孤儿进程
 # Track all active ffmpeg child process PIDs for orphan cleanup on graceful shutdown
 _active_ffmpeg_pids = set()
@@ -261,7 +265,7 @@ def _parse_progress_time(line):
     return None
 
 
-def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
+def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     """
     运行 FFmpeg 命令并实时解析进度信息。
     在后台线程中读取 stderr，每当进度前进 >=10% 时记录日志。
@@ -275,8 +279,12 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
                            Total duration in seconds for percentage calculation; skipped if None
     :param file_stem: 文件名（不含扩展名），用于日志标识
                       File name without extension, used in log messages
+    :param timeout: 超时秒数，超时后 kill 子进程并抛出 TimeoutExpired
+                    Timeout in seconds; kills the subprocess and raises TimeoutExpired on expiry
     :return: (returncode, stderr_text) — 退出码和完整错误输出
              (returncode, full_stderr_text)
+    :raises subprocess.TimeoutExpired: 当子进程在指定时间内未完成
+                                       When the subprocess does not finish within timeout
     """
     proc = subprocess.Popen(
         cmd,
@@ -307,7 +315,22 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem):
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
 
-    proc.wait()
+    try:
+        if timeout is not None:
+            proc.wait(timeout=timeout)
+        else:
+            proc.wait()
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        reader_done.wait(timeout=10)
+        unregister_ffmpeg_pid(proc.pid)
+        raise
+
     unregister_ffmpeg_pid(proc.pid)
     reader_done.wait(timeout=10)
 
@@ -365,7 +388,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False)
         log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
-        returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
+        returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name, timeout=PER_FILE_TIMEOUT)
 
         # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
         try:
@@ -386,7 +409,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
             log.debug("FFMPEG CMD (sw fallback): %s ...", filepath.name)
-            returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name)
+            returncode, stderr = _run_ffmpeg_with_progress(cmd, total_duration, filepath.name, timeout=PER_FILE_TIMEOUT)
 
         # 最终 stderr 写入 .ffmpeg.log
         try:
