@@ -100,7 +100,7 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
         result = subprocess.run(
             cmd,
             capture_output=True,
-            timeout=3600,
+            timeout=config.VMAF_TIMEOUT,
         )
         # 优先从 json 日志读取聚合均值（更稳定），回退到 stderr 正则。
         # Prefer the aggregate mean from the json log; fall back to stderr regex.
