@@ -185,6 +185,9 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
+    if sw_decode_needed:
+        cmd.extend(["-c:v", "vc1"])
+
     cmd.extend([
         # 输入文件 / Input file
         "-i", str(input_path),

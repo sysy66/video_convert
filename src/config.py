@@ -62,6 +62,9 @@ AUDIO_PASSTHROUGH_CODECS = {"aac"}
 # 流处理策略
 KEEP_SUBTITLES = True
 KEEP_ATTACHMENTS = True
+# 软解回退编解码器（QSV 硬解崩溃时回退到纯软件解码 + hwupload）
+# Software decode fallback codecs (fall back to software decode + hwupload when QSV crashes)
+SW_DECODE_FALLBACK_CODECS = {"vc1"}
 
 LOG_FILE = "data/app.log"
 # 转码历史数据库（SQLite）/ Transcoding history database (SQLite)
