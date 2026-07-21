@@ -442,19 +442,16 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             history.mark_failed(str(filepath), "Output file not found after transcode")
             return False
 
-        # 在移动文件前计算 VMAF（输出仍在临时目录，原文件尚存在）
-        # Compute VMAF before moving the file (output still in temp, original still exists)
-        vmaf_score = None
-        if config.VMAF_ENABLED:
-            # json 日志写到持久目录（非临时目录），即使结果被拒绝也保留供审计。
-            # Write the json log to a persistent dir (not temp) so it survives rejection.
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
-            vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
-
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
         elapsed = _time.monotonic() - start_time
+
+        # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分）
+        vmaf_score = None
+        if config.VMAF_ENABLED and ratio <= config.ACCEPT_RATIO_MAX:
+            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+            vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+            vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
 
         if should_accept(vmaf_score, ratio):
             if output_dir:
