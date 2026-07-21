@@ -254,6 +254,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
 
 
 _TIME_RE = re.compile(r"time=(\d+):(\d+):(\d+\.?\d*)")
+_FPS_RE = re.compile(r"fps=\s*([\d.]+)")
 
 
 def _parse_progress_time(line):
@@ -271,14 +272,21 @@ def _parse_progress_time(line):
     return None
 
 
+def _parse_progress_fps(line):
+    m = _FPS_RE.search(line)
+    if m:
+        return float(m.group(1))
+    return None
+
+
 def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     """
     运行 FFmpeg 命令并实时解析进度信息。
-    在后台线程中读取 stderr，每当进度前进 >=10% 时记录日志。
+    在后台线程中读取 stderr，每当进度前进 >=1% 时记录日志（含 fps）。
 
     Run an FFmpeg command and parse progress information in real time.
-    A background thread reads stderr and logs a message every time
-    progress advances by >=10%.
+    A background thread reads stderr and logs fps every time
+    progress advances by >=1%.
 
     :param cmd: FFmpeg 命令行参数列表 (FFmpeg command-line argument list)
     :param total_duration: 视频总时长（秒），用于计算百分比；为 None 时不计算
@@ -313,8 +321,12 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
                 secs = _parse_progress_time(line)
                 if secs is not None and secs > 0:
                     pct = int(secs / total_duration * 100)
-                    if pct >= last_logged_pct + 10:
-                        log.info("PROGRESS: %s - %d%%", file_stem, min(pct, 100))
+                    if pct >= last_logged_pct + 1:
+                        fps = _parse_progress_fps(line)
+                        if fps is not None:
+                            log.info("PROGRESS: %s - %d%% (fps %.1f)", file_stem, min(pct, 100), fps)
+                        else:
+                            log.info("PROGRESS: %s - %d%%", file_stem, min(pct, 100))
                         last_logged_pct = pct
         reader_done.set()
 
