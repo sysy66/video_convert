@@ -170,6 +170,13 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     streams = info["streams"]
     duration = info["duration"]
 
+    sw_decode_needed = False
+    for s in streams:
+        if s.get("codec_type") == "video":
+            if s.get("codec_name", "").lower() in config.SW_DECODE_FALLBACK_CODECS:
+                sw_decode_needed = True
+            break
+
     cmd = [
         # 基础参数 / Basic parameters
         ffmpeg_path, "-y",
@@ -177,7 +184,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         "-hwaccel", "qsv",
     ]
 
-    if sw_fallback:
+    if sw_fallback or sw_decode_needed:
         # 软件缩放回退：帧保持在系统内存，用软件 format 转换后 hwupload 上传
         # Software-scale fallback: keep frames in system memory, convert with
         # software format filter, then upload to QSV via hwupload
@@ -209,7 +216,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         "-map", "0:a?",
     ])
 
-    if sw_fallback:
+    if sw_fallback or sw_decode_needed:
         cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
     else:
         cmd.extend(["-vf", "vpp_qsv=format=p010le"])
