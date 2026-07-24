@@ -1,7 +1,6 @@
 import os
 import logging
 
-WATCH_DIR = "/mnt/test1"
 # 多库支持：名称 → {input, output, cache} 映射。
 # Multi-library support: name → {input, output, cache} mapping.
 #
