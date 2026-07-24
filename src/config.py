@@ -47,11 +47,37 @@ VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wm
 
 SKIP_CODECS = {"hevc", "av1"}
 
-# 视频编码参数
-VIDEO_QUALITY = 20
-VIDEO_PRESET = "slow"
+# 编码目标 / Encoding target
+# "hevc" → hevc_qsv (HEVC Main10, Intel Iris Xe)
+# "av1"  → av1_qsv  (AV1, Intel Arc)
+VIDEO_ENCODER = "hevc"
+
+# 编码器独立参数 / Per-encoder settings
+ENCODER_PARAMS = {
+    "hevc": {
+        "codec":        "hevc_qsv",
+        "profile":      "main10",
+        "quality":      20,
+        "preset":       "slow",
+        "b_frames":     8,
+        "extbrc":       True,
+        "adaptive_i":   True,
+        "adaptive_b":   True,
+    },
+    "av1": {
+        "codec":        "av1_qsv",
+        "profile":      "main",
+        "quality":      24,
+        "preset":       "veryslow",
+        "b_frames":     7,
+        "extbrc":       True,
+        "adaptive_i":   True,
+        "adaptive_b":   True,
+        "b_strategy":   1,
+    },
+}
+
 VIDEO_GOP = 240
-VIDEO_B_FRAMES = 8
 VIDEO_LOOK_AHEAD_DEPTH = 70
 
 # 音频编码参数

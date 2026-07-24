@@ -195,21 +195,33 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     if sw_decode_needed:
         cmd.extend(["-c:v", "vc1"])
 
+    enc = config.ENCODER_PARAMS[config.VIDEO_ENCODER]
+
     cmd.extend([
         # 输入文件 / Input file
         "-i", str(input_path),
         # --- 视频流 / Video stream ---
         # 选择第一个视频流（按类型，而非按索引），避免流顺序问题
         # Select the first video stream by type (not index) to avoid stream ordering issues
-        "-map", "0:v:0", "-c:v", "hevc_qsv", "-profile:v", "main10",
-        "-global_quality", str(config.VIDEO_QUALITY),
-        "-preset", config.VIDEO_PRESET,
+        "-map", "0:v:0", "-c:v", enc["codec"], "-profile:v", enc["profile"],
+        "-global_quality", str(enc["quality"]),
+        "-preset", enc["preset"],
         # 高级 QSV 优化 / Advanced QSV optimisation
         "-look_ahead", "1", "-look_ahead_depth", str(config.VIDEO_LOOK_AHEAD_DEPTH),
-        "-g", str(config.VIDEO_GOP), "-bf", str(config.VIDEO_B_FRAMES),
-        "-extbrc", "1",
-        "-adaptive_i", "1", "-adaptive_b", "1",
+        "-g", str(config.VIDEO_GOP),
         "-fps_mode", "cfr",
+        # 编码器专属参数（-bf / -extbrc / -adaptive_i / -adaptive_b / -b_strategy 等）
+        # Encoder-specific arguments
+    ])
+
+    if enc.get("b_frames"):
+        cmd.extend(["-bf", str(enc["b_frames"])])
+    for flag in ("extbrc", "adaptive_i", "adaptive_b", "b_strategy"):
+        val = enc.get(flag)
+        if val is not None and val is not False:
+            cmd.extend([f"-{flag}", str(int(val) if isinstance(val, bool) else val)])
+
+    cmd.extend([
         # --- 音频流 / Audio stream ---
         # 选择所有音频流（'?' 表示无音频时不报错）
         # Select all audio streams ('?' means don't fail if none exist)

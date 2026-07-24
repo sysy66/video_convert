@@ -46,11 +46,28 @@ class TestBuildFfmpegCmd:
         assert "-hwaccel_output_format" in cmd
 
     def test_uses_hevc_qsv_encoder(self):
-        with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
+        with (
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.config.VIDEO_ENCODER", "hevc"),
+        ):
             cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         idx = cmd.index("-c:v") if "-c:v" in cmd else -1
         assert idx >= 0
         assert cmd[idx + 1] == "hevc_qsv"
+        assert "-bf" in cmd
+        assert cmd[cmd.index("-bf") + 1] == "8"
+
+    def test_uses_av1_qsv_encoder(self):
+        with (
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.config.VIDEO_ENCODER", "av1"),
+        ):
+            cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
+        idx = cmd.index("-c:v") if "-c:v" in cmd else -1
+        assert idx >= 0
+        assert cmd[idx + 1] == "av1_qsv"
+        assert cmd[cmd.index("-profile:v") + 1] == "main"
+        assert "-b_strategy" in cmd
 
     def test_ends_with_output_path(self):
         with patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC):
