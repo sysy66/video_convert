@@ -416,7 +416,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         )
 
         cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False)
-        log.debug("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
+        log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(
             cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
@@ -440,7 +440,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
-            log.debug("FFMPEG CMD (sw fallback): %s ...", filepath.name)
+            log.info("FFMPEG CMD (sw fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd))
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
             )
