@@ -8,9 +8,7 @@ import logging
 #   LIBRARIES = {"test1": "/mnt/test1"}
 # 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
 #   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
-_LIBRARIES_RAW = {
-    "test1": "/mnt/test1",
-}
+_LIBRARIES_RAW = {"test1": {"input": "/mnt/test1", "cache": "/mnt/transcode_cache"}}
 
 
 def _normalize_libraries(raw):
