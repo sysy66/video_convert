@@ -9,14 +9,20 @@ This project uses Jellyfin FFmpeg for Intel QSV hardware acceleration.
 
 **Ubuntu / Debian:**
 ```bash
-# Add Jellyfin repository (see https://jellyfin.org/downloads/)
-curl -fsSL https://repo.jellyfin.org/install.sh | sudo bash
+# 1. 安装 Intel media 驱动（QSV 所需）
+sudo apt update
+sudo apt install intel-media-va-driver vainfo
+
+# 2. 安装 Jellyfin FFmpeg
+curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash
 sudo apt install jellyfin-ffmpeg
 ```
 
 **Verify:**
 ```bash
-/usr/lib/jellyfin-ffmpeg/ffmpeg -version
+# QSV 硬件加速
+vainfo
+/usr/lib/jellyfin-ffmpeg/ffmpeg -encoders | grep qsv
 /usr/lib/jellyfin-ffmpeg/ffprobe -version
 ```
 
