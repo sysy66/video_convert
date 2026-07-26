@@ -37,14 +37,16 @@ fi
 
 # --- 2. Clean state ---
 echo ""
-echo "[2/6] Cleaning cache ..."
+echo "[2/6] Cleaning cache and test state ..."
 rm -rf /mnt/transcode_cache/*
+rm -f data/test_history.db*
+rm -f data/test_app.log
 echo "  OK"
 
 # --- 3. Start transcoder ---
 echo ""
 echo "[3/6] Starting transcoder ..."
-$PYTHON_BIN main.py -L "test1=/mnt/test1:/mnt/test1:/mnt/transcode_cache" --log "data/test_app.log" &
+$PYTHON_BIN main.py -L "test1=/mnt/test1:/mnt/test1:/mnt/transcode_cache" --log "data/test_app.log" --history "data/test_history.db" &
 PID=$!
 echo "  PID=$PID"
 sleep 1

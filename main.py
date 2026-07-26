@@ -52,6 +52,7 @@ def _apply_cli_overrides():
     parser.add_argument("--max-workers", type=int, metavar="N",
                         help="Maximum concurrent transcodes")
     parser.add_argument("--log", metavar="FILE", help="Log file path")
+    parser.add_argument("--history", metavar="FILE", help="History database path")
     parser.add_argument("--ffmpeg", metavar="PATH", help="FFmpeg binary path")
     parser.add_argument("--ffprobe", metavar="PATH", help="FFprobe binary path")
     parser.add_argument("--encoder", choices=["hevc", "av1"],
@@ -65,6 +66,8 @@ def _apply_cli_overrides():
 
     if args.log:
         config.LOG_FILE = args.log
+    if args.history:
+        config.HISTORY_FILE = args.history
     if args.ffmpeg:
         config.FFMPEG_PATH = args.ffmpeg
     if args.ffprobe:
