@@ -367,7 +367,7 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     return proc.returncode, "".join(stderr_lines)
 
 
-def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cache_dir=None):
+def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, output_dir=None, cache_dir=None):
     """
     对单个视频文件执行转码的完整流程：
       1. 创建临时工作目录
@@ -480,8 +480,17 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, output_dir=None, cac
         if should_accept(vmaf_score, ratio):
             if output_dir:
                 output_dir = Path(output_dir)
-                output_dir.mkdir(parents=True, exist_ok=True)
-                final_path = _unique_path(output_dir / output_filename)
+                if input_dir:
+                    input_dir = Path(input_dir)
+                    try:
+                        rel = filepath.parent.relative_to(input_dir)
+                    except ValueError:
+                        rel = Path()
+                    dest_dir = output_dir / rel
+                else:
+                    dest_dir = output_dir
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                final_path = _unique_path(dest_dir / output_filename)
             else:
                 final_path = _unique_path(filepath.parent / output_filename)
             if final_path.name != output_filename:

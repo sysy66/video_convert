@@ -74,20 +74,20 @@ def main_loop():
             if lib_files:
                 log.info("  [%s] found %d file(s)", lib_name, len(lib_files))
             for f in lib_files:
-                all_files.append((f, lib_info.get("output"), lib_info.get("cache")))
+                all_files.append((f, lib_info["input"], lib_info.get("output"), lib_info.get("cache")))
 
         if all_files:
             log.info("SCAN: %d file(s) to process across %d librar%s",
                       len(all_files), len(config.LIBRARIES),
                       "y" if len(config.LIBRARIES) == 1 else "ies")
-            for f, _, _ in all_files:
+            for f, _, _, _ in all_files:
                 log.info("  QUEUED: %s", f)
 
             executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
             try:
                 fut_map = {}
-                for f, output_dir, cache_dir in all_files:
-                    future = executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH, output_dir, cache_dir)
+                for f, input_dir, output_dir, cache_dir in all_files:
+                    future = executor.submit(transcode, f, history, config.FFMPEG_PATH, config.FFPROBE_PATH, input_dir, output_dir, cache_dir)
                     fut_map[future] = f
                 pending = set(fut_map.keys())
                 while pending and _running:
