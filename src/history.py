@@ -192,6 +192,14 @@ class History:
                 (filepath, codec, time.time()),
             )
 
+    def cache_codec(self, filepath, codec):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO files (filepath, status, codec) VALUES (?, 'queued', ?) "
+                "ON CONFLICT(filepath) DO UPDATE SET codec=excluded.codec",
+                (filepath, codec),
+            )
+
     def get_cached_codec(self, filepath):
         with self._lock:
             row = self._conn.execute(

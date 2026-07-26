@@ -78,6 +78,7 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history):
             log.debug("SKIP (codec=%s): %s", codec, p)
             continue
 
+        history.cache_codec(str(p), codec)
         codec_filtered.append(p)
 
     # 根据修改时间对结果进行排序（按时间先后）
