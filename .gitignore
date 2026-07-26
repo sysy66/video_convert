@@ -11,7 +11,7 @@ __pycache__/
 data/app.log
 app.log.hevc
 app.log.av1
-data/app.log.bak
+data/test_app.log
 data/ai_report.md
 data/history.json
 data/*.db

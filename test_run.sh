@@ -37,16 +37,14 @@ fi
 
 # --- 2. Clean state ---
 echo ""
-echo "[2/6] Cleaning state files ..."
-rm -f data/app.log data/history.db data/history.db-wal data/history.db-shm
-rm -f data/vmaf_logs/*.json
+echo "[2/6] Cleaning cache ..."
 rm -rf /mnt/transcode_cache/*
 echo "  OK"
 
 # --- 3. Start transcoder ---
 echo ""
 echo "[3/6] Starting transcoder ..."
-$PYTHON_BIN main.py &
+$PYTHON_BIN main.py -L "test1=/mnt/test1:/mnt/test1:/mnt/transcode_cache" --log "data/test_app.log" &
 PID=$!
 echo "  PID=$PID"
 sleep 1
@@ -95,10 +93,8 @@ echo "  Stopped"
 # --- 6. Save log and analyze ---
 echo ""
 echo "[6/6] Analyzing log with AI ..."
-cp -f data/app.log data/app.log.bak
-
-if [ ! -s data/app.log ]; then
-    echo "  WARNING: app.log is empty, skipping AI analysis"
+if [ ! -s data/test_app.log ]; then
+    echo "  WARNING: test_app.log is empty, skipping AI analysis"
     exit 0
 fi
 
@@ -106,7 +102,7 @@ RESPONSE_FILE="data/ai_report.md"
 
 if $PYTHON_BIN src/ai_analyze.py \
     "$API_URL" "$API_MODEL" \
-    "$APP_DIR/data/app.log" \
+    "$APP_DIR/data/test_app.log" \
     "$APP_DIR/$RESPONSE_FILE" 2>/dev/null; then
     echo ""
     echo "=== AI Analysis Report ==="
@@ -121,5 +117,5 @@ fi
 
 echo ""
 echo "=============================================="
-echo " Test complete: log saved to data/app.log.bak"
+echo " Test complete: log saved to data/test_app.log"
 echo "=============================================="
