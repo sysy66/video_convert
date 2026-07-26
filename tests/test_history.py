@@ -79,7 +79,7 @@ class TestHistoryMarks:
         h = History(str(tmp_path / "h.db"))
         h.mark_skipped("/v.mp4", "av1")
         assert h.is_not_required("/v.mp4")
-        assert h.get_cached_codec("/v.mp4") == "av1"
+        assert h.get_entry("/v.mp4")["codec"] == "av1"
 
     def test_mark_failed(self, tmp_path):
         h = History(str(tmp_path / "h.db"))

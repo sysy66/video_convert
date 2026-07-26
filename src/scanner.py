@@ -46,42 +46,43 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history):
 
             full_path = Path(root) / f
             entry = history.get_entry(str(full_path))
+
             if entry:
                 status = entry.get("status")
+
                 if status in ("success", "rejected", "not required", "started"):
                     continue
+
                 if status == "failed":
-                    completed = entry.get("completed_at", 0)
                     retry_count = entry.get("retry_count", 0)
                     delay = min(config.FAILED_RETRY_BASE * (2 ** retry_count), config.FAILED_RETRY_MAX)
+                    if delay >= config.FAILED_RETRY_MAX:
+                        log.warning("GAVE UP (exhausted retries): %s", full_path)
+                        history.mark_exhausted(str(full_path))
+                        continue
+                    completed = entry.get("completed_at", 0)
                     if time.time() - completed < delay:
                         log.debug("SKIP (cooldown %.1fh): %s", delay / 3600, f)
                         continue
 
-            candidates.append(full_path)
+                elif status == "ready":
+                    codec = entry.get("codec")
+                    if codec is None or codec not in skip_codecs:
+                        candidates.append(full_path)
+                    continue
 
-    if not candidates:
-        return []
+            codec = get_video_codec(full_path, ffprobe_path)
 
-    codec_filtered = []
-    for p in candidates:
-        codec = history.get_cached_codec(str(p))
-        if codec is None:
-            codec = get_video_codec(p, ffprobe_path)
             if codec is None:
-                log.warning("SKIP (probe failed): %s", p)
-                history.mark_probe_failed(str(p))
-                continue
+                log.warning("PROBE FAILED (queued anyway): %s", full_path)
+                history.mark_ready(str(full_path), codec=None)
+                candidates.append(full_path)
+            elif codec in skip_codecs:
+                history.mark_skipped(str(full_path), codec)
+                log.debug("SKIP (codec=%s): %s", codec, full_path)
+            else:
+                history.mark_ready(str(full_path), codec)
+                candidates.append(full_path)
 
-        if codec in skip_codecs:
-            history.mark_skipped(str(p), codec)
-            log.debug("SKIP (codec=%s): %s", codec, p)
-            continue
-
-        history.cache_codec(str(p), codec)
-        codec_filtered.append(p)
-
-    # 根据修改时间对结果进行排序（按时间先后）
-    # Sort results by modification time (chronological order)
-    codec_filtered.sort(key=lambda p: p.stat().st_mtime)
-    return codec_filtered
+    candidates.sort(key=lambda p: p.stat().st_mtime)
+    return candidates

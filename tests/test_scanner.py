@@ -161,11 +161,11 @@ class TestScannerCodecFilter:
             result = scan(str(tmp_path), {".mp4"}, {"hevc", "av1"}, "/ffprobe", _no_history())
         assert len(result) == 1
 
-    def test_skip_on_probe_failure(self, tmp_path):
+    def test_probe_failure_queues_anyway(self, tmp_path):
         _make_tree(tmp_path, {"v.mp4": ""})
         with patch("src.scanner.get_video_codec", return_value=None):
             result = scan(str(tmp_path), {".mp4"}, {"hevc", "av1"}, "/ffprobe", _no_history())
-        assert result == []
+        assert len(result) == 1
 
 
 class TestScannerSorting:

@@ -176,14 +176,6 @@ class History:
                 ),
             )
 
-    def mark_probe_failed(self, filepath):
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO files (filepath, status, error, skipped_at) "
-                "VALUES (?, 'not required', 'probe_failed', ?)",
-                (filepath, time.time()),
-            )
-
     def mark_skipped(self, filepath, codec):
         with self._lock:
             self._conn.execute(
@@ -192,20 +184,20 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def cache_codec(self, filepath, codec):
+    def mark_ready(self, filepath, codec=None):
         with self._lock:
             self._conn.execute(
-                "INSERT INTO files (filepath, status, codec) VALUES (?, 'queued', ?) "
-                "ON CONFLICT(filepath) DO UPDATE SET codec=excluded.codec",
+                "INSERT OR REPLACE INTO files (filepath, status, codec) "
+                "VALUES (?, 'ready', ?)",
                 (filepath, codec),
             )
 
-    def get_cached_codec(self, filepath):
+    def mark_exhausted(self, filepath):
         with self._lock:
-            row = self._conn.execute(
-                "SELECT codec FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
-        return row["codec"] if row and row["codec"] else None
+            self._conn.execute(
+                "UPDATE files SET status='rejected', error='exhausted_retries' WHERE filepath=?",
+                (filepath,),
+            )
 
     def mark_failed(self, filepath, error):
         with self._lock:
