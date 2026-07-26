@@ -1,5 +1,4 @@
 import os
-import logging
 
 # 多库支持：名称 → {input, output, cache} 映射。
 # Multi-library support: name → {input, output, cache} mapping.
@@ -120,16 +119,3 @@ VMAF_ACCEPT_LOW = 80      # VMAF < 此值时直接拒绝
 ACCEPT_RATIO_MAX = 1.00   # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
 ACCEPT_RATIO_LOW = 0.75   # VMAF 在中间区间时允许的最大 ratio
 
-_log_dir = os.path.dirname(LOG_FILE)
-if _log_dir:
-    os.makedirs(_log_dir, exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
-)

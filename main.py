@@ -1,4 +1,6 @@
+import argparse
 import logging
+import os
 import signal
 import sys
 import time
@@ -23,6 +25,79 @@ def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
+
+
+def _setup_logging():
+    _log_dir = os.path.dirname(config.LOG_FILE)
+    if _log_dir:
+        os.makedirs(_log_dir, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] %(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        handlers=[
+            logging.FileHandler(config.LOG_FILE),
+            logging.StreamHandler()
+        ]
+    )
+
+
+def _apply_cli_overrides():
+    parser = argparse.ArgumentParser(description="Video Transcoder")
+    parser.add_argument("-L", "--library", action="append", dest="libraries",
+                        metavar="NAME=PATH",
+                        help="Library definition: name=input_path or name=input:output:cache")
+    parser.add_argument("--scan-interval", type=int, metavar="SECONDS",
+                        help="Scan interval in seconds")
+    parser.add_argument("--max-workers", type=int, metavar="N",
+                        help="Maximum concurrent transcodes")
+    parser.add_argument("--log", metavar="FILE", help="Log file path")
+    parser.add_argument("--ffmpeg", metavar="PATH", help="FFmpeg binary path")
+    parser.add_argument("--ffprobe", metavar="PATH", help="FFprobe binary path")
+    parser.add_argument("--encoder", choices=["hevc", "av1"],
+                        help="Video encoder (hevc or av1)")
+    parser.add_argument("--no-vmaf", action="store_true",
+                        help="Disable VMAF quality check")
+    parser.add_argument("--vmaf", action="store_true",
+                        help="Enable VMAF quality check")
+
+    args = parser.parse_args()
+
+    if args.log:
+        config.LOG_FILE = args.log
+    if args.ffmpeg:
+        config.FFMPEG_PATH = args.ffmpeg
+    if args.ffprobe:
+        config.FFPROBE_PATH = args.ffprobe
+    if args.scan_interval is not None:
+        config.SCAN_INTERVAL = args.scan_interval
+    if args.max_workers is not None:
+        config.MAX_WORKERS = args.max_workers
+    if args.encoder:
+        config.VIDEO_ENCODER = args.encoder
+    if args.no_vmaf:
+        config.VMAF_ENABLED = False
+    if args.vmaf:
+        config.VMAF_ENABLED = True
+    if args.libraries:
+        raw = {}
+        for lib_def in args.libraries:
+            if "=" not in lib_def:
+                print(f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}")
+                sys.exit(1)
+            name, rest = lib_def.split("=", 1)
+            parts = rest.split(":")
+            if len(parts) == 1:
+                raw[name] = parts[0]
+            elif len(parts) == 3:
+                raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
+            else:
+                print(f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache")
+                sys.exit(1)
+        config._LIBRARIES_RAW = raw
+        config.LIBRARIES = config._normalize_libraries(raw)
+
+    return args
 
 
 def main_loop():
@@ -139,6 +214,9 @@ def main_loop():
 
 
 def main():
+    _apply_cli_overrides()
+    _setup_logging()
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
