@@ -8,7 +8,7 @@ import logging
 #   LIBRARIES = {"test1": "/mnt/test1"}
 # 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
 #   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
-_LIBRARIES_RAW = {"test1": {"input": "/mnt/test1", "cache": "/mnt/transcode_cache"}}
+_LIBRARIES_RAW = {"test1": {"input": "/mnt/NFS-5070-tmp1", "output": "/mnt/tmp0", "cache": "/mnt/transcode_cache"}}
 
 
 def _normalize_libraries(raw):
@@ -47,7 +47,7 @@ SKIP_CODECS = {"hevc", "av1"}
 # 编码目标 / Encoding target
 # "hevc" → hevc_qsv (HEVC Main10, Intel Iris Xe)
 # "av1"  → av1_qsv  (AV1, Intel Arc)
-VIDEO_ENCODER = "hevc"
+VIDEO_ENCODER = "av1"
 
 # 编码器独立参数 / Per-encoder settings
 ENCODER_PARAMS = {
