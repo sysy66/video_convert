@@ -13,7 +13,7 @@ This project uses Jellyfin FFmpeg for Intel QSV hardware acceleration.
 sudo apt update
 sudo apt install intel-media-va-driver vainfo
 
-# 2. 安装 Jellyfin FFmpeg
+# 2. 安装 Jellyfin FFmpeg（用于转码，含 QSV 硬件加速）
 curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash
 sudo apt install jellyfin-ffmpeg
 ```
@@ -22,14 +22,8 @@ sudo apt install jellyfin-ffmpeg
 ```bash
 # QSV 硬件加速
 vainfo
-/usr/lib/jellyfin-ffmpeg/ffmpeg -encoders | grep qsv
+/usr/lib/jellyfin-ffmpeg/ffmpeg -hwaccels
 /usr/lib/jellyfin-ffmpeg/ffprobe -version
-```
-
-If QSV is not available, update `config.py`:
-```python
-FFMPEG_PATH = "/usr/bin/ffmpeg"
-FFPROBE_PATH = "/usr/bin/ffprobe"
 ```
 
 ### Python
@@ -53,7 +47,6 @@ cd /path/to/video_convert
 
 ```
 video_convert/
-├── bin/                 # Static ffmpeg with libvmaf (excluded from git)
 ├── data/                # Runtime data: logs, history, models (excluded from git)
 │   ├── app.log
 │   ├── history.db               # SQLite (WAL mode)
@@ -136,7 +129,7 @@ It compares the original and transcoded video and produces a score (0–100).
 
 | Component | Path | Source |
 |-----------|------|--------|
-| Static ffmpeg (libvmaf) | `bin/ffmpeg` | johnvansickle.com |
+| Static ffmpeg (libvmaf) | `/usr/lib/johnvansickle-ffmpeg/ffmpeg` | johnvansickle.com |
 | VMAF model | `data/models/vmaf_v0.6.1.json` | Netflix/vmaf |
 | Python wrapper | `src/quality.py` | project source |
 
@@ -145,13 +138,15 @@ It compares the original and transcoded video and produces a score (0–100).
 #### Option A: Copy from existing machine (recommended for migration)
 
 ```bash
+sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
+
 # On the source machine
 tar czf vmaf-assets.tar.gz \
-  bin/ffmpeg \
+  /usr/lib/johnvansickle-ffmpeg/ffmpeg \
   data/models/vmaf_v0.6.1.json
 
 # Copy archive to the new machine, then:
-tar xzf vmaf-assets.tar.gz -C /path/to/video_convert
+sudo tar xzf vmaf-assets.tar.gz -C /
 ```
 
 #### Option B: Fresh install / 全新安装
@@ -160,12 +155,13 @@ tar xzf vmaf-assets.tar.gz -C /path/to/video_convert
 Provided by https://johnvansickle.com/ffmpeg/
 
 ```bash
-curl -Lo bin/ffmpeg.tar.xz \
+sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
+curl -Lo /tmp/ffmpeg.tar.xz \
   https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz
-tar -xf bin/ffmpeg.tar.xz --strip-components=1 \
-  ffmpeg-git-*-amd64-static/ffmpeg -C bin/
-rm bin/ffmpeg.tar.xz
-chmod +x bin/ffmpeg
+sudo tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
+  ffmpeg-git-*-amd64-static/ffmpeg -C /usr/lib/johnvansickle-ffmpeg/
+rm /tmp/ffmpeg.tar.xz
+sudo chmod +x /usr/lib/johnvansickle-ffmpeg/ffmpeg
 ```
 
 **VMAF model:**
@@ -182,7 +178,7 @@ curl -Lo data/models/vmaf_v0.6.1.json \
 python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENABLED)"
 ```
 
-`VMAF_ENABLED = True` when `bin/ffmpeg` exists.
+`VMAF_ENABLED = True` when `/usr/lib/johnvansickle-ffmpeg/ffmpeg` exists.
 
 ### Behaviour / 行为
 
