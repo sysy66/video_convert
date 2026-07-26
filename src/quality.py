@@ -95,44 +95,30 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
         + ["-filter_complex", filter_complex_str, "-an", "-f", "null", "-"]
     )
 
-    commands = [
-        [ffmpeg_path, "-hwaccel", "qsv", "-hwaccel_output_format", "none"] + base_cmd_part,
-        [ffmpeg_path] + base_cmd_part,
-    ]
+    cmd = [ffmpeg_path] + base_cmd_part
 
-    for attempt_idx, cmd in enumerate(commands):
-        try:
-            result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT)
-            if result.returncode != 0:
-                if attempt_idx == 0:
-                    log.warning(
-                        "VMAF QSV failed (rc=%d) for %s, retrying with software decode",
-                        result.returncode, transcoded_path.name,
-                    )
-                continue
-
-            if log_path is not None:
-                mean, _minimum = _read_vmaf_from_json(log_path)
-                if mean is not None:
-                    return mean
-
-            output = (result.stderr + result.stdout).decode("utf-8", errors="replace")
-            m = _VMAF_RE.search(output)
-            if m:
-                return float(m.group(1))
-
-            log.warning("VMAF score not found in ffmpeg output for %s", transcoded_path.name)
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT)
+        if result.returncode != 0:
+            log.warning("VMAF failed (rc=%d) for %s", result.returncode, transcoded_path.name)
             return None
-        except subprocess.TimeoutExpired:
-            if attempt_idx == 0:
-                log.warning("VMAF QSV timed out for %s, retrying with software decode", transcoded_path.name)
-            else:
-                log.warning("VMAF software decode also timed out for %s", transcoded_path.name)
-        except Exception as e:
-            if attempt_idx == 0:
-                log.warning("VMAF QSV failed for %s: %s, retrying with software decode", transcoded_path.name, e)
-            else:
-                log.warning("VMAF software decode also failed for %s: %s", transcoded_path.name, e)
+
+        if log_path is not None:
+            mean, _minimum = _read_vmaf_from_json(log_path)
+            if mean is not None:
+                return mean
+
+        output = (result.stderr + result.stdout).decode("utf-8", errors="replace")
+        m = _VMAF_RE.search(output)
+        if m:
+            return float(m.group(1))
+
+        log.warning("VMAF score not found in ffmpeg output for %s", transcoded_path.name)
+        return None
+    except subprocess.TimeoutExpired:
+        log.warning("VMAF timed out for %s", transcoded_path.name)
+    except Exception as e:
+        log.warning("VMAF failed for %s: %s", transcoded_path.name, e)
 
     return None
 
