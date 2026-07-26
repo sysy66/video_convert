@@ -89,7 +89,7 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             log_path = None
 
     cmd = (
-        [ffmpeg_path]
+        [ffmpeg_path, "-hwaccel", "qsv", "-hwaccel_output_format", "none"]
         + ["-i", str(original_path)]
         + ["-i", str(transcoded_path)]
         + ["-filter_complex", filter_complex.format(opts=":".join(opts)),
