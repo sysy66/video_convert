@@ -179,8 +179,8 @@ class History:
     def mark_probe_failed(self, filepath):
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO files (filepath, status, error, completed_at) "
-                "VALUES (?, 'failed', 'probe_failed', ?)",
+                "INSERT OR REPLACE INTO files (filepath, status, error, skipped_at) "
+                "VALUES (?, 'not required', 'probe_failed', ?)",
                 (filepath, time.time()),
             )
 
