@@ -176,6 +176,14 @@ class History:
                 ),
             )
 
+    def mark_probe_failed(self, filepath):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO files (filepath, status, error, completed_at) "
+                "VALUES (?, 'failed', 'probe_failed', ?)",
+                (filepath, time.time()),
+            )
+
     def mark_skipped(self, filepath, codec):
         with self._lock:
             self._conn.execute(

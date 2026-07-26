@@ -70,6 +70,7 @@ def scan(watch_dir, video_extensions, skip_codecs, ffprobe_path, history):
             codec = get_video_codec(p, ffprobe_path)
             if codec is None:
                 log.warning("SKIP (probe failed): %s", p)
+                history.mark_probe_failed(str(p))
                 continue
 
         if codec in skip_codecs:
