@@ -2,10 +2,11 @@
 
 ## 1. System Dependencies / 系统依赖
 
-### FFmpeg (for transcoding / 用于转码)
+### 1.1 FFmpeg — Jellyfin（用于转码 / for transcoding）
 
-本项目使用 Jellyfin FFmpeg 以获得 Intel QSV 硬件加速支持。
-This project uses Jellyfin FFmpeg for Intel QSV hardware acceleration.
+路径: `/usr/lib/jellyfin-ffmpeg/ffmpeg`
+
+用途：Intel QSV 硬件编码（`hevc_qsv` / `av1_qsv`）、`ffprobe` 探针、音视频解封装与复用。
 
 **Ubuntu / Debian:**
 ```bash
@@ -13,20 +14,49 @@ This project uses Jellyfin FFmpeg for Intel QSV hardware acceleration.
 sudo apt update
 sudo apt install intel-media-va-driver vainfo
 
-# 2. 安装 Jellyfin FFmpeg（用于转码，含 QSV 硬件加速）
+# 2. 安装 Jellyfin FFmpeg
 curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash
 sudo apt install jellyfin-ffmpeg
 ```
 
 **Verify:**
 ```bash
-# QSV 硬件加速
 vainfo
 /usr/lib/jellyfin-ffmpeg/ffmpeg -hwaccels
 /usr/lib/jellyfin-ffmpeg/ffprobe -version
 ```
 
-### Python
+### 1.2 FFmpeg — johnvansickle（用于 VMAF 评估 / for VMAF）
+
+路径: `/usr/lib/johnvansickle-ffmpeg/ffmpeg`
+
+用途：软件解码 + libvmaf 计算 VMAF 分数。该 ffmpeg 不参与转码，仅在质量评估阶段使用。
+
+**Ubuntu / Debian:**
+
+```bash
+sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
+curl -Lo /tmp/ffmpeg.tar.xz \
+  https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz
+sudo tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
+  ffmpeg-git-*-amd64-static/ffmpeg -C /usr/lib/johnvansickle-ffmpeg/
+rm /tmp/ffmpeg.tar.xz
+sudo chmod +x /usr/lib/johnvansickle-ffmpeg/ffmpeg
+
+mkdir -p data/models
+curl -Lo data/models/vmaf_v0.6.1.json \
+  https://raw.githubusercontent.com/Netflix/vmaf/master/model/vmaf_v0.6.1.json
+```
+
+**Verify:**
+```bash
+/usr/lib/johnvansickle-ffmpeg/ffmpeg -version
+python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENABLED)"
+```
+
+`VMAF_ENABLED = True` when `/usr/lib/johnvansickle-ffmpeg/ffmpeg` exists.
+
+### 1.3 Python
 
 No third-party Python packages are required. The project uses only the standard library.
 
@@ -125,60 +155,8 @@ LIBRARIES = {
 VMAF (Video Multi-Method Assessment Fusion) is an optional post-transcode quality check.
 It compares the original and transcoded video and produces a score (0–100).
 
-### Components
-
-| Component | Path | Source |
-|-----------|------|--------|
-| Static ffmpeg (libvmaf) | `/usr/lib/johnvansickle-ffmpeg/ffmpeg` | johnvansickle.com |
-| VMAF model | `data/models/vmaf_v0.6.1.json` | Netflix/vmaf |
-| Python wrapper | `src/quality.py` | project source |
-
-### Setup / 安装
-
-#### Option A: Copy from existing machine (recommended for migration)
-
-```bash
-sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
-
-# On the source machine
-tar czf vmaf-assets.tar.gz \
-  /usr/lib/johnvansickle-ffmpeg/ffmpeg \
-  data/models/vmaf_v0.6.1.json
-
-# Copy archive to the new machine, then:
-sudo tar xzf vmaf-assets.tar.gz -C /
-```
-
-#### Option B: Fresh install / 全新安装
-
-**ffmpeg (static build with libvmaf):**
-Provided by https://johnvansickle.com/ffmpeg/
-
-```bash
-sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
-curl -Lo /tmp/ffmpeg.tar.xz \
-  https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz
-sudo tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
-  ffmpeg-git-*-amd64-static/ffmpeg -C /usr/lib/johnvansickle-ffmpeg/
-rm /tmp/ffmpeg.tar.xz
-sudo chmod +x /usr/lib/johnvansickle-ffmpeg/ffmpeg
-```
-
-**VMAF model:**
-From Netflix/vmaf repository:
-```bash
-mkdir -p data/models
-curl -Lo data/models/vmaf_v0.6.1.json \
-  https://raw.githubusercontent.com/Netflix/vmaf/master/model/vmaf_v0.6.1.json
-```
-
-### Verify
-
-```bash
-python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENABLED)"
-```
-
-`VMAF_ENABLED = True` when `/usr/lib/johnvansickle-ffmpeg/ffmpeg` exists.
+Requires: `ffmpeg` at `/usr/lib/johnvansickle-ffmpeg/ffmpeg` and model at `data/models/vmaf_v0.6.1.json` (see [1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf)).
+Requires `src/quality.py` as the Python wrapper.
 
 ### Behaviour / 行为
 
