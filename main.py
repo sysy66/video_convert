@@ -142,7 +142,7 @@ def main_loop():
 
         log.info("SCAN: checking all libraries")
 
-        work_queue = queue.Queue(maxsize=config.MAX_WORKERS * 4)
+        work_queue = queue.Queue()
         lib_counts = {}
 
         def produce():
@@ -151,12 +151,7 @@ def main_loop():
                 for path in walk_directory(lib_info["input"], config.VIDEO_EXTENSIONS):
                     if not _running:
                         return
-                    while _running:
-                        try:
-                            work_queue.put((path, lib_info), timeout=1)
-                            break
-                        except queue.Full:
-                            pass
+                    work_queue.put((path, lib_info))
                     count += 1
                 if count:
                     log.info("  [%s] found %d file(s)", lib_name, count)
