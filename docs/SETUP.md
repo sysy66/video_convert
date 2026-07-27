@@ -56,7 +56,62 @@ python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENA
 
 `VMAF_ENABLED = True` when `/opt/johnvansickle-ffmpeg/ffmpeg` exists.
 
-### 1.3 Python
+### 1.3 FFmpeg — 自编译（QSV + libvmaf 统一版 / unified build）
+
+路径: `/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg`
+
+用途：将 Intel QSV 硬件编码（`hevc_qsv`）和 libvmaf 质量评估集成到同一个 ffmpeg 二进制中，
+替代之前需要两个独立 ffmpeg 的方案。该二进制供转码管线统一调用。
+
+**Ubuntu / Debian:**
+
+```bash
+# 1. 安装编译依赖
+sudo apt update
+sudo apt install build-essential pkg-config nasm \
+  libvmaf-dev libmfx-dev libva-dev
+
+# 2. 克隆 FFmpeg
+git clone https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
+cd /tmp/ffmpeg-src
+
+# 3. 配置（libvmaf + QSV 同时启用，其余编解码器由 configure 自动检测）
+./configure --prefix=/usr/local \
+  --enable-libvmaf --enable-libmfx \
+  --extra-ldflags="-L/usr/lib/x86_64-linux-gnu -lvmaf"
+
+# 4. 编译
+make -j$(nproc)
+
+# 5. 安装到独立目录（不覆盖系统 ffmpeg）
+sudo mkdir -p /usr/local/bin/ffmpeg-qsv-vmaf
+sudo make install DESTDIR=/tmp/ffmpeg-install
+sudo cp /tmp/ffmpeg-install/usr/local/bin/ffmpeg \
+  /usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg
+sudo cp /tmp/ffmpeg-install/usr/local/bin/ffprobe \
+  /usr/local/bin/ffmpeg-qsv-vmaf/ffprobe
+```
+
+**下载对应 VMAF 模型：**
+自编译 ffmpeg 通常链接较新版本 libvmaf，需使用负浮点特征模型：
+
+```bash
+mkdir -p data/models
+curl -Lo data/models/vmaf_v0.6.1neg.json \
+  https://raw.githubusercontent.com/Netflix/vmaf/master/model/vmaf_v0.6.1neg.json
+```
+
+**Verify:**
+
+```bash
+/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -hwaccels
+/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -filters | grep libvmaf
+/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -encoders | grep qsv
+```
+
+当此二进制存在时，将 `config.py` 中的 `FFMPEG_BACKEND = "custom"`，或通过 `_resolve_backend()` 自动检测。
+
+### 1.4 Python
 
 No third-party Python packages are required. The project uses only the standard library.
 
@@ -83,7 +138,8 @@ video_convert/
 │   ├── history.db-shm
 │   ├── history.db-wal
 │   ├── models/
-│   │   └── vmaf_v0.6.1.json
+│   │   ├── vmaf_v0.6.1.json       # prebuilt 后端使用（旧版整数特征）
+│   │   └── vmaf_v0.6.1neg.json    # custom 后端使用（新版负浮点特征）
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
@@ -155,8 +211,13 @@ LIBRARIES = {
 VMAF (Video Multi-Method Assessment Fusion) is an optional post-transcode quality check.
 It compares the original and transcoded video and produces a score (0–100).
 
-Requires: `ffmpeg` at `/opt/johnvansickle-ffmpeg/ffmpeg` and model at `data/models/vmaf_v0.6.1.json` (see [1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf)).
 Requires `src/quality.py` as the Python wrapper.
+
+不同后端使用不同的 VMAF 模型（在 `src/config.py` 的 `_BACKENDS` 中配置）：
+- `prebuilt` 后端 → `data/models/vmaf_v0.6.1.json`（旧版整数特征，johnvansickle / jellyfin ffmpeg）
+- `custom`  后端 → `data/models/vmaf_v0.6.1neg.json`（新版负浮点特征，自编译 ffmpeg）
+
+各模型的下载方式见对应后端的部署章节（[1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf) / [1.3](#13-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)）。
 
 ### Behaviour / 行为
 

@@ -30,18 +30,22 @@ def _normalize_libraries(raw):
 LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 
 
+_MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
+
 _BACKENDS = {
     "custom": (
         "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
         "/usr/local/bin/ffmpeg-qsv-vmaf/ffprobe",
         "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
         True,
+        os.path.join(_MODEL_DIR, "vmaf_v0.6.1neg.json"),
     ),
     "prebuilt": (
         "/usr/lib/jellyfin-ffmpeg/ffmpeg",
         "/usr/lib/jellyfin-ffmpeg/ffprobe",
         "/opt/johnvansickle-ffmpeg/ffmpeg",
         os.path.exists("/opt/johnvansickle-ffmpeg/ffmpeg"),
+        os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json"),
     ),
 }
 
@@ -50,7 +54,7 @@ def _resolve_backend(backend="prebuilt"):
     return _BACKENDS[backend]
 
 
-FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED = _resolve_backend("prebuilt")
+FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED, VMAF_MODEL_PATH = _resolve_backend("custom")
 
 SCAN_INTERVAL = 1200
 FAILED_RETRY_BASE = 3600
@@ -114,7 +118,6 @@ LOG_FILE = "data/app.log"
 # 转码历史数据库（SQLite）/ Transcoding history database (SQLite)
 HISTORY_FILE = "data/history.db"
 
-VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "vmaf_v0.6.1.json")
 # VMAF 采样间隔：每 N 帧只评估 1 帧。全片解码但大幅减少计算量。
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
