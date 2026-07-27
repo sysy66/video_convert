@@ -28,8 +28,29 @@ def _normalize_libraries(raw):
 
 
 LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
-FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
-FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
+
+
+_BACKENDS = {
+    "custom": (
+        "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
+        "/usr/local/bin/ffmpeg-qsv-vmaf/ffprobe",
+        "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
+        True,
+    ),
+    "prebuilt": (
+        "/usr/lib/jellyfin-ffmpeg/ffmpeg",
+        "/usr/lib/jellyfin-ffmpeg/ffprobe",
+        "/opt/johnvansickle-ffmpeg/ffmpeg",
+        os.path.exists("/opt/johnvansickle-ffmpeg/ffmpeg"),
+    ),
+}
+
+
+def _resolve_backend(backend="prebuilt"):
+    return _BACKENDS[backend]
+
+
+FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED = _resolve_backend("prebuilt")
 
 SCAN_INTERVAL = 1200
 FAILED_RETRY_BASE = 3600
@@ -93,12 +114,7 @@ LOG_FILE = "data/app.log"
 # 转码历史数据库（SQLite）/ Transcoding history database (SQLite)
 HISTORY_FILE = "data/history.db"
 
-# VMAF 质量评估 / VMAF quality assessment
-VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
 VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "vmaf_v0.6.1.json")
-# VMAF 启用条件：需要支持 libvmaf 的 ffmpeg 二进制。模型文件可选（不提供则使用内置模型）
-# Requires ffmpeg with libvmaf. Model file is optional (built-in model used if missing).
-VMAF_ENABLED = os.path.exists(VMAF_FFMPEG_PATH)
 # VMAF 采样间隔：每 N 帧只评估 1 帧。全片解码但大幅减少计算量。
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
@@ -119,4 +135,3 @@ VMAF_ACCEPT_HIGH = 93     # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80      # VMAF < 此值时直接拒绝
 ACCEPT_RATIO_MAX = 1.00   # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
 ACCEPT_RATIO_LOW = 0.75   # VMAF 在中间区间时允许的最大 ratio
-
