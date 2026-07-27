@@ -472,10 +472,13 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
 
         # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分）
         vmaf_score = None
+        vmaf_elapsed = None
         if config.VMAF_ENABLED and ratio <= config.ACCEPT_RATIO_MAX:
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+            vmaf_start = _time.monotonic()
             vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
+            vmaf_elapsed = _time.monotonic() - vmaf_start
 
         if should_accept(vmaf_score, ratio):
             if output_dir:
@@ -511,12 +514,12 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
                 history.mark_failed(str(filepath), f"File move failed: {e}")
                 return False
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
-            if vmaf_score is not None:
+            if vmaf_elapsed is not None:
                 log.info(
-                    "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, %.1fs)",
+                    "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
                     final_path.name, _format_size(output_size),
                     "smaller" if ratio < 1 else "larger",
-                    ratio * 100, vmaf_score, elapsed,
+                    ratio * 100, vmaf_score, elapsed, vmaf_elapsed,
                 )
             else:
                 log.info(
@@ -528,12 +531,20 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
         else:
             _cleanup_temp(temp_dir)
             history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
-            log.warning(
-                "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
-                filepath.name,
-                "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
-                ratio * 100, elapsed,
-            )
+            if vmaf_elapsed is not None:
+                log.warning(
+                    "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",
+                    filepath.name,
+                    "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
+                    ratio * 100, elapsed, vmaf_elapsed,
+                )
+            else:
+                log.warning(
+                    "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+                    filepath.name,
+                    "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
+                    ratio * 100, elapsed,
+                )
         return True
 
     except subprocess.TimeoutExpired:
