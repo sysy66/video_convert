@@ -28,20 +28,20 @@ vainfo
 
 ### 1.2 FFmpeg — johnvansickle（用于 VMAF 评估 / for VMAF）
 
-路径: `/usr/lib/johnvansickle-ffmpeg/ffmpeg`
+路径: `/opt/johnvansickle-ffmpeg/ffmpeg`
 
 用途：软件解码 + libvmaf 计算 VMAF 分数。该 ffmpeg 不参与转码，仅在质量评估阶段使用。
 
 **Ubuntu / Debian:**
 
 ```bash
-sudo mkdir -p /usr/lib/johnvansickle-ffmpeg
+sudo mkdir -p /opt/johnvansickle-ffmpeg
 curl -Lo /tmp/ffmpeg.tar.xz \
   https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz
 sudo tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
-  ffmpeg-git-*-amd64-static/ffmpeg -C /usr/lib/johnvansickle-ffmpeg/
+  ffmpeg-git-*-amd64-static/ffmpeg -C /opt/johnvansickle-ffmpeg/
 rm /tmp/ffmpeg.tar.xz
-sudo chmod +x /usr/lib/johnvansickle-ffmpeg/ffmpeg
+sudo chmod +x /opt/johnvansickle-ffmpeg/ffmpeg
 
 mkdir -p data/models
 curl -Lo data/models/vmaf_v0.6.1.json \
@@ -50,11 +50,11 @@ curl -Lo data/models/vmaf_v0.6.1.json \
 
 **Verify:**
 ```bash
-/usr/lib/johnvansickle-ffmpeg/ffmpeg -version
+/opt/johnvansickle-ffmpeg/ffmpeg -version
 python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENABLED)"
 ```
 
-`VMAF_ENABLED = True` when `/usr/lib/johnvansickle-ffmpeg/ffmpeg` exists.
+`VMAF_ENABLED = True` when `/opt/johnvansickle-ffmpeg/ffmpeg` exists.
 
 ### 1.3 Python
 
@@ -155,7 +155,7 @@ LIBRARIES = {
 VMAF (Video Multi-Method Assessment Fusion) is an optional post-transcode quality check.
 It compares the original and transcoded video and produces a score (0–100).
 
-Requires: `ffmpeg` at `/usr/lib/johnvansickle-ffmpeg/ffmpeg` and model at `data/models/vmaf_v0.6.1.json` (see [1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf)).
+Requires: `ffmpeg` at `/opt/johnvansickle-ffmpeg/ffmpeg` and model at `data/models/vmaf_v0.6.1.json` (see [1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf)).
 Requires `src/quality.py` as the Python wrapper.
 
 ### Behaviour / 行为

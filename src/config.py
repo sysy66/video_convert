@@ -94,7 +94,7 @@ LOG_FILE = "data/app.log"
 HISTORY_FILE = "data/history.db"
 
 # VMAF 质量评估 / VMAF quality assessment
-VMAF_FFMPEG_PATH = "/usr/lib/johnvansickle-ffmpeg/ffmpeg"
+VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
 VMAF_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models", "vmaf_v0.6.1.json")
 # VMAF 启用条件：需要支持 libvmaf 的 ffmpeg 二进制。模型文件可选（不提供则使用内置模型）
 # Requires ffmpeg with libvmaf. Model file is optional (built-in model used if missing).
