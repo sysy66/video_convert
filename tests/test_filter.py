@@ -95,19 +95,22 @@ class TestFilterFailed(unittest.TestCase):
 
 
 class TestFilterReady(unittest.TestCase):
-    def test_ready_with_hevc_skips(self):
+    @patch("src.filter.get_video_codec", return_value="hevc")
+    def test_ready_with_hevc_skips(self, mock_probe):
         entry = {"status": "ready", "codec": "hevc"}
         self.assertFalse(
             should_process(Path("/v.mp4"), _mock_history(entry), {"hevc", "av1"}, "/fp"),
         )
 
-    def test_ready_with_h264_passes(self):
+    @patch("src.filter.get_video_codec", return_value="h264")
+    def test_ready_with_h264_passes(self, mock_probe):
         entry = {"status": "ready", "codec": "h264"}
         self.assertTrue(
             should_process(Path("/v.mp4"), _mock_history(entry), {"hevc", "av1"}, "/fp"),
         )
 
-    def test_ready_with_none_codec_passes(self):
+    @patch("src.filter.get_video_codec", return_value=None)
+    def test_ready_with_none_codec_passes(self, mock_probe):
         entry = {"status": "ready", "codec": None}
         self.assertTrue(
             should_process(Path("/v.mp4"), _mock_history(entry), {"hevc", "av1"}, "/fp"),

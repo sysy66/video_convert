@@ -33,15 +33,7 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
                 log.debug("SKIP (cooldown %.1fh): %s", delay / 3600, filepath.name)
                 return False
 
-        if status == "ready":
-            codec = entry.get("codec")
-            if codec is not None and codec in skip_codecs:
-                log.debug("SKIP (codec=%s): %s", codec, filepath.name)
-                return False
-            return True
-
     codec = get_video_codec(filepath, ffprobe_path)
-
     if codec is None:
         log.warning("PROBE FAILED (queued anyway): %s", filepath)
         return True
