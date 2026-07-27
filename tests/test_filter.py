@@ -84,11 +84,11 @@ class TestFilterFailed(unittest.TestCase):
             )
 
     def test_exhausted_retries(self):
-        entry = {"status": "failed", "completed_at": 0, "retry_count": 99}
+        entry = {"status": "failed", "completed_at": 0, "retry_count": 0}
         h = _mock_history(entry)
         with (
             patch("src.filter.config.FAILED_RETRY_BASE", 3600),
-            patch("src.filter.config.FAILED_RETRY_MAX", 7200),
+            patch("src.filter.config.FAILED_RETRY_MAX_RETRIES", 0),
         ):
             self.assertFalse(should_process(Path("/v.mp4"), h, {"hevc"}, "/fp"))
             h.mark_exhausted.assert_called_once()

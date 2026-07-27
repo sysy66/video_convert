@@ -24,7 +24,7 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
         if status == "failed":
             retry_count = entry.get("retry_count", 0)
             delay = min(config.FAILED_RETRY_BASE * (2 ** retry_count), config.FAILED_RETRY_MAX)
-            if delay >= config.FAILED_RETRY_MAX:
+            if retry_count >= config.FAILED_RETRY_MAX_RETRIES:
                 log.warning("GAVE UP (exhausted retries): %s", filepath)
                 history.mark_exhausted(str(filepath))
                 return False
