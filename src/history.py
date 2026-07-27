@@ -184,14 +184,6 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def mark_ready(self, filepath, codec=None):
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO files (filepath, status, codec) "
-                "VALUES (?, 'ready', ?)",
-                (filepath, codec),
-            )
-
     def mark_exhausted(self, filepath):
         with self._lock:
             self._conn.execute(
