@@ -57,8 +57,14 @@ def _apply_cli_overrides():
     parser.add_argument("--ffprobe", metavar="PATH", help="FFprobe binary path")
     parser.add_argument("--encoder", choices=["hevc", "av1"],
                         help="Video encoder (hevc or av1)")
-    parser.add_argument("--ffmpeg-backend", choices=["prebuilt", "custom"],
-                        help="FFmpeg backend: prebuilt (jellyfin+vansickle) or custom (qsv+vmaf)")
+    parser.add_argument("--vmaf-ffmpeg", metavar="PATH",
+                        help="FFmpeg path for VMAF scoring (default: John van Sickle build)")
+    parser.add_argument("--vmaf-model", metavar="PATH",
+                        help="VMAF model file path (default: data/models/vmaf_v0.6.1.json)")
+    parser.add_argument("--vmaf-hwaccel", action="store_true",
+                        help="Enable VMAF QSV hardware decode acceleration")
+    parser.add_argument("--vmaf-hw-fallback", action="store_true",
+                        help="Enable VMAF HW→SW fallback when HW path fails")
     parser.add_argument("--no-vmaf", action="store_true",
                         help="Disable VMAF quality check")
     parser.add_argument("--vmaf", action="store_true",
@@ -80,10 +86,14 @@ def _apply_cli_overrides():
         config.MAX_WORKERS = args.max_workers
     if args.encoder:
         config.VIDEO_ENCODER = args.encoder
-    if args.ffmpeg_backend:
-        (config.FFMPEG_PATH, config.FFPROBE_PATH,
-         config.VMAF_FFMPEG_PATH, config.VMAF_ENABLED,
-         config.VMAF_MODEL_PATH) = config._resolve_backend(args.ffmpeg_backend)
+    if args.vmaf_ffmpeg:
+        config.VMAF_FFMPEG_PATH = args.vmaf_ffmpeg
+    if args.vmaf_model:
+        config.VMAF_MODEL_PATH = args.vmaf_model
+    if args.vmaf_hwaccel:
+        config.VMAF_HWACCEL = True
+    if args.vmaf_hw_fallback:
+        config.VMAF_HW_FALLBACK = True
     if args.no_vmaf:
         config.VMAF_ENABLED = False
     if args.vmaf:

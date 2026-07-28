@@ -113,7 +113,7 @@ curl -Lo data/models/vmaf_v0.6.1neg.json \
 /opt/ffmpeg-qsv-vmaf/bin/ffmpeg -encoders | grep qsv
 ```
 
-当此二进制存在时，将 `config.py` 中的 `FFMPEG_BACKEND = "custom"`，或通过 `_resolve_backend()` 自动检测。
+使用 `--ffmpeg /opt/ffmpeg-qsv-vmaf/bin/ffmpeg --ffprobe /opt/ffmpeg-qsv-vmaf/bin/ffprobe` 切换到此自定义构建。
 
 ### 1.4 Python
 
@@ -217,11 +217,11 @@ It compares the original and transcoded video and produces a score (0–100).
 
 Requires `src/quality.py` as the Python wrapper.
 
-不同后端使用不同的 VMAF 模型（在 `src/config.py` 的 `_BACKENDS` 中配置）：
-- `prebuilt` 后端 → `data/models/vmaf_v0.6.1.json`（旧版整数特征，johnvansickle / jellyfin ffmpeg）
-- `custom`  后端 → `data/models/vmaf_v0.6.1neg.json`（新版负浮点特征，自编译 ffmpeg）
+VMAF 模型文件（`data/models/vmaf_v0.6.1.json`，旧版整数特征，适合 johnvansickle / jellyfin ffmpeg）。
+自编译 QSV+libvmaf 版 ffmpeg 可使用 `data/models/vmaf_v0.6.1neg.json`（新版负浮点特征），
+通过 `--vmaf-ffmpeg` CLI 指定路径，并在 `VMAF_MODEL_PATH` 中手动配置对应模型。
 
-各模型的下载方式见对应后端的部署章节（[1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf) / [1.3](#13-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)）。
+各模型的下载方式见对应部署章节（[1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf) / [1.3](#13-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)）。
 
 ### Behaviour / 行为
 

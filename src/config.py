@@ -32,29 +32,11 @@ LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 
 _MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
 
-_BACKENDS = {
-    "custom": (
-        "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg",
-        "/opt/ffmpeg-qsv-vmaf/bin/ffprobe",
-        "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg",
-        True,
-        os.path.join(_MODEL_DIR, "vmaf_v0.6.1neg.json"),
-    ),
-    "prebuilt": (
-        "/usr/lib/jellyfin-ffmpeg/ffmpeg",
-        "/usr/lib/jellyfin-ffmpeg/ffprobe",
-        "/opt/johnvansickle-ffmpeg/ffmpeg",
-        os.path.exists("/opt/johnvansickle-ffmpeg/ffmpeg"),
-        os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json"),
-    ),
-}
-
-
-def _resolve_backend(backend="prebuilt"):
-    return _BACKENDS[backend]
-
-
-FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED, VMAF_MODEL_PATH = _resolve_backend()
+FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
+VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
+VMAF_ENABLED = os.path.exists("/opt/johnvansickle-ffmpeg/ffmpeg")
+VMAF_MODEL_PATH = os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json")
 
 SCAN_INTERVAL = 1200
 FAILED_RETRY_BASE = 3600
@@ -131,8 +113,8 @@ VMAF_LOG_RETENTION_DAYS = 7
 VMAF_TIMEOUT = 7200
 # VMAF 开启 QSV 硬件加速解码（HW VMAF 失败时自动回退到纯软件）
 # Enable QSV hardware-accelerated decoding for VMAF (falls back to software on failure)
-VMAF_HWACCEL = True
-VMAF_HW_FALLBACK = True
+VMAF_HWACCEL = False
+VMAF_HW_FALLBACK = False
 # VMAF 是否为转码的硬性要求：True=不可用时拒绝，False=不可用时仍接受（仅按大小比判断）。
 # Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
 VMAF_REQUIRED = True
