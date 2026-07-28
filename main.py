@@ -82,7 +82,8 @@ def _apply_cli_overrides():
         config.VIDEO_ENCODER = args.encoder
     if args.ffmpeg_backend:
         (config.FFMPEG_PATH, config.FFPROBE_PATH,
-         config.VMAF_FFMPEG_PATH, config.VMAF_ENABLED) = config._resolve_backend(args.ffmpeg_backend)
+         config.VMAF_FFMPEG_PATH, config.VMAF_ENABLED,
+         config.VMAF_MODEL_PATH) = config._resolve_backend(args.ffmpeg_backend)
     if args.no_vmaf:
         config.VMAF_ENABLED = False
     if args.vmaf:
