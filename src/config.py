@@ -34,9 +34,9 @@ _MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "m
 
 _BACKENDS = {
     "custom": (
-        "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
-        "/usr/local/bin/ffmpeg-qsv-vmaf/ffprobe",
-        "/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg",
+        "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg",
+        "/opt/ffmpeg-qsv-vmaf/bin/ffprobe",
+        "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg",
         True,
         os.path.join(_MODEL_DIR, "vmaf_v0.6.1neg.json"),
     ),
