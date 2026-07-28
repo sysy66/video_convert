@@ -8,15 +8,4 @@ __pycache__/
 
 .proxyai/
 
-data/app.log
-app.log.hevc
-app.log.av1
-data/test_app.log
-data/ai_report.md
-data/history.json
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/vmaf_logs/
-data/temp/
-bin/
+data/
