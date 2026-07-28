@@ -54,7 +54,7 @@ def _resolve_backend(backend="prebuilt"):
     return _BACKENDS[backend]
 
 
-FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED, VMAF_MODEL_PATH = _resolve_backend("custom")
+FFMPEG_PATH, FFPROBE_PATH, VMAF_FFMPEG_PATH, VMAF_ENABLED, VMAF_MODEL_PATH = _resolve_backend()
 
 SCAN_INTERVAL = 1200
 FAILED_RETRY_BASE = 3600
