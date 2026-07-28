@@ -58,7 +58,7 @@ python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENA
 
 ### 1.3 FFmpeg — 自编译（QSV + libvmaf 统一版 / unified build）
 
-路径: `/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg`
+路径: `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg`
 
 用途：将 Intel QSV 硬件编码（`hevc_qsv`）和 libvmaf 质量评估集成到同一个 ffmpeg 二进制中，
 替代之前需要两个独立 ffmpeg 的方案。该二进制供转码管线统一调用。
@@ -68,28 +68,32 @@ python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENA
 ```bash
 # 1. 安装编译依赖
 sudo apt update
-sudo apt install build-essential pkg-config nasm \
-  libvmaf-dev libmfx-dev libva-dev
+sudo apt install build-essential pkg-config nasm meson \
+  libvpl-dev libva-dev
 
-# 2. 克隆 FFmpeg
-git clone https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
+# 2. 编译 libvmaf（Debian trixie 没有 libvmaf-dev 包，需从 Netflix 源码编译）
+git clone https://github.com/Netflix/vmaf.git /tmp/vmaf-src
+cd /tmp/vmaf-src/libvmaf
+meson setup build --buildtype release
+ninja -C build
+sudo ninja -C build install
+sudo ldconfig
+
+# 3. 克隆 FFmpeg（--depth 1 只取最新源码，避免完整克隆过大导致断线）
+git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
 cd /tmp/ffmpeg-src
 
-# 3. 配置（libvmaf + QSV 同时启用，其余编解码器由 configure 自动检测）
-./configure --prefix=/usr/local \
-  --enable-libvmaf --enable-libmfx \
-  --extra-ldflags="-L/usr/lib/x86_64-linux-gnu -lvmaf"
+# 4. 配置（libvmaf + QSV 同时启用，嵌入 RUNPATH 使二进制自带库搜索路径）
+./configure --prefix=/opt/ffmpeg-qsv-vmaf \
+  --disable-static --enable-shared \
+  --enable-libvpl --enable-libvmaf \
+  --enable-gpl --enable-version3 \
+  --enable-ffprobe --disable-doc \
+  --extra-ldflags='-Wl,-rpath,/opt/ffmpeg-qsv-vmaf/lib'
 
-# 4. 编译
+# 5. 编译 & 安装
 make -j$(nproc)
-
-# 5. 安装到独立目录（不覆盖系统 ffmpeg）
-sudo mkdir -p /usr/local/bin/ffmpeg-qsv-vmaf
-sudo make install DESTDIR=/tmp/ffmpeg-install
-sudo cp /tmp/ffmpeg-install/usr/local/bin/ffmpeg \
-  /usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg
-sudo cp /tmp/ffmpeg-install/usr/local/bin/ffprobe \
-  /usr/local/bin/ffmpeg-qsv-vmaf/ffprobe
+sudo make install
 ```
 
 **下载对应 VMAF 模型：**
@@ -104,9 +108,9 @@ curl -Lo data/models/vmaf_v0.6.1neg.json \
 **Verify:**
 
 ```bash
-/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -hwaccels
-/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -filters | grep libvmaf
-/usr/local/bin/ffmpeg-qsv-vmaf/ffmpeg -encoders | grep qsv
+/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -hwaccels
+/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -filters | grep libvmaf
+/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -encoders | grep qsv
 ```
 
 当此二进制存在时，将 `config.py` 中的 `FFMPEG_BACKEND = "custom"`，或通过 `_resolve_backend()` 自动检测。
