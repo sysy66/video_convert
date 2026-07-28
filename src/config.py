@@ -129,6 +129,10 @@ VMAF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", 
 # VMAF log retention in days; older per-frame json logs are auto-purged.
 VMAF_LOG_RETENTION_DAYS = 7
 VMAF_TIMEOUT = 7200
+# VMAF 开启 QSV 硬件加速解码（HW VMAF 失败时自动回退到纯软件）
+# Enable QSV hardware-accelerated decoding for VMAF (falls back to software on failure)
+VMAF_HWACCEL = True
+VMAF_HW_FALLBACK = True
 # VMAF 是否为转码的硬性要求：True=不可用时拒绝，False=不可用时仍接受（仅按大小比判断）。
 # Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
 VMAF_REQUIRED = True
