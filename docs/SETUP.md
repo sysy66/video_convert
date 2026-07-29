@@ -60,7 +60,7 @@ python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENA
 
 路径: `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg`
 
-用途：将 Intel QSV 硬件编码（`hevc_qsv`）和 libvmaf 质量评估集成到同一个 ffmpeg 二进制中，
+用途：将 Intel QSV 硬件编码（`hevc_qsv` / `av1_qsv`）和 libvmaf 质量评估集成到同一个 ffmpeg 二进制中，
 替代之前需要两个独立 ffmpeg 的方案。该二进制供转码管线统一调用。
 
 **Ubuntu / Debian:**
@@ -142,8 +142,8 @@ video_convert/
 │   ├── history.db-shm
 │   ├── history.db-wal
 │   ├── models/
-│   │   ├── vmaf_v0.6.1.json       # prebuilt 后端使用（旧版整数特征）
-│   │   └── vmaf_v0.6.1neg.json    # custom 后端使用（新版负浮点特征）
+│   │   ├── vmaf_v0.6.1.json       # 旧版整数特征
+│   │   └── vmaf_v0.6.1neg.json    # 新版负浮点特征
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
