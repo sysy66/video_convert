@@ -1,14 +1,18 @@
 import json
+import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 
-api_url, api_model, log_path, output_path = sys.argv[1:]
+args = sys.argv[1:]
+api_url, api_model, log_path, output_path = args[:4]
+context = args[4] if len(args) > 4 else ""
 
 with open(log_path) as f:
     log_content = f.read()
 
-system_prompt = (
+system_prompt = os.environ.get(
+    "AI_SYSTEM_PROMPT",
     "You are a professional video transcoding quality analyst. "
     "Analyze the QSV AV1 transcoding pipeline log and provide a structured report covering:\n"
     "1. Summary: files processed, accepted, rejected, errors\n"
@@ -16,14 +20,14 @@ system_prompt = (
     "3. Anomalies: warnings (QSV SW FALLBACK, REJECT), errors, unexpected behavior\n"
     "4. Performance: encoding speed, bottlenecks, encoder settings assessment\n"
     "5. Recommendations: config changes to improve quality, speed, or reliability\n"
-    "Format the output in clean Markdown. All content must be in Simplified Chinese (简体中文)."
+    "Format the output in clean Markdown. All content must be in Simplified Chinese (简体中文).",
 )
 
-user_content = (
-    "Here is the transcoder log:\n\n```\n"
-    + log_content
-    + "\n```\n\nAnalyze it according to the instructions above."
-)
+user_parts = []
+if context:
+    user_parts.append(f"本次运行配置：{context}")
+user_parts.append("以下是转码日志：\n\n```\n" + log_content + "\n```")
+user_content = "\n\n".join(user_parts)
 
 payload = {
     "model": api_model,
