@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import logging
 import os
 import queue
@@ -223,6 +224,14 @@ def main_loop():
 def main():
     _apply_cli_overrides()
     _setup_logging()
+
+    lock_file = os.path.join(os.path.dirname(config.LOG_FILE), ".transcoder.lock")
+    try:
+        lock_fd = open(lock_file, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError) as e:
+        log.error("Another instance is already running (%s locked): %s", lock_file, e)
+        sys.exit(1)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
