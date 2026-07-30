@@ -97,8 +97,8 @@ def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=Fal
             "[dist][ref]libvmaf={opts}"
         )
         input_parts = (
-            ["-i", str(original_path)]
-            + ["-i", str(transcoded_path)]
+            ["-hwaccel", "none", "-i", str(original_path)]
+            + ["-hwaccel", "none", "-i", str(transcoded_path)]
         )
 
     opts = []
@@ -125,9 +125,12 @@ def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=Fal
     tag = "HW" if hwaccel else "SW"
 
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT)
+        env = {**os.environ, "LIBVA_DRIVER_NAME": ""} if not hwaccel else None
+        result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT, env=env)
         if result.returncode != 0:
-            log.warning("VMAF [%s] failed (rc=%d) for %s", tag, result.returncode, transcoded_path.name)
+            err = result.stderr.decode("utf-8", errors="replace")[:3000]
+            log.warning("VMAF [%s] failed (rc=%d) for %s: %s",
+                        tag, result.returncode, transcoded_path.name, err)
             return None
 
         if log_path is not None:
@@ -186,8 +189,12 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             return score
         if config.VMAF_HW_FALLBACK:
             log.info("VMAF HW attempt failed, falling back to software decode")
-        else:
-            return None
+            sw_log_path = None
+            if log_path is not None:
+                sw_log_path = log_path.with_name(log_path.stem + "_sw" + log_path.suffix)
+            return _run_vmaf(original_path, transcoded_path, config.DEFAULT_VMAF_FFMPEG_PATH,
+                             sw_log_path, hwaccel=False)
+        return None
 
     return _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False)
 

@@ -35,6 +35,7 @@ _MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "m
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
+DEFAULT_VMAF_FFMPEG_PATH = VMAF_FFMPEG_PATH  # 不被 main.py 覆盖，用于 SW VMAF 回退
 VMAF_ENABLED = os.path.exists("/opt/johnvansickle-ffmpeg/ffmpeg")
 VMAF_MODEL_PATH = os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json")
 
