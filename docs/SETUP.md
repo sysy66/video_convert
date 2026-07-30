@@ -66,12 +66,17 @@ python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENA
 **Ubuntu / Debian:**
 
 ```bash
-# 1. 安装编译依赖
+# 1. 安装 Intel GPU 驱动（QSV 所需，建议从 Intel 官方 repo 获取最新版）
+wget -O- https://repositories.intel.com/gpu/intel-graphics.key | sudo gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" | sudo tee /etc/apt/sources.list.d/intel-gpu.list
 sudo apt update
-sudo apt install build-essential pkg-config nasm meson \
-  libvpl-dev libva-dev
+sudo apt install intel-media-va-driver vainfo
 
-# 2. 编译 libvmaf（Debian trixie 没有 libvmaf-dev 包，需从 Netflix 源码编译）
+# 2. 安装编译依赖
+sudo apt install build-essential pkg-config nasm meson \
+  libvpl-dev libva-dev libdav1d-dev
+
+# 3. 编译 libvmaf（Debian trixie 没有 libvmaf-dev 包，需从 Netflix 源码编译）
 git clone https://github.com/Netflix/vmaf.git /tmp/vmaf-src
 cd /tmp/vmaf-src/libvmaf
 meson setup build --buildtype release
@@ -79,19 +84,19 @@ ninja -C build
 sudo ninja -C build install
 sudo ldconfig
 
-# 3. 克隆 FFmpeg（--depth 1 只取最新源码，避免完整克隆过大导致断线）
+# 4. 克隆 FFmpeg（--depth 1 只取最新源码，避免完整克隆过大导致断线）
 git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
 cd /tmp/ffmpeg-src
 
-# 4. 配置（libvmaf + QSV 同时启用，嵌入 RUNPATH 使二进制自带库搜索路径）
+# 5. 配置（libvmaf + QSV 同时启用，嵌入 RUNPATH 使二进制自带库搜索路径）
 ./configure --prefix=/opt/ffmpeg-qsv-vmaf \
   --disable-static --enable-shared \
-  --enable-libvpl --enable-libvmaf \
+  --enable-libvpl --enable-libvmaf --enable-libdav1d \
   --enable-gpl --enable-version3 \
   --enable-ffprobe --disable-doc \
   --extra-ldflags='-Wl,-rpath,/opt/ffmpeg-qsv-vmaf/lib'
 
-# 5. 编译 & 安装
+# 6. 编译 & 安装
 make -j$(nproc)
 sudo make install
 ```
