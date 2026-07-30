@@ -1,7 +1,9 @@
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import main
+from src import config
 
 
 def _reset_running():
@@ -15,6 +17,37 @@ class TestSignalHandler:
         main._running = True
         main.signal_handler(signal.SIGINT, None)
         assert main._running is False
+
+
+class TestCliOverrides:
+    def test_no_vmaf_sets_required_false(self):
+        original = config.VMAF_REQUIRED
+        try:
+            with patch.object(sys, "argv", ["main", "--no-vmaf"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_REQUIRED is False
+        finally:
+            config.VMAF_REQUIRED = original
+
+    def test_vmaf_sets_required_true(self):
+        original = config.VMAF_REQUIRED
+        try:
+            config.VMAF_REQUIRED = False
+            with patch.object(sys, "argv", ["main", "--vmaf"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_REQUIRED is True
+        finally:
+            config.VMAF_REQUIRED = original
+
+    def test_default_leaves_required_unchanged(self):
+        original = config.VMAF_REQUIRED
+        try:
+            config.VMAF_REQUIRED = True
+            with patch.object(sys, "argv", ["main"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_REQUIRED is True
+        finally:
+            config.VMAF_REQUIRED = original
 
 
 class TestMainLoop:

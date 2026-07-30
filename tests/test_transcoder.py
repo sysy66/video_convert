@@ -257,6 +257,38 @@ class TestTranscode:
         history.mark_failed.assert_called_once()
         history.mark_done.assert_not_called()
 
+    def test_vmaf_required_reject_when_ratio_exceeds_max(self, tmp_path):
+        # _fake_progress writes 10-byte output; tiny input makes ratio >> max
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("x" * 19)
+
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", True),
+            patch("src.transcoder.config.ACCEPT_RATIO_MAX", 0.5),
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+
+    def test_vmaf_not_required_accepts_on_ratio_only(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video" * 10)
+
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", False),
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+
 
 class TestCleanupTemp:
     def test_removes_existing_dir(self, tmp_path):
