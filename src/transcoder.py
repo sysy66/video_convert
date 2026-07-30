@@ -419,7 +419,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
         log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(
-            cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
+            cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
         )
 
         # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
@@ -442,7 +442,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
             cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
             log.info("FFMPEG CMD (sw fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd))
             returncode, stderr = _run_ffmpeg_with_progress(
-                cmd, total_duration, filepath.name, timeout=config.PER_FILE_TIMEOUT
+                cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
             )
 
         # 最终 stderr 写入 .ffmpeg.log

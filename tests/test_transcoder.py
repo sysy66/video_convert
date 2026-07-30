@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from src import config
 from src.transcoder import transcode, _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs
 
 _VIDEO_AAC = {
@@ -288,6 +289,21 @@ class TestTranscode:
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
         assert result is True
+
+    def test_codec_timeout_is_passed(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")) as mock_run,
+            patch("src.transcoder.compute_vmaf", return_value=95.0),
+        ):
+            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
 
 
 class TestCleanupTemp:

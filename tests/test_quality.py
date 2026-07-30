@@ -230,6 +230,20 @@ class TestRunVmaf:
         assert "-hwaccel" in call_args
         assert "qsv" in call_args
 
+    def test_vmaf_timeout_is_passed(self, tmp_path):
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+            with patch("subprocess.run", return_value=result) as mock_run:
+                with patch("src.quality._read_vmaf_from_json", return_value=(94.0, 90.0)):
+                    _run_vmaf(ref, dist, "/ffmpeg", tmp_path / "out.json", hwaccel=False)
+
+        assert mock_run.call_args[1]["timeout"] == config.VMAF_TIMEOUT
+
 
 class TestComputeVmaf:
     def test_returns_none_when_no_ffmpeg_path(self, tmp_path):
