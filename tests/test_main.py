@@ -49,6 +49,28 @@ class TestCliOverrides:
         finally:
             config.VMAF_REQUIRED = original
 
+    def test_encoder_adds_to_skip_codecs(self):
+        original_encoder = config.VIDEO_ENCODER
+        original_skip = config.SKIP_CODECS.copy()
+        try:
+            with patch.object(sys, "argv", ["main", "--encoder", "hevc"]):
+                main._apply_cli_overrides()
+            assert config.VIDEO_ENCODER == "hevc"
+            assert "hevc" in config.SKIP_CODECS
+        finally:
+            config.VIDEO_ENCODER = original_encoder
+            config.SKIP_CODECS = original_skip
+
+    def test_skip_codecs_appends(self):
+        original = config.SKIP_CODECS.copy()
+        try:
+            with patch.object(sys, "argv", ["main", "--skip-codecs", "vc1", "vp9"]):
+                main._apply_cli_overrides()
+            assert "vc1" in config.SKIP_CODECS
+            assert "vp9" in config.SKIP_CODECS
+        finally:
+            config.SKIP_CODECS = original
+
 
 class TestMainLoop:
     def test_calls_walker(self):

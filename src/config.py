@@ -48,7 +48,7 @@ TEMP_PREFIX = ".work_"
 
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wmv", ".flv", ".webm", ".rmvb"}
 
-SKIP_CODECS = {"hevc", "av1"}
+SKIP_CODECS = set()
 
 # 编码目标 / Encoding target
 # "hevc" → hevc_qsv (HEVC Main10, Intel Iris Xe)

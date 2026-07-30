@@ -58,6 +58,9 @@ def _apply_cli_overrides():
     parser.add_argument("--ffprobe", metavar="PATH", help="FFprobe binary path")
     parser.add_argument("--encoder", choices=["hevc", "av1"],
                         help="Video encoder (hevc or av1)")
+    parser.add_argument("--skip-codecs", nargs="+", default=[],
+                        metavar="CODEC",
+                        help="Additional codecs to skip (space-separated)")
     parser.add_argument("--vmaf-ffmpeg", metavar="PATH",
                         help="FFmpeg path for VMAF scoring (default: John van Sickle build)")
     parser.add_argument("--vmaf-model", metavar="PATH",
@@ -87,6 +90,9 @@ def _apply_cli_overrides():
         config.MAX_WORKERS = args.max_workers
     if args.encoder:
         config.VIDEO_ENCODER = args.encoder
+    config.SKIP_CODECS.add(config.VIDEO_ENCODER)
+    if args.skip_codecs:
+        config.SKIP_CODECS.update(args.skip_codecs)
     if args.vmaf_ffmpeg:
         config.VMAF_FFMPEG_PATH = args.vmaf_ffmpeg
     if args.vmaf_model:
