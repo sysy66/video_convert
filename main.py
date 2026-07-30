@@ -96,9 +96,9 @@ def _apply_cli_overrides():
     if args.vmaf_hw_fallback:
         config.VMAF_HW_FALLBACK = True
     if args.no_vmaf:
-        config.VMAF_ENABLED = False
+        config.VMAF_REQUIRED = False
     if args.vmaf:
-        config.VMAF_ENABLED = True
+        config.VMAF_REQUIRED = True
     if args.libraries:
         raw = {}
         for lib_def in args.libraries:

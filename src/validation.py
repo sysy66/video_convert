@@ -47,18 +47,18 @@ def validate_config():
         errors.extend(e)
         warnings.extend(w)
 
-    # 3. VMAF dependencies (warnings only — non-blocking)
-    if config.VMAF_ENABLED:
+    # 3. VMAF dependencies (error if VMAF_REQUIRED)
+    if config.VMAF_REQUIRED:
         if not os.path.isfile(config.VMAF_FFMPEG_PATH):
-            warnings.append(
-                f"VMAF_ENABLED is True but VMAF_FFMPEG_PATH not found: {config.VMAF_FFMPEG_PATH}"
+            errors.append(
+                f"VMAF_REQUIRED is True but VMAF_FFMPEG_PATH not found: {config.VMAF_FFMPEG_PATH}"
             )
         elif not os.access(config.VMAF_FFMPEG_PATH, os.X_OK):
-            warnings.append(
+            errors.append(
                 f"VMAF_FFMPEG_PATH not executable: {config.VMAF_FFMPEG_PATH}"
             )
         if config.VMAF_MODEL_PATH and not os.path.isfile(config.VMAF_MODEL_PATH):
-            warnings.append(
+            errors.append(
                 f"VMAF_MODEL_PATH not found (built-in model will be used): {config.VMAF_MODEL_PATH}"
             )
 

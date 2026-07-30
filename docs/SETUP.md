@@ -74,7 +74,7 @@ sudo apt install intel-media-va-driver vainfo
 
 # 2. 安装编译依赖
 sudo apt install build-essential pkg-config nasm meson \
-  libvpl-dev libva-dev libdav1d-dev
+  libvpl-dev libva-dev libdav1d-dev libmfx-gen1.2
 
 # 3. 编译 libvmaf（Debian trixie 没有 libvmaf-dev 包，需从 Netflix 源码编译）
 git clone https://github.com/Netflix/vmaf.git /tmp/vmaf-src

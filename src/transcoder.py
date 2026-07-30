@@ -473,7 +473,7 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
         # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分）
         vmaf_score = None
         vmaf_elapsed = None
-        if config.VMAF_ENABLED and ratio <= config.ACCEPT_RATIO_MAX:
+        if config.VMAF_REQUIRED and ratio <= config.ACCEPT_RATIO_MAX:
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
             vmaf_start = _time.monotonic()
