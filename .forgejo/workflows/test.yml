@@ -1,0 +1,17 @@
+name: Test
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: test-runner
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test dependencies
+        run: pip install --break-system-packages -e '.[test]'
+      - name: Run tests
+        run: pytest tests/ -v --cov
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .
