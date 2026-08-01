@@ -130,7 +130,7 @@ def _apply_cli_overrides():
         for lib_def in args.libraries:
             if "=" not in lib_def:
                 print(
-                    f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}"
+                    f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
                 )
                 sys.exit(1)
             name, rest = lib_def.split("=", 1)
@@ -141,7 +141,7 @@ def _apply_cli_overrides():
                 raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
             else:
                 print(
-                    f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache"
+                    f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
                 )
                 sys.exit(1)
         config._LIBRARIES_RAW = raw
@@ -198,22 +198,22 @@ def main_loop():
                 for path in walk_directory(lib_info["input"], config.VIDEO_EXTENSIONS):
                     if not _running:
                         return
-                    work_queue.put((path, lib_info))
+                    work_queue.put((path, lib_info))  # noqa: B023  # 闭包共享变量，非循环变量，误报
                     count += 1
                 if count:
                     log.info("  [%s] found %d file(s)", lib_name, count)
-                lib_counts[lib_name] = count
+                lib_counts[lib_name] = count  # noqa: B023  # 闭包共享变量，非循环变量，误报
 
         def consume():
             while True:
                 try:
-                    item = work_queue.get(timeout=1)
+                    item = work_queue.get(timeout=1)  # noqa: B023  # 闭包共享变量，非循环变量，误报
                 except queue.Empty:
                     if not _running:
                         return
                     continue
                 if item is _SENTINEL:
-                    work_queue.put(_SENTINEL)
+                    work_queue.put(_SENTINEL)  # noqa: B023  # 闭包共享变量，非循环变量，误报
                     return
                 path, lib_info = item
                 if not _running:
@@ -234,7 +234,9 @@ def main_loop():
         producer.start()
 
         with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
-            futures = [executor.submit(consume) for _ in range(config.MAX_WORKERS)]
+            # futures 未使用：ThreadPoolExecutor 退出时会等待全部任务完成
+            for _ in range(config.MAX_WORKERS):
+                executor.submit(consume)
             producer.join()
             for _ in range(config.MAX_WORKERS):
                 work_queue.put(_SENTINEL)

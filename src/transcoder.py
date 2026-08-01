@@ -410,7 +410,8 @@ def transcode(
     :param ffmpeg_path: FFmpeg 可执行文件路径 (Path to the FFmpeg executable)
     :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
     :param output_dir: 输出目录，不设置则同源目录 (Output directory, defaults to source parent)
-    :param cache_dir: 缓存（临时）目录，不设置则同源目录 (Cache/temp directory, defaults to source parent)
+    :param cache_dir: 缓存（临时）目录，不设置则同源目录
+                      (Cache/temp directory, defaults to source parent)
     :return: True 表示成功 (True on success), False 表示失败 (False on failure)
     """
     filepath = Path(filepath)
@@ -579,7 +580,7 @@ def transcode(
             history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
             if vmaf_elapsed is not None:
                 log.warning(
-                    "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",
+                    "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
                     filepath.name,
                     f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
                     ratio * 100,
