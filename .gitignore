@@ -9,3 +9,6 @@ __pycache__/
 .proxyai/
 
 data/
+
+*.egg-info/
+*.egg-info/*

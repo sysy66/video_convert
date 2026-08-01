@@ -1,2 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video-convert"
+version = "0.1.0"
+description = "视频批量转码与质量评估工具"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.setuptools]
+packages = ["src"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
