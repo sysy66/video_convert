@@ -19,5 +19,11 @@ test = [
 [tool.setuptools]
 packages = ["src"]
 
+[tool.coverage.run]
+source = ["src", "main.py"]
+
+[tool.coverage.report]
+fail_under = 69
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

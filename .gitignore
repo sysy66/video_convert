@@ -12,3 +12,5 @@ data/
 
 *.egg-info/
 *.egg-info/*
+
+.coverage
