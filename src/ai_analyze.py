@@ -55,9 +55,7 @@ except (urllib.error.URLError, urllib.error.HTTPError) as e:
     result = {"error": str(e)}
 
 content = (
-    result.get("choices", [{}])[0]
-    .get("message", {})
-    .get("content", "")
+    result.get("choices", [{}])[0].get("message", {}).get("content", "")
     or result.get("error", {}).get("message", "")
     or json.dumps(result, ensure_ascii=False)
 )

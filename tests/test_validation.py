@@ -1,12 +1,10 @@
-import os
 from unittest.mock import MagicMock, patch
 
 from src.validation import validate_config
 
 
 def _mock_disk_usage(_path):
-    return MagicMock(free=100 * 1024 ** 3)
-
+    return MagicMock(free=100 * 1024**3)
 
 
 class TestValidateConfigVmaf:
@@ -67,9 +65,16 @@ class TestValidateConfigVmaf:
 class TestValidateConfigLibraries:
     def test_missing_input_error(self):
         with (
-            patch("src.validation.config.LIBRARIES", {
-                "lib1": {"input": "/nonexistent/input", "output": "/tmp/out", "cache": "/tmp/cache"}
-            }),
+            patch(
+                "src.validation.config.LIBRARIES",
+                {
+                    "lib1": {
+                        "input": "/nonexistent/input",
+                        "output": "/tmp/out",
+                        "cache": "/tmp/cache",
+                    }
+                },
+            ),
             patch("src.validation.os.path.exists", return_value=False),
             patch("src.validation.config.VMAF_REQUIRED", False),
             patch("src.validation.shutil.disk_usage", side_effect=_mock_disk_usage),
@@ -80,9 +85,10 @@ class TestValidateConfigLibraries:
 
     def test_cache_missing_warns_not_errors(self):
         with (
-            patch("src.validation.config.LIBRARIES", {
-                "lib1": {"input": "/tmp/in", "output": "/tmp/out", "cache": "/nonexistent/cache"}
-            }),
+            patch(
+                "src.validation.config.LIBRARIES",
+                {"lib1": {"input": "/tmp/in", "output": "/tmp/out", "cache": "/nonexistent/cache"}},
+            ),
             patch("src.validation.os.path.exists", return_value=False),
             patch("src.validation.config.VMAF_REQUIRED", False),
             patch("src.validation.shutil.disk_usage", side_effect=_mock_disk_usage),

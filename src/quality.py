@@ -47,18 +47,22 @@ def _read_vmaf_from_json(log_path):
              (mean, minimum) tuple, or (None, None) on failure
     """
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, encoding="utf-8") as f:
             data = json.load(f)
         vmaf = data.get("pooled_metrics", {}).get("vmaf", {})
         mean = vmaf.get("mean")
         minimum = vmaf.get("min")
-        return (float(mean) if mean is not None else None,
-                float(minimum) if minimum is not None else None)
+        return (
+            float(mean) if mean is not None else None,
+            float(minimum) if minimum is not None else None,
+        )
     except Exception:
         return (None, None)
 
 
-def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, ffprobe_path=None):
+def _run_vmaf(
+    original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, ffprobe_path=None
+):
     """
     内部：构建并执行单次 ffmpeg VMAF 命令。
     HW 模式下 hwdownload 按每路各自探测到的真实原生位深取帧（8bit → nv12，
@@ -84,8 +88,10 @@ def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=Fal
             "[dist][ref]libvmaf={opts}"
         )
         input_parts = (
-            hwaccel_flags + ["-i", str(original_path)]
-            + hwaccel_flags + ["-i", str(transcoded_path)]
+            hwaccel_flags
+            + ["-i", str(original_path)]
+            + hwaccel_flags
+            + ["-i", str(transcoded_path)]
         )
     else:
         filter_complex = (
@@ -96,21 +102,18 @@ def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=Fal
             "[r1]format=yuv420p[ref];"
             "[dist][ref]libvmaf={opts}"
         )
-        input_parts = (
-            ["-i", str(original_path)]
-            + ["-i", str(transcoded_path)]
-        )
+        input_parts = ["-i", str(original_path)] + ["-i", str(transcoded_path)]
 
     opts = []
     if config.VMAF_MODEL_PATH and os.path.exists(config.VMAF_MODEL_PATH):
-        opts.append("model='path={}'".format(config.VMAF_MODEL_PATH))
-    opts.append("n_subsample={}".format(config.VMAF_SUBSAMPLE))
+        opts.append(f"model='path={config.VMAF_MODEL_PATH}'")
+    opts.append(f"n_subsample={config.VMAF_SUBSAMPLE}")
 
     if log_path is not None:
         try:
             os.makedirs(os.path.dirname(str(log_path)), exist_ok=True)
             opts.append("log_fmt=json")
-            opts.append("log_path={}".format(log_path))
+            opts.append(f"log_path={log_path}")
         except OSError as e:
             log.warning("VMAF log dir not writable, skipping json log: %s", e)
             log_path = None
@@ -127,7 +130,9 @@ def _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=Fal
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT)
         if result.returncode != 0:
-            log.warning("VMAF [%s] failed (rc=%d) for %s", tag, result.returncode, transcoded_path.name)
+            log.warning(
+                "VMAF [%s] failed (rc=%d) for %s", tag, result.returncode, transcoded_path.name
+            )
             return None
 
         if log_path is not None:
@@ -180,8 +185,14 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
         return None
 
     if config.VMAF_HWACCEL:
-        score = _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=True,
-                           ffprobe_path=config.FFPROBE_PATH)
+        score = _run_vmaf(
+            original_path,
+            transcoded_path,
+            ffmpeg_path,
+            log_path,
+            hwaccel=True,
+            ffprobe_path=config.FFPROBE_PATH,
+        )
         if score is not None:
             return score
         if config.VMAF_HW_FALLBACK:

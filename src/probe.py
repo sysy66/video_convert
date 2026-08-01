@@ -9,11 +9,16 @@ def get_video_codec(filepath, ffprobe_path):
         log.error("FFPROBE_PATH not configured")
         return None
     cmd = [
-        ffprobe_path, "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=codec_name",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(filepath)
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(filepath),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -38,11 +43,16 @@ def get_video_pix_fmt(filepath, ffprobe_path):
         log.error("FFPROBE_PATH not configured")
         return None
     cmd = [
-        ffprobe_path, "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=pix_fmt",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        str(filepath)
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=pix_fmt",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(filepath),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -66,11 +76,14 @@ def get_streams_info(filepath, ffprobe_path):
         log.error("FFPROBE_PATH not configured")
         return None
     cmd = [
-        ffprobe_path, "-v", "error",
+        ffprobe_path,
+        "-v",
+        "error",
         "-show_streams",
         "-show_format",
-        "-of", "json",
-        str(filepath)
+        "-of",
+        "json",
+        str(filepath),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 from src.history import History
 
 

@@ -100,9 +100,7 @@ class History:
         `entry.get("retry_count", 0)` would get None instead of the default.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM files WHERE filepath=?", (filepath,)).fetchone()
         if row is None:
             return None
         return {k: row[k] for k in row.keys() if k != "filepath" and row[k] is not None}

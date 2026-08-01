@@ -32,7 +32,9 @@ def validate_config():
             p = info[key]
             if not os.path.exists(p):
                 if key == "cache":
-                    warnings.append(f"Library [{name}] cache does not exist (will be created on demand): {p}")
+                    warnings.append(
+                        f"Library [{name}] cache does not exist (will be created on demand): {p}"
+                    )
                 else:
                     errors.append(f"Library [{name}] {key} does not exist: {p}")
             elif not os.access(p, os.R_OK):
@@ -41,8 +43,7 @@ def validate_config():
                 errors.append(f"Library [{name}] {key} not writable: {p}")
 
     # 2. FFmpeg / FFprobe executables
-    for label, path in [("FFMPEG_PATH", config.FFMPEG_PATH),
-                        ("FFPROBE_PATH", config.FFPROBE_PATH)]:
+    for label, path in [("FFMPEG_PATH", config.FFMPEG_PATH), ("FFPROBE_PATH", config.FFPROBE_PATH)]:
         e, w = _check_path(label, path, must_exist=True, must_be_executable=True)
         errors.extend(e)
         warnings.extend(w)
@@ -54,17 +55,14 @@ def validate_config():
                 f"VMAF_REQUIRED is True but VMAF_FFMPEG_PATH not found: {config.VMAF_FFMPEG_PATH}"
             )
         elif not os.access(config.VMAF_FFMPEG_PATH, os.X_OK):
-            errors.append(
-                f"VMAF_FFMPEG_PATH not executable: {config.VMAF_FFMPEG_PATH}"
-            )
+            errors.append(f"VMAF_FFMPEG_PATH not executable: {config.VMAF_FFMPEG_PATH}")
         if config.VMAF_MODEL_PATH and not os.path.isfile(config.VMAF_MODEL_PATH):
             errors.append(
                 f"VMAF_MODEL_PATH not found (built-in model will be used): {config.VMAF_MODEL_PATH}"
             )
 
     # 4. Data directories — create if needed
-    for label, path in [("LOG_FILE", config.LOG_FILE),
-                        ("HISTORY_FILE", config.HISTORY_FILE)]:
+    for label, path in [("LOG_FILE", config.LOG_FILE), ("HISTORY_FILE", config.HISTORY_FILE)]:
         d = os.path.dirname(path)
         try:
             os.makedirs(d, exist_ok=True)
@@ -76,8 +74,8 @@ def validate_config():
         warnings.append(f"Cannot create VMAF_LOG_DIR ({config.VMAF_LOG_DIR}): {e}")
 
     # 5. Disk space check on output + cache partitions
-    min_space_error = 1 * 1024 ** 3
-    min_space_warn = 5 * 1024 ** 3
+    min_space_error = 1 * 1024**3
+    min_space_warn = 5 * 1024**3
     checked = set()
     for lib_info in config.LIBRARIES.values():
         for key in ("output", "cache"):
@@ -87,15 +85,11 @@ def validate_config():
             checked.add(p)
             try:
                 usage = shutil.disk_usage(p)
-                free_gb = usage.free / 1024 ** 3
+                free_gb = usage.free / 1024**3
                 if usage.free < min_space_error:
-                    errors.append(
-                        f"Critical disk space on {p}: {free_gb:.1f} GiB free (< 1 GiB)"
-                    )
+                    errors.append(f"Critical disk space on {p}: {free_gb:.1f} GiB free (< 1 GiB)")
                 elif usage.free < min_space_warn:
-                    warnings.append(
-                        f"Low disk space on {p}: {free_gb:.1f} GiB free (< 5 GiB)"
-                    )
+                    warnings.append(f"Low disk space on {p}: {free_gb:.1f} GiB free (< 5 GiB)")
             except OSError:
                 warnings.append(f"Cannot check disk space for {p}")
 

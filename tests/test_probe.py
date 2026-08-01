@@ -2,7 +2,7 @@ import json
 import subprocess
 from unittest.mock import patch
 
-from src.probe import get_video_codec, get_streams_info
+from src.probe import get_streams_info, get_video_codec
 
 
 class TestProbeSuccess:
@@ -76,14 +76,16 @@ class TestProbeErrors:
 
 
 class TestGetStreamsInfo:
-    _MOCK_JSON = json.dumps({
-        "streams": [
-            {"index": 0, "codec_type": "video", "codec_name": "h264", "profile": "High"},
-            {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2},
-            {"index": 2, "codec_type": "subtitle", "codec_name": "subrip"},
-        ],
-        "format": {"filename": "/test.mp4", "duration": "123.456"},
-    })
+    _MOCK_JSON = json.dumps(
+        {
+            "streams": [
+                {"index": 0, "codec_type": "video", "codec_name": "h264", "profile": "High"},
+                {"index": 1, "codec_type": "audio", "codec_name": "aac", "channels": 2},
+                {"index": 2, "codec_type": "subtitle", "codec_name": "subrip"},
+            ],
+            "format": {"filename": "/test.mp4", "duration": "123.456"},
+        }
+    )
 
     def test_returns_streams_and_duration(self):
         with patch("subprocess.run") as mock_run:

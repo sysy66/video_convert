@@ -1,18 +1,15 @@
 import json
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from src import config
 from src.quality import (
-    should_accept,
     _hw_download_format,
     _read_vmaf_from_json,
+    _run_vmaf,
     cleanup_vmaf_logs,
     compute_vmaf,
-    _run_vmaf,
+    should_accept,
 )
 
 
@@ -94,9 +91,7 @@ class TestHwDownloadFormat:
 class TestReadVmafFromJson:
     def test_reads_mean_and_min(self, tmp_path):
         log = tmp_path / "vmaf.json"
-        log.write_text(json.dumps({
-            "pooled_metrics": {"vmaf": {"mean": 92.5, "min": 88.1}}
-        }))
+        log.write_text(json.dumps({"pooled_metrics": {"vmaf": {"mean": 92.5, "min": 88.1}}}))
         mean, minimum = _read_vmaf_from_json(log)
         assert mean == 92.5
         assert minimum == 88.1
@@ -222,7 +217,9 @@ class TestRunVmaf:
                 result.stdout = b""
                 with patch("subprocess.run", return_value=result) as mock_run:
                     with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
-                        _run_vmaf(ref, dist, "/ffmpeg", log_path, hwaccel=True, ffprobe_path="/ffprobe")
+                        _run_vmaf(
+                            ref, dist, "/ffmpeg", log_path, hwaccel=True, ffprobe_path="/ffprobe"
+                        )
 
         call_args = mock_run.call_args[0][0]
         filter_idx = call_args.index("-filter_complex")

@@ -7,7 +7,9 @@ import os
 #   LIBRARIES = {"test1": "/mnt/test1"}
 # 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
 #   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
-_LIBRARIES_RAW = {"test1": {"input": "/mnt/NFS-5070-tmp1", "output": "/mnt/tmp0", "cache": "/mnt/transcode_cache"}}
+_LIBRARIES_RAW = {
+    "test1": {"input": "/mnt/NFS-5070-tmp1", "output": "/mnt/tmp0", "cache": "/mnt/transcode_cache"}
+}
 
 
 def _normalize_libraries(raw):
@@ -46,7 +48,19 @@ CODEC_TIMEOUT = 18000
 
 TEMP_PREFIX = ".work_"
 
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".mts", ".m2ts", ".wmv", ".flv", ".webm", ".rmvb"}
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".ts",
+    ".mts",
+    ".m2ts",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".rmvb",
+}
 
 SKIP_CODECS = set()
 
@@ -58,25 +72,25 @@ VIDEO_ENCODER = "av1"
 # 编码器独立参数 / Per-encoder settings
 ENCODER_PARAMS = {
     "hevc": {
-        "codec":        "hevc_qsv",
-        "profile":      "main10",
-        "quality":      20,
-        "preset":       "slow",
-        "b_frames":     8,
-        "extbrc":       True,
-        "adaptive_i":   True,
-        "adaptive_b":   True,
+        "codec": "hevc_qsv",
+        "profile": "main10",
+        "quality": 20,
+        "preset": "slow",
+        "b_frames": 8,
+        "extbrc": True,
+        "adaptive_i": True,
+        "adaptive_b": True,
     },
     "av1": {
-        "codec":        "av1_qsv",
-        "profile":      "main",
-        "quality":      24,
-        "preset":       "veryslow",
-        "b_frames":     7,
-        "extbrc":       True,
-        "adaptive_i":   True,
-        "adaptive_b":   True,
-        "b_strategy":   1,
+        "codec": "av1_qsv",
+        "profile": "main",
+        "quality": 24,
+        "preset": "veryslow",
+        "b_frames": 7,
+        "extbrc": True,
+        "adaptive_i": True,
+        "adaptive_b": True,
+        "b_strategy": 1,
     },
 }
 
@@ -119,7 +133,7 @@ VMAF_HW_FALLBACK = False
 VMAF_REQUIRED = True
 
 # 质量接受规则阈值 / Quality acceptance thresholds
-VMAF_ACCEPT_HIGH = 93     # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
-VMAF_ACCEPT_LOW = 80      # VMAF < 此值时直接拒绝
-ACCEPT_RATIO_MAX = 1.00   # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
-ACCEPT_RATIO_LOW = 0.75   # VMAF 在中间区间时允许的最大 ratio
+VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
+VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
+ACCEPT_RATIO_MAX = 1.00  # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
+ACCEPT_RATIO_LOW = 0.75  # VMAF 在中间区间时允许的最大 ratio

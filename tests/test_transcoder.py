@@ -1,10 +1,8 @@
-import os
-import subprocess
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src import config
-from src.transcoder import transcode, _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs
+from src.transcoder import _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs, transcode
 
 _VIDEO_AAC = {
     "streams": [

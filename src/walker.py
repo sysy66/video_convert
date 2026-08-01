@@ -13,7 +13,9 @@ def walk_directory(watch_dir, video_extensions):
         return
 
     for root, dirs, files in os.walk(watch_dir):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(config.TEMP_PREFIX)]
+        dirs[:] = [
+            d for d in dirs if not d.startswith(".") and not d.startswith(config.TEMP_PREFIX)
+        ]
         for f in files:
             if f.startswith("."):
                 continue

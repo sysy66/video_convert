@@ -1,6 +1,6 @@
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.filter import should_process
 
@@ -53,7 +53,9 @@ class TestFilterHistoryTerminal(unittest.TestCase):
 
     def test_skips_not_required(self):
         self.assertFalse(
-            should_process(Path("/v.mp4"), _mock_history({"status": "not required"}), {"hevc"}, "/fp"),
+            should_process(
+                Path("/v.mp4"), _mock_history({"status": "not required"}), {"hevc"}, "/fp"
+            ),
         )
 
     def test_skips_started(self):

@@ -1,9 +1,9 @@
 import os
+import random
 import re
 import shutil
 import signal
 import string
-import random
 import subprocess
 import threading
 import time as _time
@@ -179,9 +179,11 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
 
     cmd = [
         # 基础参数 / Basic parameters
-        ffmpeg_path, "-y",
+        ffmpeg_path,
+        "-y",
         # Intel QSV 硬件加速 / Intel QSV hardware acceleration
-        "-hwaccel", "qsv",
+        "-hwaccel",
+        "qsv",
     ]
 
     if sw_fallback or sw_decode_needed:
@@ -197,22 +199,37 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
 
     enc = config.ENCODER_PARAMS[config.VIDEO_ENCODER]
 
-    cmd.extend([
-        # 输入文件 / Input file
-        "-i", str(input_path),
-        # --- 视频流 / Video stream ---
-        # 选择第一个视频流（按类型，而非按索引），避免流顺序问题
-        # Select the first video stream by type (not index) to avoid stream ordering issues
-        "-map", "0:v:0", "-c:v", enc["codec"], "-profile:v", enc["profile"],
-        "-global_quality", str(enc["quality"]),
-        "-preset", enc["preset"],
-        # 高级 QSV 优化 / Advanced QSV optimisation
-        "-look_ahead", "1", "-look_ahead_depth", str(config.VIDEO_LOOK_AHEAD_DEPTH),
-        "-g", str(config.VIDEO_GOP),
-        "-fps_mode", "cfr",
-        # 编码器专属参数（-bf / -extbrc / -adaptive_i / -adaptive_b / -b_strategy 等）
-        # Encoder-specific arguments
-    ])
+    cmd.extend(
+        [
+            # 输入文件 / Input file
+            "-i",
+            str(input_path),
+            # --- 视频流 / Video stream ---
+            # 选择第一个视频流（按类型，而非按索引），避免流顺序问题
+            # Select the first video stream by type (not index) to avoid stream ordering issues
+            "-map",
+            "0:v:0",
+            "-c:v",
+            enc["codec"],
+            "-profile:v",
+            enc["profile"],
+            "-global_quality",
+            str(enc["quality"]),
+            "-preset",
+            enc["preset"],
+            # 高级 QSV 优化 / Advanced QSV optimisation
+            "-look_ahead",
+            "1",
+            "-look_ahead_depth",
+            str(config.VIDEO_LOOK_AHEAD_DEPTH),
+            "-g",
+            str(config.VIDEO_GOP),
+            "-fps_mode",
+            "cfr",
+            # 编码器专属参数（-bf / -extbrc / -adaptive_i / -adaptive_b / -b_strategy 等）
+            # Encoder-specific arguments
+        ]
+    )
 
     if enc.get("b_frames"):
         cmd.extend(["-bf", str(enc["b_frames"])])
@@ -221,12 +238,15 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         if val is not None and val is not False:
             cmd.extend([f"-{flag}", str(int(val) if isinstance(val, bool) else val)])
 
-    cmd.extend([
-        # --- 音频流 / Audio stream ---
-        # 选择所有音频流（'?' 表示无音频时不报错）
-        # Select all audio streams ('?' means don't fail if none exist)
-        "-map", "0:a?",
-    ])
+    cmd.extend(
+        [
+            # --- 音频流 / Audio stream ---
+            # 选择所有音频流（'?' 表示无音频时不报错）
+            # Select all audio streams ('?' means don't fail if none exist)
+            "-map",
+            "0:a?",
+        ]
+    )
 
     if sw_fallback or sw_decode_needed:
         cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
@@ -336,7 +356,9 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
                     if pct >= last_logged_pct + 1:
                         fps = _parse_progress_fps(line)
                         if fps is not None:
-                            log.info("PROGRESS: %s - %d%% (fps %.1f)", file_stem, min(pct, 100), fps)
+                            log.info(
+                                "PROGRESS: %s - %d%% (fps %.1f)", file_stem, min(pct, 100), fps
+                            )
                         else:
                             log.info("PROGRESS: %s - %d%%", file_stem, min(pct, 100))
                         last_logged_pct = pct
@@ -367,7 +389,9 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     return proc.returncode, "".join(stderr_lines)
 
 
-def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, output_dir=None, cache_dir=None):
+def transcode(
+    filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, output_dir=None, cache_dir=None
+):
     """
     对单个视频文件执行转码的完整流程：
       1. 创建临时工作目录
@@ -412,10 +436,15 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
         temp_dir.mkdir(parents=True, exist_ok=True)
         log.info(
             "TRANSCODE: %s (%s) -> %s (temp: %s)",
-            filepath.name, _format_size(input_size), output_filename, temp_dir.name,
+            filepath.name,
+            _format_size(input_size),
+            output_filename,
+            temp_dir.name,
         )
 
-        cmd, total_duration = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False)
+        cmd, total_duration = _build_ffmpeg_cmd(
+            ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False
+        )
         log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
         returncode, stderr = _run_ffmpeg_with_progress(
@@ -439,8 +468,12 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
                 temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
-            cmd, _ = _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True)
-            log.info("FFMPEG CMD (sw fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd))
+            cmd, _ = _build_ffmpeg_cmd(
+                ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True
+            )
+            log.info(
+                "FFMPEG CMD (sw fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
+            )
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
             )
@@ -475,7 +508,9 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
         vmaf_elapsed = None
         if config.VMAF_REQUIRED and ratio <= config.ACCEPT_RATIO_MAX:
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+            vmaf_log = (
+                Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+            )
             vmaf_start = _time.monotonic()
             vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
             vmaf_elapsed = _time.monotonic() - vmaf_start
@@ -508,8 +543,13 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
                 _cleanup_temp(temp_dir)
                 filepath.unlink()
             except OSError as e:
-                log.error("FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
-                          final_path.name, vmaf_score or 0, ratio * 100, e)
+                log.error(
+                    "FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
+                    final_path.name,
+                    vmaf_score or 0,
+                    ratio * 100,
+                    e,
+                )
                 _cleanup_temp(temp_dir)
                 history.mark_failed(str(filepath), f"File move failed: {e}")
                 return False
@@ -517,16 +557,22 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
             if vmaf_elapsed is not None:
                 log.info(
                     "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
-                    final_path.name, _format_size(output_size),
+                    final_path.name,
+                    _format_size(output_size),
                     "smaller" if ratio < 1 else "larger",
-                    ratio * 100, vmaf_score, elapsed, vmaf_elapsed,
+                    ratio * 100,
+                    vmaf_score,
+                    elapsed,
+                    vmaf_elapsed,
                 )
             else:
                 log.info(
                     "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
-                    final_path.name, _format_size(output_size),
+                    final_path.name,
+                    _format_size(output_size),
                     "smaller" if ratio < 1 else "larger",
-                    ratio * 100, elapsed,
+                    ratio * 100,
+                    elapsed,
                 )
         else:
             _cleanup_temp(temp_dir)
@@ -535,15 +581,18 @@ def transcode(filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, outp
                 log.warning(
                     "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",
                     filepath.name,
-                    "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
-                    ratio * 100, elapsed, vmaf_elapsed,
+                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+                    ratio * 100,
+                    elapsed,
+                    vmaf_elapsed,
                 )
             else:
                 log.warning(
                     "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
                     filepath.name,
-                    "{:.2f}".format(vmaf_score) if vmaf_score is not None else "N/A",
-                    ratio * 100, elapsed,
+                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+                    ratio * 100,
+                    elapsed,
                 )
         return True
 
@@ -651,11 +700,9 @@ def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
                         "Failed to remove stale temp dir %s — "
                         "directory may contain NFS .nfs* locked files. "
                         "Try: lsof +D %s  to find the holding process.",
-                        full_path, full_path,
+                        full_path,
+                        full_path,
                     )
         dirs[:] = [d for d in dirs if not d.startswith(".") and not d.startswith(temp_prefix)]
     if count:
         log.info("Cleaned up %d stale temp director%s", count, "ies" if count != 1 else "y")
-
-
-

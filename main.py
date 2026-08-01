@@ -10,12 +10,17 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from src import config
-from src.history import History
-from src.walker import walk_directory
 from src.filter import should_process
-from src.transcoder import transcode, cleanup_stale_temp_dirs, kill_active_ffmpeg, mark_stale_started_as_failed
+from src.history import History
 from src.quality import cleanup_vmaf_logs
+from src.transcoder import (
+    cleanup_stale_temp_dirs,
+    kill_active_ffmpeg,
+    mark_stale_started_as_failed,
+    transcode,
+)
 from src.validation import validate_config
+from src.walker import walk_directory
 
 log = logging.getLogger(__name__)
 
@@ -36,43 +41,58 @@ def _setup_logging():
         level=logging.INFO,
         format="[%(asctime)s] %(levelname)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[
-            logging.FileHandler(config.LOG_FILE),
-            logging.StreamHandler()
-        ]
+        handlers=[logging.FileHandler(config.LOG_FILE), logging.StreamHandler()],
     )
 
 
 def _apply_cli_overrides():
     parser = argparse.ArgumentParser(description="Video Transcoder")
-    parser.add_argument("-L", "--library", action="append", dest="libraries",
-                        metavar="NAME=PATH",
-                        help="Library definition: name=input_path or name=input:output:cache")
-    parser.add_argument("--scan-interval", type=int, metavar="SECONDS",
-                        help="Scan interval in seconds")
-    parser.add_argument("--max-workers", type=int, metavar="N",
-                        help="Maximum concurrent transcodes")
+    parser.add_argument(
+        "-L",
+        "--library",
+        action="append",
+        dest="libraries",
+        metavar="NAME=PATH",
+        help="Library definition: name=input_path or name=input:output:cache",
+    )
+    parser.add_argument(
+        "--scan-interval", type=int, metavar="SECONDS", help="Scan interval in seconds"
+    )
+    parser.add_argument(
+        "--max-workers", type=int, metavar="N", help="Maximum concurrent transcodes"
+    )
     parser.add_argument("--log", metavar="FILE", help="Log file path")
     parser.add_argument("--history", metavar="FILE", help="History database path")
     parser.add_argument("--ffmpeg", metavar="PATH", help="FFmpeg binary path")
     parser.add_argument("--ffprobe", metavar="PATH", help="FFprobe binary path")
-    parser.add_argument("--encoder", choices=["hevc", "av1"],
-                        help="Video encoder (hevc or av1)")
-    parser.add_argument("--skip-codecs", nargs="+", default=[],
-                        metavar="CODEC",
-                        help="Additional codecs to skip (space-separated)")
-    parser.add_argument("--vmaf-ffmpeg", metavar="PATH",
-                        help="FFmpeg path for VMAF scoring (default: John van Sickle build)")
-    parser.add_argument("--vmaf-model", metavar="PATH",
-                        help="VMAF model file path (default: data/models/vmaf_v0.6.1.json)")
-    parser.add_argument("--vmaf-hwaccel", action="store_true",
-                        help="Enable VMAF QSV hardware decode acceleration")
-    parser.add_argument("--vmaf-hw-fallback", action="store_true",
-                        help="Enable VMAF HW→SW fallback when HW path fails")
-    parser.add_argument("--no-vmaf", action="store_true",
-                        help="Disable VMAF quality check")
-    parser.add_argument("--vmaf", action="store_true",
-                        help="Enable VMAF quality check")
+    parser.add_argument("--encoder", choices=["hevc", "av1"], help="Video encoder (hevc or av1)")
+    parser.add_argument(
+        "--skip-codecs",
+        nargs="+",
+        default=[],
+        metavar="CODEC",
+        help="Additional codecs to skip (space-separated)",
+    )
+    parser.add_argument(
+        "--vmaf-ffmpeg",
+        metavar="PATH",
+        help="FFmpeg path for VMAF scoring (default: John van Sickle build)",
+    )
+    parser.add_argument(
+        "--vmaf-model",
+        metavar="PATH",
+        help="VMAF model file path (default: data/models/vmaf_v0.6.1.json)",
+    )
+    parser.add_argument(
+        "--vmaf-hwaccel", action="store_true", help="Enable VMAF QSV hardware decode acceleration"
+    )
+    parser.add_argument(
+        "--vmaf-hw-fallback",
+        action="store_true",
+        help="Enable VMAF HW→SW fallback when HW path fails",
+    )
+    parser.add_argument("--no-vmaf", action="store_true", help="Disable VMAF quality check")
+    parser.add_argument("--vmaf", action="store_true", help="Enable VMAF quality check")
 
     args = parser.parse_args()
 
@@ -109,7 +129,9 @@ def _apply_cli_overrides():
         raw = {}
         for lib_def in args.libraries:
             if "=" not in lib_def:
-                print(f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}")
+                print(
+                    f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}"
+                )
                 sys.exit(1)
             name, rest = lib_def.split("=", 1)
             parts = rest.split(":")
@@ -118,7 +140,9 @@ def _apply_cli_overrides():
             elif len(parts) == 3:
                 raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
             else:
-                print(f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache")
+                print(
+                    f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache"
+                )
                 sys.exit(1)
         config._LIBRARIES_RAW = raw
         config.LIBRARIES = config._normalize_libraries(raw)
@@ -196,8 +220,15 @@ def main_loop():
                     continue
                 if not should_process(path, history, config.SKIP_CODECS, config.FFPROBE_PATH):
                     continue
-                transcode(path, history, config.FFMPEG_PATH, config.FFPROBE_PATH,
-                          lib_info["input"], lib_info.get("output"), lib_info.get("cache"))
+                transcode(
+                    path,
+                    history,
+                    config.FFMPEG_PATH,
+                    config.FFPROBE_PATH,
+                    lib_info["input"],
+                    lib_info.get("output"),
+                    lib_info.get("cache"),
+                )
 
         producer = threading.Thread(target=produce)
         producer.start()
