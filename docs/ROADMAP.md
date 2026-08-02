@@ -45,7 +45,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 - [x] **Phase 2 — Test-base refactor** — 纯 pytest 统一、conftest factory fixtures、markers 注册、config.py 100% 覆盖
 - [x] **Phase 3 — Fill unit-test gaps** — transcoder 73%、main() 91%、CLI 全量、ai_analyze 98%，总覆盖 82%
 - [x] **Phase 4 — Integration tests** — 6 个合成视频 fixtures、ffprobe 14 用例、真实 QSV transcode e2e（hevc 真跑 / av1 硬件不支持 skip）、真实 libvmaf 3 用例、`--run-slow` 机制（CI 零改动，默认全 skip）
-- [ ] Phase 5 — Regression & performance (pending)
+- [x] **Phase 5 — Regression & performance** — fixtures SHA256 锁定 + 重编码确定性回归、pytest-benchmark 编码/VMAF 基准（默认 disable）、CI 矩阵 3.10/3.11/3.12
 
 ---
 

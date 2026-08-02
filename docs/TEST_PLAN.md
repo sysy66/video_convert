@@ -94,4 +94,15 @@
     - 踩坑：2024 johnvansickle 静态版有 scale2ref 断言 bug（`best_input >= 0`，
       fftools/ffmpeg_filter.c:2075），VMAF 测试优先用 /opt/ffmpeg-qsv-vmaf 自编译统一版
   - 验证：`pytest --run-slow` 226 passed + 1 skipped；默认 `pytest` 208 passed + 19 skipped
-- Phase 5: pending
+- Phase 5: ✅ completed (2026-08-02)
+  - Task 18: test_regression.py — 6 个 fixtures SHA256 锁定（意外修改/重新生成即失败）+ 同参数两次重编码输出逐字节一致
+  - Task 19: pytest-benchmark — test_benchmarks.py（编码速度 67.7ms / VMAF 18.8ms，320×240 1s），
+    依赖 `pytest-benchmark`，addopts 加 `--benchmark-disable` 保持 CI 快速，手动 `--benchmark-enable --run-slow` 运行
+  - Task 20: CI 矩阵 — workflow 加 `actions/setup-python@v5` + matrix 3.10/3.11/3.12（fail-fast: false），
+    pytest/coverage/ruff 三版本各跑一遍
+  - 新增 marker：`regression`（回归锁定）、`benchmark`（性能基准）
+  - 验证：默认 `pytest` 208 passed + 23 skipped；`--run-slow` 232 passed + 1 skipped（av1 硬件限制）
+
+---
+
+## 全部阶段完成 ✅
