@@ -1,4 +1,5 @@
 import os
+import queue
 import random
 import re
 import shutil
@@ -24,6 +25,160 @@ _active_ffmpeg_lock = threading.Lock()
 # Track filepaths currently being transcoded to avoid falsely flagging them as stale
 _active_transcodes = set()
 _active_transcodes_lock = threading.Lock()
+
+# 异步 VMAF 打分任务队列：任务元组 (source, output, ratio, safe_stem, history)。
+# 无界队列，任务仅含路径元组不占内存；打分并发由 worker 数控制。
+# Async VMAF scoring task queue; tasks are (source, output, ratio, safe_stem, history)
+# tuples. Unbounded: entries are lightweight path tuples, concurrency is bounded by workers.
+vmaf_tasks = queue.Queue()
+_VMAF_STOP = object()
+_vmaf_worker_threads = []
+_vmaf_workers_lock = threading.Lock()
+_vmaf_workers_started = False
+
+
+def _final_dest_path(filepath, output_filename, input_dir, output_dir):
+    """计算输出区目标路径（保持相对目录结构，重名自动编号）。"""
+    if output_dir:
+        output_dir = Path(output_dir)
+        if input_dir:
+            input_dir = Path(input_dir)
+            try:
+                rel = filepath.parent.relative_to(input_dir)
+            except ValueError:
+                rel = Path()
+            dest_dir = output_dir / rel
+        else:
+            dest_dir = output_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        final_path = _unique_path(dest_dir / output_filename)
+    else:
+        final_path = _unique_path(filepath.parent / output_filename)
+    return final_path
+
+
+def _handle_vmaf_task(task):
+    """处理单个异步 VMAF 打分任务：打分后按 should_accept 决策文件去留并标记历史。"""
+    source, output, ratio, safe_stem, history = task
+    source = Path(source)
+    output = Path(output)
+
+    vmaf_log = (
+        Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    vmaf_start = _time.monotonic()
+    vmaf_score = compute_vmaf(source, output, log_path=vmaf_log)
+    vmaf_elapsed = _time.monotonic() - vmaf_start
+
+    if should_accept(vmaf_score, ratio):
+        if not output.exists():
+            log.error("VMAF ACCEPT FAILED: output missing for %s, marking failed", source.name)
+            history.mark_failed(str(source), "VMAF accept failed: output missing")
+            return
+        try:
+            source.unlink()
+        except OSError as e:
+            log.error(
+                "VMAF ACCEPT CLEANUP FAILED: %s — %s", source.name, e
+            )
+            history.mark_failed(str(source), f"VMAF accept cleanup failed: {e}")
+            return
+        history.mark_done(str(source), str(output), vmaf_score=vmaf_score, rejected=False)
+        log.info(
+            "ACCEPT (async): %s (VMAF %.2f, ratio %.1f%%, %.1fs)",
+            output.name,
+            vmaf_score or 0,
+            ratio * 100,
+            vmaf_elapsed,
+        )
+    else:
+        try:
+            output.unlink()
+        except OSError as e:
+            log.error(
+                "VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e
+            )
+            history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
+            return
+        history.mark_done(str(source), None, vmaf_score=vmaf_score, rejected=True)
+        log.warning(
+            "REJECT (async): %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+            output.name,
+            f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+            ratio * 100,
+            vmaf_elapsed,
+        )
+
+
+def _vmaf_worker():
+    """后台 VMAF 打分 worker 循环：消费队列直到收到停止哨兵。"""
+    while True:
+        task = vmaf_tasks.get()
+        if task is _VMAF_STOP:
+            return
+        try:
+            _handle_vmaf_task(task)
+        except Exception as e:
+            log.error("VMAF WORKER ERROR: %s — %s", task[0], e, exc_info=True)
+
+
+def start_vmaf_workers():
+    """启动后台 VMAF 打分 worker（幂等，重复调用不产生新线程）。"""
+    global _vmaf_workers_started
+    with _vmaf_workers_lock:
+        if _vmaf_workers_started:
+            return
+        for _ in range(max(1, config.VMAF_WORKERS)):
+            thread = threading.Thread(target=_vmaf_worker, name="vmaf-worker", daemon=True)
+            thread.start()
+            _vmaf_worker_threads.append(thread)
+        _vmaf_workers_started = True
+        log.info("Started %d async VMAF worker thread(s)", len(_vmaf_worker_threads))
+
+
+def drain_vmaf_tasks():
+    """优雅关闭：等待队列中所有打分任务完成并停止所有 worker 线程。"""
+    global _vmaf_workers_started
+    with _vmaf_workers_lock:
+        if not _vmaf_workers_started:
+            return
+        workers = list(_vmaf_worker_threads)
+    for _ in workers:
+        vmaf_tasks.put(_VMAF_STOP)
+    for thread in workers:
+        thread.join()
+    with _vmaf_workers_lock:
+        _vmaf_worker_threads.clear()
+        _vmaf_workers_started = False
+    log.info("Drained %d async VMAF worker thread(s)", len(workers))
+
+
+def recover_pending_vmaf(history):
+    """启动恢复：将残留的 pending_vmaf 记录重新入队打分（kill -9 后的双份文件）。"""
+    count = 0
+    for filepath, output_path in history.iter_pending_vmaf():
+        if not Path(output_path).exists():
+            log.error("VMAF RECOVER: output missing for %s, marking failed", filepath)
+            history.mark_failed(filepath, "Pending VMAF output missing on recovery")
+            continue
+        if not Path(filepath).exists():
+            log.warning("VMAF RECOVER: source missing for %s, removing orphan output", filepath)
+            try:
+                Path(output_path).unlink()
+            except OSError:
+                pass
+            history.mark_done(filepath, None, rejected=True)
+            continue
+        stem = Path(filepath).stem
+        safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+        try:
+            ratio = Path(output_path).stat().st_size / Path(filepath).stat().st_size
+        except OSError:
+            ratio = 0
+        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history))
+        count += 1
+    if count:
+        log.info("Recovered %d pending VMAF task(s)", count)
 
 
 def register_ffmpeg_pid(pid):
@@ -504,6 +659,38 @@ def transcode(
         ratio = output_size / input_size if input_size else 0
         elapsed = _time.monotonic() - start_time
 
+        # 异步 VMAF：文件先移入输出区但不删源，后台 worker 打分后决定去留。
+        # 与内联打分完全互斥（内联 VMAF 耗时数分钟到数小时，阻塞转码线程）。
+        # Async VMAF: move the output into place but keep the source; a background
+        # worker scores it later and keeps exactly one of the two files.
+        if config.VMAF_ASYNC:
+            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
+            if final_path.name != output_filename:
+                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
+            try:
+                shutil.copyfile(str(output_path), str(final_path))
+                output_path.unlink()
+                _cleanup_temp(temp_dir)
+            except OSError as e:
+                log.error(
+                    "FILE MOVE FAILED (async): %s — %s",
+                    final_path.name,
+                    e,
+                )
+                _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), f"File move failed: {e}")
+                return False
+            history.mark_pending_vmaf(str(filepath), str(final_path))
+            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+            vmaf_tasks.put((filepath, final_path, ratio, safe_stem, history))
+            log.info(
+                "VMAF PENDING (async): %s (%s, ratio %.1f%%, queued for scoring)",
+                final_path.name,
+                _format_size(output_size),
+                ratio * 100,
+            )
+            return True
+
         # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分）
         vmaf_score = None
         vmaf_elapsed = None
@@ -517,21 +704,7 @@ def transcode(
             vmaf_elapsed = _time.monotonic() - vmaf_start
 
         if should_accept(vmaf_score, ratio):
-            if output_dir:
-                output_dir = Path(output_dir)
-                if input_dir:
-                    input_dir = Path(input_dir)
-                    try:
-                        rel = filepath.parent.relative_to(input_dir)
-                    except ValueError:
-                        rel = Path()
-                    dest_dir = output_dir / rel
-                else:
-                    dest_dir = output_dir
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                final_path = _unique_path(dest_dir / output_filename)
-            else:
-                final_path = _unique_path(filepath.parent / output_filename)
+            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
             # 先移动文件，成功后再记录 history；失败不影响 VMAF 日志
