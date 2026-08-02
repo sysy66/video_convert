@@ -81,5 +81,17 @@
   - Task 11: CLI flags 全量覆盖（+15 用例，含 --library 三种形态），main.py → 91%
   - Task 12: ai_analyze.py 函数式重构 + 14 用例，覆盖率 0 → 98%
   - 总覆盖率 70.09 → 82%（208 passed）
-- Phase 4: pending
+- Phase 4: ✅ completed (2026-08-02)
+  - Task 13: 6 个合成测试视频入仓（`tests/fixtures/`，320×240/1s/10fps testsrc + `generate_fixtures.sh`）
+    - 分辨率选 320×240：QSV 最小编码分辨率，64×64 实测被 hevc_qsv/av1_qsv 拒绝
+    - 覆盖 h264 / h264+aac / hevc 8bit / hevc10bit(main10) / mpeg4(avi) / vp9(webm)
+  - Task 14: test_probe_integration.py（14 用例）— 真实 ffprobe 验证 codec/pix_fmt/duration/streams
+  - Task 15: test_transcode_e2e.py（3 用例）— 真实 QSV：hevc_qsv 全流程通过（mark_done/输出/替换/清理/duration）
+    - av1_qsv 本机 Iris Xe 无 AV1 编码硬件 → stderr 检测 "unsupported" 自动 skip
+  - Task 16: `--run-slow` 机制 — conftest `pytest_addoption` + `pytest_collection_modifyitems`，
+    未启用自动 skip；CI 零改动（选项 A：QSV/VMAF 用例在 CI 全部 skip）
+  - Task 17: test_vmaf_integration.py（3 用例）— 真实 libvmaf：分数区间、json log、同源 >95
+    - 踩坑：2024 johnvansickle 静态版有 scale2ref 断言 bug（`best_input >= 0`，
+      fftools/ffmpeg_filter.c:2075），VMAF 测试优先用 /opt/ffmpeg-qsv-vmaf 自编译统一版
+  - 验证：`pytest --run-slow` 226 passed + 1 skipped；默认 `pytest` 208 passed + 19 skipped
 - Phase 5: pending
