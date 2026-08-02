@@ -63,7 +63,13 @@
 ## Status
 
 <!-- Update status as work progresses -->
-- Phase 1: pending
+- Phase 1: ✅ completed (2026-08-02)
+  - CI: `.forgejo/workflows/test.yml` — push 触发，Forgejo Actions 全绿（pytest 133 passed + coverage 69.84% + ruff check/format）
+  - Runner: `test-runner` → `docker://catthehacker/ubuntu:act-latest`
+  - coverage: `fail_under = 69`（基线 69.84%）
+  - ruff: `select = [E, F, I, UP, B]`，line-length 100，全仓已格式化并修复 29 处违规
+  - 依赖: `[project.optional-dependencies] test = [pytest, pytest-cov, ruff]`
+  - 踩坑记录: PEP 668（`--break-system-packages`）、`import main`（pytest `pythonpath=["."]`）、act-latest 需内置 node
 - Phase 2: pending
 - Phase 3: pending
 - Phase 4: pending

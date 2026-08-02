@@ -41,6 +41,12 @@
 
 See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
+- [x] **Phase 1 — Infrastructure** — Forgejo Actions CI（pytest/coverage/ruff 全绿）、coverage 门槛 69、ruff 静态检查、测试依赖声明
+- [ ] Phase 2 — Test-base refactor (pending)
+- [ ] Phase 3 — Fill unit-test gaps (pending)
+- [ ] Phase 4 — Integration tests (pending)
+- [ ] Phase 5 — Regression & performance (pending)
+
 ---
 
 ## 🗺 v2.0 — Web UI & API (远期规划，暂缓)
