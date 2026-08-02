@@ -178,7 +178,7 @@ Edit `src/config.py`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LIBRARIES` | `{"test1": "/mnt/test1"}` | Libraries: name → `{input, output, cache}` paths. String form uses same dir for all three. |
-| `SCAN_INTERVAL` | 1200 | Scan cycle interval (seconds) |
+| `SCAN_INTERVAL` | 1200 | Scan interval (seconds). Scan cadence is independent of transcode progress: newly added files queue within one interval |
 | `FAILED_RETRY_BASE` | 3600 | Base delay for failed retry exponential backoff (seconds) |
 | `FAILED_RETRY_MAX` | 604800 | Max delay for failed retry (seconds) |
 | `MAX_WORKERS` | 2 | Parallel transcode jobs |

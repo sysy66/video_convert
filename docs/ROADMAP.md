@@ -53,6 +53,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 - [x] **Async VMAF scoring（`--vmaf-async`）** — 转码后先落输出区不删源，后台 worker 打分后取一；`pending_vmaf` 状态、启动恢复 kill -9 残留、优雅关闭 drain、ratio 超标必拒不入队
 - [x] **CLI timeout flags（`--codec-timeout` / `--vmaf-timeout`）** — 转码与 VMAF 打分超时可用 CLI 覆盖；`VMAF_TIMEOUT` 默认值提高到 36000（10 h，适配全片 VMAF 打分耗时）
+- [x] **Decoupled scan & transcode** — 转码池常驻进程，扫描周期独立于转码进度（新入库文件最多等一个扫描间隔，不再排队等批次转码完成）；提交前 history 轻量过滤 + `_pending` 内存去重（队列只含真正待处理文件）；stale temp 清理跳过活跃转码目录；SIGTERM 取消排队任务（下次启动重扫）
 
 ---
 
