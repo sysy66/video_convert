@@ -1,7 +1,5 @@
 import sqlite3
 
-from src.history import History
-
 
 def _db_row(db_path, filepath):
     """直接读 SQLite 验证已落盘的行。Read a persisted row straight from SQLite."""
@@ -15,30 +13,29 @@ def _db_row(db_path, filepath):
 
 
 class TestHistoryInit:
-    def test_new_db_returns_none(self, tmp_path):
-        h = History(str(tmp_path / "history.db"))
+    def test_new_db_returns_none(self, make_history):
+        h = make_history()
         assert h.get_entry("/x") is None
 
-    def test_creates_db_file(self, tmp_path):
-        p = str(tmp_path / "history.db")
-        History(p)
+    def test_creates_db_file(self, tmp_path, make_history):
+        make_history()
         assert (tmp_path / "history.db").exists()
 
 
 class TestHistoryQueries:
-    def test_is_success_unknown(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_is_success_unknown(self, make_history):
+        h = make_history()
         assert h.is_success("/x") is False
 
-    def test_exists_unknown(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_exists_unknown(self, make_history):
+        h = make_history()
         assert h.exists("/x") is False
 
-    def test_get_entry_drops_null_columns(self, tmp_path):
+    def test_get_entry_drops_null_columns(self, make_history):
         # not required 记录只写 status/codec/skipped_at，其余列应从返回字典中剔除。
         # A "not required" record only sets status/codec/skipped_at; other columns
         # must be absent from the returned dict (not present-with-None).
-        h = History(str(tmp_path / "h.db"))
+        h = make_history()
         h.mark_skipped("/v.mp4", "hevc")
         entry = h.get_entry("/v.mp4")
         assert entry["status"] == "not required"
@@ -48,24 +45,24 @@ class TestHistoryQueries:
 
 
 class TestHistoryMarks:
-    def test_mark_started(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_started(self, make_history):
+        h = make_history()
         h.mark_started("/v.mp4")
         assert h.exists("/v.mp4")
         assert h.is_started("/v.mp4")
         assert h.is_success("/v.mp4") is False
         assert h.get_entry("/v.mp4")["status"] == "started"
 
-    def test_mark_done(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_done(self, make_history):
+        h = make_history()
         h.mark_done("/v.mp4", "/v.mkv")
         assert h.is_success("/v.mp4")
         entry = h.get_entry("/v.mp4")
         assert entry["output_path"] == "/v.mkv"
         assert entry["completed_at"] is not None
 
-    def test_mark_done_rejected(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_done_rejected(self, make_history):
+        h = make_history()
         h.mark_done("/v.mp4", None, vmaf_score=65.0, rejected=True)
         assert h.is_rejected("/v.mp4")
         assert h.is_success("/v.mp4") is False
@@ -75,14 +72,14 @@ class TestHistoryMarks:
         # 拒绝时不保留输出路径。Rejected keeps no output path.
         assert "output_path" not in entry
 
-    def test_mark_skipped(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_skipped(self, make_history):
+        h = make_history()
         h.mark_skipped("/v.mp4", "av1")
         assert h.is_not_required("/v.mp4")
         assert h.get_entry("/v.mp4")["codec"] == "av1"
 
-    def test_mark_failed(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_failed(self, make_history):
+        h = make_history()
         h.mark_failed("/v.mp4", "some error")
         assert h.exists("/v.mp4")
         assert h.is_success("/v.mp4") is False
@@ -90,22 +87,22 @@ class TestHistoryMarks:
         assert entry["status"] == "failed"
         assert entry["error"] == "some error"
 
-    def test_mark_failed_increments_retry_count(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_failed_increments_retry_count(self, make_history):
+        h = make_history()
         h.mark_failed("/v.mp4", "err1")
         assert h.get_entry("/v.mp4")["retry_count"] == 0
         h.mark_failed("/v.mp4", "err2")
         assert h.get_entry("/v.mp4")["retry_count"] == 1
 
-    def test_mark_started_then_done_preserves_started_at(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_started_then_done_preserves_started_at(self, make_history):
+        h = make_history()
         h.mark_started("/v.mp4")
         started = h.get_entry("/v.mp4")["started_at"]
         h.mark_done("/v.mp4", "/v.mkv")
         assert h.get_entry("/v.mp4")["started_at"] == started
 
-    def test_mark_started_then_failed_preserves_started_at(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_mark_started_then_failed_preserves_started_at(self, make_history):
+        h = make_history()
         h.mark_started("/v.mp4")
         started = h.get_entry("/v.mp4")["started_at"]
         h.mark_failed("/v.mp4", "err")
@@ -113,8 +110,8 @@ class TestHistoryMarks:
 
 
 class TestHistoryIter:
-    def test_iter_started(self, tmp_path):
-        h = History(str(tmp_path / "h.db"))
+    def test_iter_started(self, make_history):
+        h = make_history()
         h.mark_started("/a.mp4")
         h.mark_started("/b.mp4")
         h.mark_done("/c.mp4", "/c.mkv")
@@ -122,16 +119,14 @@ class TestHistoryIter:
 
 
 class TestHistoryPersistence:
-    def test_data_survives_reload(self, tmp_path):
-        p = str(tmp_path / "h.db")
-        h1 = History(p)
+    def test_data_survives_reload(self, tmp_path, make_history):
+        h1 = make_history("h.db")
         h1.mark_done("/a.mp4", "/a.mkv")
 
-        h2 = History(p)
+        h2 = make_history("h.db")
         assert h2.is_success("/a.mp4")
 
-    def test_written_to_disk(self, tmp_path):
-        p = str(tmp_path / "h.db")
-        h = History(p)
+    def test_written_to_disk(self, tmp_path, make_history):
+        h = make_history("h.db")
         h.mark_done("/v.mp4", "/v.mkv")
-        assert _db_row(p, "/v.mp4")["status"] == "success"
+        assert _db_row(str(tmp_path / "h.db"), "/v.mp4")["status"] == "success"
