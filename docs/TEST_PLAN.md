@@ -70,7 +70,11 @@
   - ruff: `select = [E, F, I, UP, B]`，line-length 100，全仓已格式化并修复 29 处违规
   - 依赖: `[project.optional-dependencies] test = [pytest, pytest-cov, ruff]`
   - 踩坑记录: PEP 668（`--break-system-packages`）、`import main`（pytest `pythonpath=["."]`）、act-latest 需内置 node
-- Phase 2: pending
+- Phase 2: ✅ completed (2026-08-02)
+  - Task 5: test_filter/test_walker 迁移到纯 pytest（unittest.TestCase → 原生 assert + tmp_path fixture）
+  - Task 6: conftest 的 make_history/make_video_file/make_video_tree 转为 factory fixtures；test_history.py 14 处样板接入
+  - Task 7: 注册 unit/integration/slow markers + `--strict-markers`；全部 140 用例标注 unit
+  - Task 8: 新增 test_config.py（7 用例），src/config.py 覆盖 0 → 100%，总覆盖 69.84 → 70.09%
 - Phase 3: pending
 - Phase 4: pending
 - Phase 5: pending
