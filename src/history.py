@@ -126,6 +126,27 @@ class History:
         for row in rows:
             yield row["filepath"]
 
+    def iter_final_states(self):
+        """
+        遍历终态记录（rejected/failed/not required）的路径，供孤儿记录清理。
+        排除 started（转码线程收尾）与 pending_vmaf（启动时 recover 处理），
+        避免与运行中的并发写者竞争。
+        Yield filepaths of terminal-state records (rejected/failed/not required)
+        for orphan cleanup. Excludes started (finished by the transcode thread)
+        and pending_vmaf (handled by recover at startup) to avoid races.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT filepath FROM files WHERE status IN ('rejected', 'failed', 'not required')"
+            ).fetchall()
+        for row in rows:
+            yield row["filepath"]
+
+    def delete(self, filepath):
+        """删除该文件的记录（源文件已不存在的孤儿记录）。"""
+        with self._lock:
+            self._conn.execute("DELETE FROM files WHERE filepath=?", (filepath,))
+
     def is_rejected(self, filepath):
         return self._get_status(filepath) == "rejected"
 

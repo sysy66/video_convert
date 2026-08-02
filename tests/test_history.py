@@ -121,6 +121,24 @@ class TestHistoryIter:
         h.mark_done("/c.mp4", "/c.mkv")
         assert set(h.iter_started()) == {"/a.mp4", "/b.mp4"}
 
+    def test_iter_final_states(self, make_history):
+        h = make_history()
+        h.mark_done("/rej.mp4", None, rejected=True)
+        h.mark_failed("/fail.mp4", "err")
+        h.mark_skipped("/skip.mp4", "hevc")
+        h.mark_done("/ok.mp4", "/ok.mkv")
+        h.mark_started("/start.mp4")
+        h.mark_pending_vmaf("/pend.mp4", "/pend.mkv")
+        assert set(h.iter_final_states()) == {"/rej.mp4", "/fail.mp4", "/skip.mp4"}
+
+    def test_delete_removes_record(self, make_history):
+        h = make_history()
+        h.mark_failed("/v.mp4", "err")
+        assert h.exists("/v.mp4")
+        h.delete("/v.mp4")
+        assert not h.exists("/v.mp4")
+        assert h.get_entry("/v.mp4") is None
+
 
 class TestHistoryPersistence:
     def test_data_survives_reload(self, tmp_path, make_history):

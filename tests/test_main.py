@@ -246,6 +246,29 @@ class TestCliOverridesLibraries:
         mock_exit.assert_called_once_with(1)
 
 
+class TestPurgeOrphanRecords:
+    def test_deletes_missing_file_records_only(self, tmp_path):
+        existing = tmp_path / "still-here.mp4"
+        existing.write_bytes(b"x")
+        gone = tmp_path / "gone.mp4"
+        h = MagicMock()
+        h.iter_final_states.return_value = [str(existing), str(gone)]
+
+        main.purge_orphan_records(h)
+
+        h.delete.assert_called_once_with(str(gone))
+
+    def test_no_op_when_nothing_missing(self, tmp_path):
+        existing = tmp_path / "still-here.mp4"
+        existing.write_bytes(b"x")
+        h = MagicMock()
+        h.iter_final_states.return_value = [str(existing)]
+
+        main.purge_orphan_records(h)
+
+        h.delete.assert_not_called()
+
+
 class TestMainLoop:
     def test_calls_walker(self):
         _reset_running()

@@ -29,6 +29,19 @@ log = logging.getLogger(__name__)
 _running = True
 
 
+def purge_orphan_records(history):
+    """清理源文件已不存在的终态记录。
+
+    success 记录的源缺失是 ACCEPT 删源后的正常状态（用于同名去重），永不清理；
+    started/pending_vmaf 由转码线程/启动 recover 收尾。仅处理源文件已消失的
+    rejected/failed/not required 记录——记录失去意义（无文件要重试或保护）。
+    """
+    for filepath in history.iter_final_states():
+        if not os.path.exists(filepath):
+            log.debug("PURGE (orphan record, file missing): %s", filepath)
+            history.delete(filepath)
+
+
 def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
@@ -238,6 +251,7 @@ def main_loop():
                         lib_info["input"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
                     )
             mark_stale_started_as_failed(history)
+            purge_orphan_records(history)
             cleanup_vmaf_logs()
 
             log.info("SCAN: checking all libraries")

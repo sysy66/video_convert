@@ -76,6 +76,10 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
         return False
 
     filepath = Path(filepath)
+    if not filepath.exists():
+        log.debug("SKIP (missing): %s", filepath.name)
+        return False
+
     codec = get_video_codec(filepath, ffprobe_path)
     if codec is None:
         log.warning("PROBE FAILED (queued anyway): %s", filepath)
