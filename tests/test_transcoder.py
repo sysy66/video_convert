@@ -342,3 +342,14 @@ class TestCleanupStaleTempDirs:
 
     def test_handles_nonexistent_watch_dir(self, tmp_path):
         cleanup_stale_temp_dirs(str(tmp_path / "nonexistent"), ".work_")
+
+    def test_skips_active_dirs(self, tmp_path):
+        d1 = tmp_path / ".work_active"
+        d1.mkdir()
+        d2 = tmp_path / ".work_stale"
+        d2.mkdir()
+
+        cleanup_stale_temp_dirs(str(tmp_path), ".work_", active_dirs={str(d1)})
+
+        assert d1.exists()
+        assert not d2.exists()

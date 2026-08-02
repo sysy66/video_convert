@@ -25,6 +25,17 @@ _active_ffmpeg_lock = threading.Lock()
 # Track filepaths currently being transcoded to avoid falsely flagging them as stale
 _active_transcodes = set()
 _active_transcodes_lock = threading.Lock()
+# 活跃临时工作目录（转码进行中），cleanup 必须跳过，防止删除正在使用的目录。
+# Active temp work dirs; the stale-cleanup pass must skip these.
+_active_temp_dirs = set()
+_active_temp_dirs_lock = threading.Lock()
+
+
+def active_temp_dirs_snapshot():
+    """返回当前活跃临时目录的副本（供 cleanup 传入，避免持锁遍历）。"""
+    with _active_temp_dirs_lock:
+        return set(_active_temp_dirs)
+
 
 # 异步 VMAF 打分任务队列：任务元组 (source, output, ratio, safe_stem, history)。
 # 无界队列，任务仅含路径元组不占内存；打分并发由 worker 数控制。
@@ -578,6 +589,8 @@ def transcode(
     output_filename = f"{stem}.mkv"
     output_path = temp_dir / output_filename
 
+    with _active_temp_dirs_lock:
+        _active_temp_dirs.add(str(temp_dir))
     history.mark_started(str(filepath))
     with _active_transcodes_lock:
         _active_transcodes.add(str(filepath))
@@ -610,12 +623,16 @@ def transcode(
         # QSV filter reinit 失败则立即用软件缩放重试（新建临时目录避免冲突）
         if returncode != 0 and "Error reinitializing filters" in stderr:
             log.warning("QSV SW FALLBACK: %s - re-trying with software scale", filepath.name)
+            old_temp_dir = output_path.parent
             _cleanup_temp(temp_dir)
             suffix = _random_suffix()
             if cache_dir:
                 temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
             else:
                 temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+            with _active_temp_dirs_lock:
+                _active_temp_dirs.discard(str(old_temp_dir))
+                _active_temp_dirs.add(str(temp_dir))
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(
@@ -791,6 +808,8 @@ def transcode(
     finally:
         with _active_transcodes_lock:
             _active_transcodes.discard(str(filepath))
+        with _active_temp_dirs_lock:
+            _active_temp_dirs.discard(str(temp_dir))
 
 
 def _cleanup_temp(temp_dir):
@@ -854,24 +873,30 @@ def _rmtree_robust(path):
     return False
 
 
-def cleanup_stale_temp_dirs(watch_dir, temp_prefix):
+def cleanup_stale_temp_dirs(watch_dir, temp_prefix, active_dirs=None):
     """
     递归扫描监视目录，清理所有残留的临时工作目录（通常因程序崩溃未清理）。
     使用 _rmtree_robust 增强对 NFS .nfs 残留、权限问题等容错。
+    active_dirs 中的目录（当前正在转码）会被跳过。
 
     Recursively scan the watch directory and remove any stale temporary
-    working directories (usually left behind by crashes).
+    working directories (usually left behind by crashes). Directories listed
+    in active_dirs (currently being transcoded) are skipped.
     Uses _rmtree_robust for better tolerance of NFS .nfs* leftovers,
     permission issues, etc.
 
     :param watch_dir: 监视目录的根路径 (Root path of the watched directory)
     :param temp_prefix: 临时目录的前缀 (Prefix of temporary directory names)
+    :param active_dirs: 活跃临时目录集合（跳过不删）(Set of active temp dirs to skip)
     """
     count = 0
+    active = set(active_dirs or ())
     for root, dirs, _ in os.walk(watch_dir):
         for d in list(dirs):
             if d.startswith(temp_prefix):
                 full_path = Path(root) / d
+                if str(full_path) in active:
+                    continue
                 if _rmtree_robust(full_path):
                     count += 1
                     log.info("Removed stale temp dir: %s", full_path)
