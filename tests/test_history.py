@@ -1,5 +1,9 @@
 import sqlite3
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 
 def _db_row(db_path, filepath):
     """直接读 SQLite 验证已落盘的行。Read a persisted row straight from SQLite."""

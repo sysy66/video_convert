@@ -2,6 +2,8 @@ import json
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src import config
 from src.quality import (
     _hw_download_format,
@@ -11,6 +13,8 @@ from src.quality import (
     compute_vmaf,
     should_accept,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestShouldAccept:

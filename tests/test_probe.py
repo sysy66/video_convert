@@ -2,7 +2,11 @@ import json
 import subprocess
 from unittest.mock import patch
 
+import pytest
+
 from src.probe import get_streams_info, get_video_codec
+
+pytestmark = pytest.mark.unit
 
 
 class TestProbeSuccess:

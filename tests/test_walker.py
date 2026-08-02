@@ -1,4 +1,8 @@
+import pytest
+
 from src.walker import walk_directory
+
+pytestmark = pytest.mark.unit
 
 
 def _make_tree(root, files):

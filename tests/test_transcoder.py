@@ -1,8 +1,12 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src import config
 from src.transcoder import _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs, transcode
+
+pytestmark = pytest.mark.unit
 
 _VIDEO_AAC = {
     "streams": [

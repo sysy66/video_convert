@@ -1,6 +1,10 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.validation import validate_config
+
+pytestmark = pytest.mark.unit
 
 
 def _mock_disk_usage(_path):

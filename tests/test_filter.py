@@ -1,7 +1,11 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.filter import should_process
+
+pytestmark = pytest.mark.unit
 
 
 def _mock_history(entry=None):

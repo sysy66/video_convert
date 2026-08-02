@@ -2,8 +2,12 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import main
 from src import config
+
+pytestmark = pytest.mark.unit
 
 
 def _reset_running():
