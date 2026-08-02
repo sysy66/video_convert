@@ -5,8 +5,15 @@ on: [push]
 jobs:
   test:
     runs-on: test-runner
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
         run: pip install --break-system-packages -e '.[test]'
       - name: Run tests
