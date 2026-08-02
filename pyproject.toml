@@ -13,6 +13,7 @@ dependencies = []
 test = [
     "pytest",
     "pytest-cov",
+    "pytest-benchmark",
     "ruff",
 ]
 
@@ -38,9 +39,10 @@ line-ending = "lf"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = ["--strict-markers"]
+addopts = ["--strict-markers", "--benchmark-disable"]
 markers = [
     "unit: 单元测试，不依赖真实 ffmpeg/ffprobe",
     "integration: 集成测试，调用真实 ffmpeg/ffprobe",
     "slow: 耗时测试，默认排除（pytest --run-slow 启用）",
+    "regression: 回归锁定测试（fixtures 哈希、确定性重编码）",
 ]
