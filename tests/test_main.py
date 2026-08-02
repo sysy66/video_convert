@@ -15,6 +15,30 @@ def _reset_running():
     main._running = True
 
 
+@pytest.fixture(autouse=True)
+def _restore_config():
+    saved = {
+        "LOG_FILE": config.LOG_FILE,
+        "HISTORY_FILE": config.HISTORY_FILE,
+        "FFMPEG_PATH": config.FFMPEG_PATH,
+        "FFPROBE_PATH": config.FFPROBE_PATH,
+        "VMAF_FFMPEG_PATH": config.VMAF_FFMPEG_PATH,
+        "VMAF_MODEL_PATH": config.VMAF_MODEL_PATH,
+        "SCAN_INTERVAL": config.SCAN_INTERVAL,
+        "MAX_WORKERS": config.MAX_WORKERS,
+        "VIDEO_ENCODER": config.VIDEO_ENCODER,
+        "SKIP_CODECS": config.SKIP_CODECS.copy(),
+        "VMAF_HWACCEL": config.VMAF_HWACCEL,
+        "VMAF_HW_FALLBACK": config.VMAF_HW_FALLBACK,
+        "VMAF_REQUIRED": config.VMAF_REQUIRED,
+        "LIBRARIES": config.LIBRARIES,
+        "_LIBRARIES_RAW": config._LIBRARIES_RAW,
+    }
+    yield
+    for name, value in saved.items():
+        setattr(config, name, value)
+
+
 class TestSetupLogging:
     def test_creates_log_dir(self, tmp_path, monkeypatch):
         log_file = str(tmp_path / "logs" / "app.log")
@@ -89,6 +113,97 @@ class TestCliOverrides:
             assert "vp9" in config.SKIP_CODECS
         finally:
             config.SKIP_CODECS = original
+
+
+class TestCliOverridesPaths:
+    def test_log_sets_file(self):
+        with patch.object(sys, "argv", ["main", "--log", "/tmp/x.log"]):
+            main._apply_cli_overrides()
+        assert config.LOG_FILE == "/tmp/x.log"
+
+    def test_history_sets_file(self):
+        with patch.object(sys, "argv", ["main", "--history", "/tmp/h.db"]):
+            main._apply_cli_overrides()
+        assert config.HISTORY_FILE == "/tmp/h.db"
+
+    def test_ffmpeg_sets_path(self):
+        with patch.object(sys, "argv", ["main", "--ffmpeg", "/usr/bin/ffmpeg"]):
+            main._apply_cli_overrides()
+        assert config.FFMPEG_PATH == "/usr/bin/ffmpeg"
+
+    def test_ffprobe_sets_path(self):
+        with patch.object(sys, "argv", ["main", "--ffprobe", "/usr/bin/ffprobe"]):
+            main._apply_cli_overrides()
+        assert config.FFPROBE_PATH == "/usr/bin/ffprobe"
+
+    def test_scan_interval_sets_value(self):
+        with patch.object(sys, "argv", ["main", "--scan-interval", "60"]):
+            main._apply_cli_overrides()
+        assert config.SCAN_INTERVAL == 60
+
+    def test_max_workers_sets_value(self):
+        with patch.object(sys, "argv", ["main", "--max-workers", "4"]):
+            main._apply_cli_overrides()
+        assert config.MAX_WORKERS == 4
+
+    def test_vmaf_ffmpeg_sets_path(self):
+        with patch.object(sys, "argv", ["main", "--vmaf-ffmpeg", "/opt/ffmpeg/ffmpeg"]):
+            main._apply_cli_overrides()
+        assert config.VMAF_FFMPEG_PATH == "/opt/ffmpeg/ffmpeg"
+
+    def test_vmaf_model_sets_path(self):
+        with patch.object(sys, "argv", ["main", "--vmaf-model", "/tmp/model.json"]):
+            main._apply_cli_overrides()
+        assert config.VMAF_MODEL_PATH == "/tmp/model.json"
+
+    def test_vmaf_hwaccel_enables(self):
+        with patch.object(sys, "argv", ["main", "--vmaf-hwaccel"]):
+            main._apply_cli_overrides()
+        assert config.VMAF_HWACCEL is True
+
+    def test_vmaf_hw_fallback_enables(self):
+        with patch.object(sys, "argv", ["main", "--vmaf-hw-fallback"]):
+            main._apply_cli_overrides()
+        assert config.VMAF_HW_FALLBACK is True
+
+
+class TestCliOverridesLibraries:
+    def test_simple_path(self):
+        with patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/lib1"]):
+            main._apply_cli_overrides()
+        assert config.LIBRARIES == {
+            "lib1": {"input": "/mnt/lib1", "output": "/mnt/lib1", "cache": "/mnt/lib1"}
+        }
+
+    def test_three_part_path(self):
+        with patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out:/mnt/cache"]):
+            main._apply_cli_overrides()
+        assert config.LIBRARIES == {
+            "lib1": {"input": "/mnt/in", "output": "/mnt/out", "cache": "/mnt/cache"}
+        }
+
+    def test_multiple_libraries(self):
+        with patch.object(sys, "argv", ["main", "--library", "a=/mnt/a", "--library", "b=/mnt/b"]):
+            main._apply_cli_overrides()
+        assert set(config.LIBRARIES) == {"a", "b"}
+
+    def test_missing_equals_exits(self):
+        with (
+            patch.object(sys, "argv", ["main", "--library", "lib1"]),
+            patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
+            pytest.raises(SystemExit),
+        ):
+            main._apply_cli_overrides()
+        mock_exit.assert_called_once_with(1)
+
+    def test_invalid_parts_exits(self):
+        with (
+            patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out"]),
+            patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
+            pytest.raises(SystemExit),
+        ):
+            main._apply_cli_overrides()
+        mock_exit.assert_called_once_with(1)
 
 
 class TestMainLoop:
