@@ -1,5 +1,7 @@
 import signal
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -254,6 +256,7 @@ class TestMainLoop:
 
         with (
             patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
             patch("main.should_process"),
             patch("main.transcode"),
             patch("main.History"),
@@ -281,6 +284,7 @@ class TestMainLoop:
 
         with (
             patch("main.walk_directory", side_effect=yield_file),
+            patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
             patch("main.transcode", side_effect=fake_transcode) as mock_transcode,
             patch("main.History"),
@@ -304,6 +308,7 @@ class TestMainLoop:
         with (
             patch("main.config.VMAF_ASYNC", True),
             patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
             patch("main.should_process"),
             patch("main.transcode"),
             patch("main.History"),
@@ -331,6 +336,7 @@ class TestMainLoop:
         with (
             patch("main.config.VMAF_ASYNC", False),
             patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
             patch("main.should_process"),
             patch("main.transcode"),
             patch("main.History"),
@@ -347,6 +353,132 @@ class TestMainLoop:
         mock_start.assert_not_called()
         mock_recover.assert_not_called()
         mock_drain.assert_not_called()
+
+    def test_next_scan_starts_while_transcode_running(self):
+        _reset_running()
+        started = threading.Event()
+        finished = threading.Event()
+        second_scan_observed = []
+
+        def fake_transcode(*args, **_kw):
+            started.set()
+            time.sleep(0.2)
+            finished.set()
+
+        def fake_walk(*_a, **_kw):
+            if not started.is_set():
+                return iter([Path("/a.mp4")])
+            second_scan_observed.append(finished.is_set())
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.config.SCAN_INTERVAL", 0),
+            patch("main.walk_directory", side_effect=fake_walk),
+            patch("main.should_submit", return_value=True),
+            patch("main.should_process", return_value=True),
+            patch("main.transcode", side_effect=fake_transcode),
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+        ):
+            main.main_loop()
+
+        assert second_scan_observed == [False]
+
+    def test_pending_dedup_prevents_resubmit(self):
+        _reset_running()
+        calls = []
+        walk_calls = []
+
+        def fake_transcode(*args, **_kw):
+            calls.append(args[0])
+            time.sleep(0.2)
+
+        def fake_walk(*_a, **_kw):
+            walk_calls.append(1)
+            if len(walk_calls) == 1:
+                return iter([Path("/a.mp4")])
+            if len(walk_calls) == 2:
+                main._running = False
+                return iter([Path("/a.mp4")])
+            return iter([])
+
+        with (
+            patch("main.config.SCAN_INTERVAL", 0),
+            patch("main.walk_directory", side_effect=fake_walk),
+            patch("main.should_submit", return_value=True),
+            patch("main.should_process", return_value=True),
+            patch("main.transcode", side_effect=fake_transcode),
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+        ):
+            main.main_loop()
+
+        assert len(calls) == 1
+
+    def test_skips_submit_for_processed_files(self):
+        _reset_running()
+
+        def fake_walk(*_a, **_kw):
+            main._running = False
+            return iter([Path("/a.mp4")])
+
+        with (
+            patch("main.walk_directory", side_effect=fake_walk),
+            patch("main.should_submit", return_value=False),
+            patch("main.should_process"),
+            patch("main.transcode") as mock_transcode,
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+        ):
+            main.main_loop()
+
+        mock_transcode.assert_not_called()
+
+    def test_cancel_queued_tasks_on_shutdown(self):
+        _reset_running()
+        calls = []
+        started = threading.Event()
+        walk_calls = []
+
+        def fake_transcode(*args, **_kw):
+            calls.append(args[0])
+            started.set()
+            time.sleep(0.2)
+
+        def fake_walk(*_a, **_kw):
+            walk_calls.append(1)
+            if len(walk_calls) == 1:
+                return iter([Path("/a.mp4"), Path("/b.mp4")])
+            started.wait(2)
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.config.MAX_WORKERS", 1),
+            patch("main.config.SCAN_INTERVAL", 0),
+            patch("main.walk_directory", side_effect=fake_walk),
+            patch("main.should_submit", return_value=True),
+            patch("main.should_process", return_value=True),
+            patch("main.transcode", side_effect=fake_transcode),
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+        ):
+            main.main_loop()
+
+        assert len(calls) == 1
 
 
 class TestMainEntry:

@@ -2,18 +2,17 @@ import argparse
 import fcntl
 import logging
 import os
-import queue
 import signal
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 from src import config
-from src.filter import should_process
+from src.filter import should_process, should_submit
 from src.history import History
 from src.quality import cleanup_vmaf_logs
 from src.transcoder import (
+    active_temp_dirs_snapshot,
     cleanup_stale_temp_dirs,
     drain_vmaf_tasks,
     kill_active_ffmpeg,
@@ -201,84 +200,85 @@ def main_loop():
         recover_pending_vmaf(history)
     log.info("=" * 50)
 
-    _SENTINEL = object()
+    # 转码池常驻整个进程生命周期：扫描周期独立于转码进度，
+    # 新入库文件最多等待一个扫描间隔即可入队，不再排队等待批次转码完成。
+    # Transcode pool lives for the whole process; scan cadence is decoupled from
+    # transcode progress so newly added files queue up within one scan interval.
+    executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
+    _pending = set()
 
-    while _running:
-        for lib_info in config.LIBRARIES.values():
-            cleanup_stale_temp_dirs(lib_info["cache"], config.TEMP_PREFIX)
-            if lib_info["cache"] != lib_info["input"]:
-                cleanup_stale_temp_dirs(lib_info["input"], config.TEMP_PREFIX)
-        mark_stale_started_as_failed(history)
-        cleanup_vmaf_logs()
+    def process_one(path, lib_info):
+        if not _running:
+            return
+        try:
+            if not should_process(path, history, config.SKIP_CODECS, config.FFPROBE_PATH):
+                return
+            transcode(
+                path,
+                history,
+                config.FFMPEG_PATH,
+                config.FFPROBE_PATH,
+                lib_info["input"],
+                lib_info.get("output"),
+                lib_info.get("cache"),
+            )
+        except Exception:
+            log.exception("UNHANDLED ERROR: %s", path)
+        finally:
+            _pending.discard(str(path))
 
-        log.info("SCAN: checking all libraries")
+    try:
+        while _running:
+            for lib_info in config.LIBRARIES.values():
+                cleanup_stale_temp_dirs(
+                    lib_info["cache"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
+                )
+                if lib_info["cache"] != lib_info["input"]:
+                    cleanup_stale_temp_dirs(
+                        lib_info["input"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
+                    )
+            mark_stale_started_as_failed(history)
+            cleanup_vmaf_logs()
 
-        work_queue = queue.Queue()
-        lib_counts = {}
+            log.info("SCAN: checking all libraries")
 
-        def produce():
+            total = 0
             for lib_name, lib_info in config.LIBRARIES.items():
-                count = 0
+                found = 0
+                submitted = 0
                 for path in walk_directory(lib_info["input"], config.VIDEO_EXTENSIONS):
                     if not _running:
-                        return
-                    work_queue.put((path, lib_info))  # noqa: B023  # 闭包共享变量，非循环变量，误报
-                    count += 1
-                if count:
-                    log.info("  [%s] found %d file(s)", lib_name, count)
-                lib_counts[lib_name] = count  # noqa: B023  # 闭包共享变量，非循环变量，误报
+                        break
+                    found += 1
+                    key = str(path)
+                    if key in _pending:
+                        continue
+                    if not should_submit(path, history):
+                        continue
+                    _pending.add(key)
+                    executor.submit(process_one, path, lib_info)
+                    submitted += 1
+                if found:
+                    log.info("  [%s] found %d, submitted %d file(s)", lib_name, found, submitted)
+                total += submitted
+            if total:
+                log.info("SCAN: %d file(s) submitted this cycle", total)
+            else:
+                log.info("SCAN: no files to process")
 
-        def consume():
-            while True:
-                try:
-                    item = work_queue.get(timeout=1)  # noqa: B023  # 闭包共享变量，非循环变量，误报
-                except queue.Empty:
-                    if not _running:
-                        return
-                    continue
-                if item is _SENTINEL:
-                    work_queue.put(_SENTINEL)  # noqa: B023  # 闭包共享变量，非循环变量，误报
-                    return
-                path, lib_info = item
-                if not _running:
-                    continue
-                if not should_process(path, history, config.SKIP_CODECS, config.FFPROBE_PATH):
-                    continue
-                transcode(
-                    path,
-                    history,
-                    config.FFMPEG_PATH,
-                    config.FFPROBE_PATH,
-                    lib_info["input"],
-                    lib_info.get("output"),
-                    lib_info.get("cache"),
-                )
-
-        producer = threading.Thread(target=produce)
-        producer.start()
-
-        with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
-            # futures 未使用：ThreadPoolExecutor 退出时会等待全部任务完成
-            for _ in range(config.MAX_WORKERS):
-                executor.submit(consume)
-            producer.join()
-            for _ in range(config.MAX_WORKERS):
-                work_queue.put(_SENTINEL)
-
-        total = sum(lib_counts.values())
-        if total:
-            log.info("SCAN: %d file(s) processed this cycle", total)
-        else:
-            log.info("SCAN: no files to process")
-
-        if not _running:
-            break
-
-        log.info("Sleeping for %d seconds...", config.SCAN_INTERVAL)
-        for _ in range(config.SCAN_INTERVAL):
             if not _running:
                 break
-            time.sleep(1)
+
+            log.info("Sleeping for %d seconds...", config.SCAN_INTERVAL)
+            for _ in range(config.SCAN_INTERVAL):
+                if not _running:
+                    break
+                time.sleep(1)
+    finally:
+        # 优雅关闭：等待运行中的转码完成，取消排队未启动的任务（下次启动重新扫描）。
+        # Graceful shutdown: let running transcodes finish, cancel queued ones
+        # (they are re-discovered on next startup).
+        executor.shutdown(wait=True, cancel_futures=True)
 
     if config.VMAF_ASYNC:
         drain_vmaf_tasks()
