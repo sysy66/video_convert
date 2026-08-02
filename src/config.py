@@ -40,6 +40,9 @@ VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
 VMAF_MODEL_PATH = os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json")
 
 SCAN_INTERVAL = 1200
+# 文件稳定窗口：mtime 距今超过该秒数才认为写入完成（防止残缺文件入队转码）。
+# File stability window: only submit files whose mtime is older than this (seconds).
+FILE_STABLE_WINDOW = 300
 FAILED_RETRY_BASE = 3600
 FAILED_RETRY_MAX = 259200
 FAILED_RETRY_MAX_RETRIES = 3
@@ -140,6 +143,9 @@ VMAF_ASYNC = False
 VMAF_WORKERS = 1
 
 # 质量接受规则阈值 / Quality acceptance thresholds
+# 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），按 failed 重试而非永久拒绝。
+# Extreme-low threshold: VMAF below this suggests an incomplete input/output; mark failed for retry.
+VMAF_EXTREME_LOW = 60
 VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
 ACCEPT_RATIO_MAX = 1.00  # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio

@@ -40,12 +40,35 @@ def _history_allows(filepath, history):
     return True
 
 
-def should_submit(filepath, history):
-    """提交前轻量过滤：只查 history 状态，不做 ffprobe 探测（probe 留给 worker）。
+def _file_is_stable(filepath):
+    """mtime 距今超过稳定窗口才认为写入完成（防止写入中的残缺文件入队）。
 
-    Cheap pre-submit gate used by the scan loop: history status only, no probing.
+    A file whose mtime is older than FILE_STABLE_WINDOW is considered fully
+    written. stat 失败（瞬态/网络错误）不阻塞提交，worker 的 probe 会兜底。
     """
-    return _history_allows(filepath, history)
+    try:
+        mtime = filepath.stat().st_mtime
+    except OSError:
+        return True
+    return time.time() - mtime >= config.FILE_STABLE_WINDOW
+
+
+def should_submit(filepath, history):
+    """提交前轻量过滤：只查 history 状态与文件稳定度，不做 ffprobe 探测（probe 留给 worker）。
+
+    Cheap pre-submit gate used by the scan loop: history status and file
+    stability only, no probing.
+    """
+    if not _history_allows(filepath, history):
+        return False
+    if not _file_is_stable(filepath):
+        log.debug(
+            "SKIP (unstable, mtime < %ds): %s",
+            config.FILE_STABLE_WINDOW,
+            Path(filepath).name,
+        )
+        return False
+    return True
 
 
 def should_process(filepath, history, skip_codecs, ffprobe_path):

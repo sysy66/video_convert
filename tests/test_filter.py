@@ -1,3 +1,5 @@
+import os
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -164,3 +166,34 @@ def test_should_submit_exhausted_marks_history():
     ):
         assert not should_submit(Path("/v.mp4"), h)
         h.mark_exhausted.assert_called_once()
+
+
+def _stable_file(tmp_path, age_seconds):
+    p = tmp_path / "movie.mp4"
+    p.write_bytes(b"x" * 100)
+    os.utime(p, (time.time() - age_seconds, time.time() - age_seconds))
+    return p
+
+
+def test_should_submit_skips_recently_modified(tmp_path):
+    p = _stable_file(tmp_path, 10)
+    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+        assert not should_submit(p, _mock_history(None))
+
+
+def test_should_submit_passes_stable_file(tmp_path):
+    p = _stable_file(tmp_path, 3600)
+    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+        assert should_submit(p, _mock_history(None))
+
+
+def test_should_submit_stat_failure_does_not_block(tmp_path):
+    p = tmp_path / "gone.mp4"
+    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+        assert should_submit(p, _mock_history(None))
+
+
+def test_should_submit_stability_checked_after_history(tmp_path):
+    p = _stable_file(tmp_path, 10)
+    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+        assert not should_submit(p, _mock_history({"status": "success"}))

@@ -182,6 +182,17 @@ class TestHandleVmafTask:
         assert not output.exists()
         history.mark_done.assert_called_once_with(str(source), None, vmaf_score=60.0, rejected=True)
 
+    def test_extreme_low_score_marks_failed_for_retry(self, tmp_path):
+        source, output, history, task = self._setup_files(tmp_path)
+        with patch("src.transcoder.compute_vmaf", return_value=45.0):
+            _handle_vmaf_task(task)
+        assert source.exists()
+        assert not output.exists()
+        history.mark_done.assert_not_called()
+        history.mark_failed.assert_called_once_with(
+            str(source), "VMAF 45.00 below 60, input may be incomplete"
+        )
+
     def test_score_none_required_rejects(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         with (
