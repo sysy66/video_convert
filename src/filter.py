@@ -18,7 +18,7 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
         if status in ("success", "rejected", "not required"):
             return False
 
-        if status == "started":
+        if status in ("started", "pending_vmaf"):
             return False
 
         if status == "failed":

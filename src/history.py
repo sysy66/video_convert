@@ -189,6 +189,29 @@ class History:
                 (filepath,),
             )
 
+    def mark_pending_vmaf(self, filepath, output_path):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
+            ).fetchone()
+            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO files "
+                "(filepath, status, started_at, completed_at, output_path, vmaf_score, error) "
+                "VALUES (?, 'pending_vmaf', ?, ?, ?, NULL, NULL)",
+                (filepath, started_at, time.time(), output_path),
+            )
+
+    def is_pending_vmaf(self, filepath):
+        return self._get_status(filepath) == "pending_vmaf"
+
+    def iter_pending_vmaf(self):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT filepath, output_path FROM files WHERE status='pending_vmaf'"
+            ).fetchall()
+        return [(r["filepath"], r["output_path"]) for r in rows]
+
     def mark_failed(self, filepath, error):
         with self._lock:
             row = self._conn.execute(

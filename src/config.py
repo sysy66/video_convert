@@ -132,6 +132,13 @@ VMAF_HW_FALLBACK = False
 # Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
 VMAF_REQUIRED = True
 
+# 异步 VMAF 打分：True=转码成功后先保留源文件并移到输出区，后台线程打分后决定去留。
+# 打分 worker 线程数（VMAF 极耗解码器资源，默认 1 即可）。
+# Async VMAF scoring: True=move output into place without deleting the source; a background
+# worker scores VMAF later and keeps exactly one of the two files.
+VMAF_ASYNC = False
+VMAF_WORKERS = 1
+
 # 质量接受规则阈值 / Quality acceptance thresholds
 VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
