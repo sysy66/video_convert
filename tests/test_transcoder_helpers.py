@@ -39,7 +39,7 @@ class TestFfmpegPidRegistry:
 class TestKillActiveFfmpeg:
     def test_no_pids_returns_early(self):
         _clear_pids()
-        with patch("src.transcoder.os.kill") as mock_kill:
+        with patch("src.process_guard.os.kill") as mock_kill:
             transcoder.kill_active_ffmpeg()
         mock_kill.assert_not_called()
 
@@ -47,8 +47,8 @@ class TestKillActiveFfmpeg:
         _clear_pids()
         transcoder.register_ffmpeg_pid(123)
         with (
-            patch("src.transcoder.os.kill") as mock_kill,
-            patch("src.transcoder._time.sleep") as mock_sleep,
+            patch("src.process_guard.os.kill") as mock_kill,
+            patch("src.process_guard._time.sleep") as mock_sleep,
         ):
             transcoder.kill_active_ffmpeg()
         mock_kill.assert_any_call(123, signal.SIGTERM)
@@ -63,8 +63,8 @@ class TestKillActiveFfmpeg:
             raise ProcessLookupError
 
         with (
-            patch("src.transcoder.os.kill", side_effect=raise_lookup),
-            patch("src.transcoder._time.sleep"),
+            patch("src.process_guard.os.kill", side_effect=raise_lookup),
+            patch("src.process_guard._time.sleep"),
         ):
             transcoder.kill_active_ffmpeg()
 
@@ -76,8 +76,8 @@ class TestKillActiveFfmpeg:
             raise OSError("permission denied")
 
         with (
-            patch("src.transcoder.os.kill", side_effect=raise_oserror),
-            patch("src.transcoder._time.sleep"),
+            patch("src.process_guard.os.kill", side_effect=raise_oserror),
+            patch("src.process_guard._time.sleep"),
         ):
             transcoder.kill_active_ffmpeg()
 
@@ -222,7 +222,7 @@ class TestRmtreeRobust:
             patch("shutil.rmtree", side_effect=fail),
             patch("os.listdir", side_effect=fail),
             patch(
-                "src.transcoder.subprocess.run",
+                "src.temp_cleanup.subprocess.run",
                 side_effect=OSError("no rm"),
             ),
         ):

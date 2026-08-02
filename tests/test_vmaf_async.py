@@ -46,7 +46,7 @@ class TestTranscodeAsync:
 
     def _base_patches(self, compute_vmaf_return=95.0):
         return (
-            patch("src.transcoder.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_ASYNC", True),
             patch("src.transcoder.compute_vmaf", return_value=compute_vmaf_return),
@@ -166,7 +166,7 @@ class TestHandleVmafTask:
 
     def test_accept_deletes_source_keeps_output(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.transcoder.compute_vmaf", return_value=95.0):
+        with patch("src.vmaf_async.compute_vmaf", return_value=95.0):
             _handle_vmaf_task(task)
         assert not source.exists()
         assert output.exists()
@@ -176,7 +176,7 @@ class TestHandleVmafTask:
 
     def test_reject_deletes_output_keeps_source(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.transcoder.compute_vmaf", return_value=60.0):
+        with patch("src.vmaf_async.compute_vmaf", return_value=60.0):
             _handle_vmaf_task(task)
         assert source.exists()
         assert not output.exists()
@@ -184,7 +184,7 @@ class TestHandleVmafTask:
 
     def test_extreme_low_score_marks_failed_for_retry(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.transcoder.compute_vmaf", return_value=45.0):
+        with patch("src.vmaf_async.compute_vmaf", return_value=45.0):
             _handle_vmaf_task(task)
         assert source.exists()
         assert not output.exists()
@@ -196,7 +196,7 @@ class TestHandleVmafTask:
     def test_score_none_required_rejects(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         with (
-            patch("src.transcoder.compute_vmaf", return_value=None),
+            patch("src.vmaf_async.compute_vmaf", return_value=None),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
         ):
             _handle_vmaf_task(task)
@@ -207,7 +207,7 @@ class TestHandleVmafTask:
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         output.unlink()
-        with patch("src.transcoder.compute_vmaf", return_value=95.0):
+        with patch("src.vmaf_async.compute_vmaf", return_value=95.0):
             _handle_vmaf_task(task)
         assert source.exists()
         history.mark_failed.assert_called_once_with(
@@ -218,8 +218,8 @@ class TestHandleVmafTask:
     def test_accept_source_unlink_failure_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         with (
-            patch("src.transcoder.compute_vmaf", return_value=95.0),
-            patch("src.transcoder.Path.unlink", side_effect=OSError("nfs down")),
+            patch("src.vmaf_async.compute_vmaf", return_value=95.0),
+            patch("src.vmaf_async.Path.unlink", side_effect=OSError("nfs down")),
         ):
             _handle_vmaf_task(task)
         assert source.exists()
@@ -230,8 +230,8 @@ class TestHandleVmafTask:
     def test_reject_output_unlink_failure_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         with (
-            patch("src.transcoder.compute_vmaf", return_value=60.0),
-            patch("src.transcoder.Path.unlink", side_effect=OSError("nfs down")),
+            patch("src.vmaf_async.compute_vmaf", return_value=60.0),
+            patch("src.vmaf_async.Path.unlink", side_effect=OSError("nfs down")),
         ):
             _handle_vmaf_task(task)
         assert source.exists()
@@ -247,7 +247,7 @@ class TestHandleVmafTask:
         output.write_text("out")
         history = MagicMock()
         task = (str(source), str(output), 0.9, "My_Video__2024_", history)
-        with patch("src.transcoder.compute_vmaf", return_value=95.0) as mock_vmaf:
+        with patch("src.vmaf_async.compute_vmaf", return_value=95.0) as mock_vmaf:
             _handle_vmaf_task(task)
         log_path = mock_vmaf.call_args[1]["log_path"]
         assert log_path.parent == tmp_path / "vmaf_logs"
@@ -271,7 +271,7 @@ class TestVmafWorkers:
         output.write_text("output content")
         history = MagicMock()
 
-        with patch("src.transcoder.compute_vmaf", return_value=95.0):
+        with patch("src.vmaf_async.compute_vmaf", return_value=95.0):
             vmaf_tasks.put((str(source), str(output), 0.9, "movie", history))
             start_vmaf_workers()
             drain_vmaf_tasks()
