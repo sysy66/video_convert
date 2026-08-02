@@ -182,6 +182,7 @@ Edit `src/config.py`:
 | `FAILED_RETRY_BASE` | 3600 | Base delay for failed retry exponential backoff (seconds) |
 | `FAILED_RETRY_MAX` | 604800 | Max delay for failed retry (seconds) |
 | `MAX_WORKERS` | 2 | Parallel transcode jobs |
+| `CODEC_TIMEOUT` | 18000 | Per-file transcode timeout (seconds, 5 h) |
 | `TEMP_PREFIX` | `.work_` | Prefix for temp directories |
 | `VIDEO_EXTENSIONS` | `{".mp4", ".mkv", ...}` | File extensions to consider |
 | `SKIP_CODECS` | `{"hevc", "av1"}` | Codecs that skip transcoding |
@@ -190,6 +191,7 @@ Edit `src/config.py`:
 | `AUDIO_PASSTHROUGH_CODECS` | `{"aac"}` | Audio codecs to copy instead of re-encode |
 | `KEEP_SUBTITLES` | `True` | Passthrough subtitle streams |
 | `KEEP_ATTACHMENTS` | `True` | Passthrough attachment streams (fonts, etc.) |
+| `VMAF_TIMEOUT` | 36000 | VMAF scoring timeout per file (seconds, 10 h) |
 | `VMAF_SUBSAMPLE` | 30 | Evaluate 1 frame every N frames |
 | `VMAF_LOG_RETENTION_DAYS` | 7 | Auto-purge VMAF json logs older than this |
 | `VMAF_ACCEPT_HIGH` | 93 | VMAF ≥ this → accept if ratio ≤ `ACCEPT_RATIO_MAX` |

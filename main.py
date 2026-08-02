@@ -64,6 +64,12 @@ def _apply_cli_overrides():
     parser.add_argument(
         "--max-workers", type=int, metavar="N", help="Maximum concurrent transcodes"
     )
+    parser.add_argument(
+        "--codec-timeout", type=int, metavar="SECONDS", help="Per-file transcode timeout"
+    )
+    parser.add_argument(
+        "--vmaf-timeout", type=int, metavar="SECONDS", help="VMAF scoring timeout per file"
+    )
     parser.add_argument("--log", metavar="FILE", help="Log file path")
     parser.add_argument("--history", metavar="FILE", help="History database path")
     parser.add_argument("--ffmpeg", metavar="PATH", help="FFmpeg binary path")
@@ -116,6 +122,10 @@ def _apply_cli_overrides():
         config.SCAN_INTERVAL = args.scan_interval
     if args.max_workers is not None:
         config.MAX_WORKERS = args.max_workers
+    if args.codec_timeout is not None:
+        config.CODEC_TIMEOUT = args.codec_timeout
+    if args.vmaf_timeout is not None:
+        config.VMAF_TIMEOUT = args.vmaf_timeout
     if args.encoder:
         config.VIDEO_ENCODER = args.encoder
     config.SKIP_CODECS.add(config.VIDEO_ENCODER)

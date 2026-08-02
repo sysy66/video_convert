@@ -123,7 +123,7 @@ VMAF_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", 
 # VMAF 日志保留天数，超出此期限的逐帧 json 日志将被自动清理。
 # VMAF log retention in days; older per-frame json logs are auto-purged.
 VMAF_LOG_RETENTION_DAYS = 7
-VMAF_TIMEOUT = 18000
+VMAF_TIMEOUT = 36000
 # VMAF 开启 QSV 硬件加速解码（HW VMAF 失败时自动回退到纯软件）
 # Enable QSV hardware-accelerated decoding for VMAF (falls back to software on failure)
 VMAF_HWACCEL = False

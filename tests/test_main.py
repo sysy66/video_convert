@@ -166,6 +166,24 @@ class TestCliOverridesPaths:
             main._apply_cli_overrides()
         assert config.MAX_WORKERS == 4
 
+    def test_codec_timeout_sets_value(self):
+        with patch.object(sys, "argv", ["main", "--codec-timeout", "7200"]):
+            main._apply_cli_overrides()
+        assert config.CODEC_TIMEOUT == 7200
+
+    def test_vmaf_timeout_sets_value(self):
+        with patch.object(sys, "argv", ["main", "--vmaf-timeout", "5400"]):
+            main._apply_cli_overrides()
+        assert config.VMAF_TIMEOUT == 5400
+
+    def test_defaults_leave_timeouts_unchanged(self):
+        codec_orig = config.CODEC_TIMEOUT
+        vmaf_orig = config.VMAF_TIMEOUT
+        with patch.object(sys, "argv", ["main"]):
+            main._apply_cli_overrides()
+        assert config.CODEC_TIMEOUT == codec_orig
+        assert config.VMAF_TIMEOUT == vmaf_orig
+
     def test_vmaf_ffmpeg_sets_path(self):
         with patch.object(sys, "argv", ["main", "--vmaf-ffmpeg", "/opt/ffmpeg/ffmpeg"]):
             main._apply_cli_overrides()
