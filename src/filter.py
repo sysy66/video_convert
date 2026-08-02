@@ -7,7 +7,11 @@ from src.probe import get_video_codec
 log = __import__("logging").getLogger(__name__)
 
 
-def should_process(filepath, history, skip_codecs, ffprobe_path):
+def _history_allows(filepath, history):
+    """仅基于 history 状态判断文件是否可处理（不探测编解码器，供提交前快速过滤）。
+
+    History-only gate: whether this file may be processed, without probing codecs.
+    """
     filepath = Path(filepath)
 
     entry = history.get_entry(str(filepath))
@@ -33,6 +37,22 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
                 log.debug("SKIP (cooldown %.1fh): %s", delay / 3600, filepath.name)
                 return False
 
+    return True
+
+
+def should_submit(filepath, history):
+    """提交前轻量过滤：只查 history 状态，不做 ffprobe 探测（probe 留给 worker）。
+
+    Cheap pre-submit gate used by the scan loop: history status only, no probing.
+    """
+    return _history_allows(filepath, history)
+
+
+def should_process(filepath, history, skip_codecs, ffprobe_path):
+    if not _history_allows(filepath, history):
+        return False
+
+    filepath = Path(filepath)
     codec = get_video_codec(filepath, ffprobe_path)
     if codec is None:
         log.warning("PROBE FAILED (queued anyway): %s", filepath)
