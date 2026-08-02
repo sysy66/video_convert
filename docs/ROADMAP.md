@@ -37,7 +37,7 @@
 
 ---
 
-## 🔄 Current — v1.3 Test Quality (进行中)
+## ✔ v1.3 — Test Quality & Async VMAF (已发布)
 
 See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
@@ -46,6 +46,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 - [x] **Phase 3 — Fill unit-test gaps** — transcoder 73%、main() 91%、CLI 全量、ai_analyze 98%，总覆盖 82%
 - [x] **Phase 4 — Integration tests** — 6 个合成视频 fixtures、ffprobe 14 用例、真实 QSV transcode e2e（hevc 真跑 / av1 硬件不支持 skip）、真实 libvmaf 3 用例、`--run-slow` 机制（CI 零改动，默认全 skip）
 - [x] **Phase 5 — Regression & performance** — fixtures SHA256 锁定 + 重编码确定性回归、pytest-benchmark 编码/VMAF 基准（默认 disable）、CI 矩阵 3.10/3.11/3.12
+- [x] **Async VMAF scoring（`--vmaf-async`）** — 转码后先落输出区不删源，后台 worker 打分后取一；`pending_vmaf` 状态、启动恢复 kill -9 残留、优雅关闭 drain、ratio 超标必拒不入队
 
 ---
 

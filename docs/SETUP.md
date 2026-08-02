@@ -196,6 +196,8 @@ Edit `src/config.py`:
 | `VMAF_ACCEPT_LOW` | 85 | VMAF < this → reject |
 | `ACCEPT_RATIO_MAX` | 1.00 | Max output/input size ratio for high-VMAF accept |
 | `ACCEPT_RATIO_LOW` | 0.75 | Max ratio for middle-range VMAF (≥25% smaller) |
+| `VMAF_ASYNC` | `False` | Async scoring: keep source, score in background worker, keep one file |
+| `VMAF_WORKERS` | 1 | Number of async VMAF scoring worker threads |
 
 **Library format examples / 多库格式示例:**
 
@@ -244,6 +246,26 @@ VMAF 模型文件（`data/models/vmaf_v0.6.1.json`，旧版整数特征，适合
   - VMAF 85–92 → accept only if output is ≥25% smaller (ratio ≤ 0.75)
   - VMAF < 85 → reject
   - VMAF unavailable → reject
+
+### Async mode / 异步模式（`--vmaf-async`）
+
+默认（同步）模式下 VMAF 打分在转码线程内执行，一次打分可阻塞数分钟到数小时。
+开启异步模式后：
+
+1. 转码成功 → 输出文件立即移入输出区，**源文件保留在原位**，状态记为 `pending_vmaf`。
+2. 后台 worker 线程（`VMAF_WORKERS` 个，默认 1）随后对比源文件与新文件打分。
+3. 打分完成：接受 → 删除源文件，状态 `success`；拒绝（含打分失败）→ 删除输出区新文件，状态 `rejected`。
+4. `ratio` 超过 `ACCEPT_RATIO_MAX` 时必拒，直接丢弃输出不排队打分（打分很贵，不浪费）。
+
+注意事项：
+
+- **打分窗口期源文件与输出文件双份存在**，请确保磁盘空间充足。
+- 优雅关闭（SIGINT/SIGTERM）时主循环会等待所有排队打分完成（`drain`）。
+- 进程被 `kill -9` 后残留的 `pending_vmaf` 记录会在下次启动时自动恢复重新打分。
+
+```
+python3 main.py --vmaf-async ...（其余参数照常）
+```
 
 ---
 
