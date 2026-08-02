@@ -1,6 +1,7 @@
+import signal
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,6 +13,20 @@ pytestmark = pytest.mark.unit
 
 def _reset_running():
     main._running = True
+
+
+class TestSetupLogging:
+    def test_creates_log_dir(self, tmp_path, monkeypatch):
+        log_file = str(tmp_path / "logs" / "app.log")
+        monkeypatch.setattr(config, "LOG_FILE", log_file)
+        main._setup_logging()
+        assert (tmp_path / "logs").is_dir()
+
+    def test_basic_config_called(self, monkeypatch):
+        monkeypatch.setattr(config, "LOG_FILE", "/tmp/x/app.log")
+        with patch("main.logging.basicConfig") as mock_basic:
+            main._setup_logging()
+        mock_basic.assert_called_once()
 
 
 class TestSignalHandler:
@@ -125,3 +140,68 @@ class TestMainLoop:
 
         mock_transcode.assert_called_once()
         assert results[0].name == "a.mp4"
+
+
+class TestMainEntry:
+    def test_lock_acquired_registers_signals(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LOG_FILE", str(tmp_path / "logs" / "app.log"))
+        (tmp_path / "logs").mkdir()
+        history = MagicMock()
+        with (
+            patch("main._apply_cli_overrides"),
+            patch("main._setup_logging"),
+            patch("main.fcntl.flock"),
+            patch("main.signal.signal") as mock_signal,
+            patch("main.main_loop", return_value=history),
+            patch("main.kill_active_ffmpeg") as mock_kill,
+        ):
+            main.main()
+
+        mock_signal.assert_any_call(signal.SIGINT, main.signal_handler)
+        mock_signal.assert_any_call(signal.SIGTERM, main.signal_handler)
+        history.close.assert_called_once()
+        mock_kill.assert_called_once()
+
+    def test_lock_unavailable_exits(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LOG_FILE", str(tmp_path / "logs" / "app.log"))
+        (tmp_path / "logs").mkdir()
+        with (
+            patch("main._apply_cli_overrides"),
+            patch("main._setup_logging"),
+            patch("main.fcntl.flock", side_effect=BlockingIOError),
+            patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
+            pytest.raises(SystemExit),
+        ):
+            main.main()
+
+        mock_exit.assert_called_once_with(1)
+
+    def test_lock_oserror_exits(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LOG_FILE", str(tmp_path / "logs" / "app.log"))
+        (tmp_path / "logs").mkdir()
+        with (
+            patch("main._apply_cli_overrides"),
+            patch("main._setup_logging"),
+            patch("main.fcntl.flock", side_effect=OSError("no lock")),
+            patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
+            pytest.raises(SystemExit),
+        ):
+            main.main()
+
+        mock_exit.assert_called_once_with(1)
+
+    def test_main_loop_exception_reraised_and_cleanup(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config, "LOG_FILE", str(tmp_path / "logs" / "app.log"))
+        (tmp_path / "logs").mkdir()
+        with (
+            patch("main._apply_cli_overrides"),
+            patch("main._setup_logging"),
+            patch("main.fcntl.flock"),
+            patch("main.signal.signal"),
+            patch("main.main_loop", side_effect=RuntimeError("boom")),
+            patch("main.kill_active_ffmpeg") as mock_kill,
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            main.main()
+
+        mock_kill.assert_called_once()
