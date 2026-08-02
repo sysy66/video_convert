@@ -63,9 +63,7 @@ def _handle_vmaf_task(task):
     source = Path(source)
     output = Path(output)
 
-    vmaf_log = (
-        Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
-    )
+    vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
     vmaf_start = _time.monotonic()
     vmaf_score = compute_vmaf(source, output, log_path=vmaf_log)
     vmaf_elapsed = _time.monotonic() - vmaf_start
@@ -78,9 +76,7 @@ def _handle_vmaf_task(task):
         try:
             source.unlink()
         except OSError as e:
-            log.error(
-                "VMAF ACCEPT CLEANUP FAILED: %s — %s", source.name, e
-            )
+            log.error("VMAF ACCEPT CLEANUP FAILED: %s — %s", source.name, e)
             history.mark_failed(str(source), f"VMAF accept cleanup failed: {e}")
             return
         history.mark_done(str(source), str(output), vmaf_score=vmaf_score, rejected=False)
@@ -95,9 +91,7 @@ def _handle_vmaf_task(task):
         try:
             output.unlink()
         except OSError as e:
-            log.error(
-                "VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e
-            )
+            log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
             history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
             return
         history.mark_done(str(source), None, vmaf_score=vmaf_score, rejected=True)
@@ -664,6 +658,18 @@ def transcode(
         # Async VMAF: move the output into place but keep the source; a background
         # worker scores it later and keeps exactly one of the two files.
         if config.VMAF_ASYNC:
+            if ratio > config.ACCEPT_RATIO_MAX and config.VMAF_REQUIRED:
+                # ratio 超标必拒（VMAF ≥ 93 也要求 ratio ≤ ACCEPT_RATIO_MAX），
+                # 直接拒绝不入队，省去昂贵的采样打分。
+                _cleanup_temp(temp_dir)
+                history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
+                log.warning(
+                    "REJECT (async): %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
+                    filepath.name,
+                    ratio * 100,
+                    config.ACCEPT_RATIO_MAX * 100,
+                )
+                return True
             final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
@@ -682,7 +688,7 @@ def transcode(
                 return False
             history.mark_pending_vmaf(str(filepath), str(final_path))
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put((filepath, final_path, ratio, safe_stem, history))
+            vmaf_tasks.put((str(filepath), str(final_path), ratio, safe_stem, history))
             log.info(
                 "VMAF PENDING (async): %s (%s, ratio %.1f%%, queued for scoring)",
                 final_path.name,

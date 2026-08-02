@@ -204,4 +204,3 @@ class TestTranscodeVmafAsync:
         assert not env["src"].exists()
         entry = env["history"].get_entry(str(env["src"]))
         assert entry["vmaf_score"] is not None
-

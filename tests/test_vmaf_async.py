@@ -119,7 +119,7 @@ class TestTranscodeAsync:
         history = MagicMock()
 
         p1, p2, p3, p4 = self._base_patches()
-        with (p1, p2, p3, p4):
+        with p1, p2, p3, p4:
             result = transcode(
                 str(input_file), history, "/ffmpeg", "/ffprobe", tmp_path / "input", output_dir
             )
@@ -180,9 +180,7 @@ class TestHandleVmafTask:
             _handle_vmaf_task(task)
         assert source.exists()
         assert not output.exists()
-        history.mark_done.assert_called_once_with(
-            str(source), None, vmaf_score=60.0, rejected=True
-        )
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=60.0, rejected=True)
 
     def test_score_none_required_rejects(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
@@ -193,9 +191,7 @@ class TestHandleVmafTask:
             _handle_vmaf_task(task)
         assert source.exists()
         assert not output.exists()
-        history.mark_done.assert_called_once_with(
-            str(source), None, vmaf_score=None, rejected=True
-        )
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=None, rejected=True)
 
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
@@ -323,9 +319,7 @@ class TestRecoverPendingVmaf:
         recover_pending_vmaf(history)
 
         assert not output.exists()
-        history.mark_done.assert_called_once_with(
-            str(tmp_path / "gone.mkv"), None, rejected=True
-        )
+        history.mark_done.assert_called_once_with(str(tmp_path / "gone.mkv"), None, rejected=True)
         assert vmaf_tasks.empty()
 
 
