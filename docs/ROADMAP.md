@@ -43,7 +43,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 - [x] **Phase 1 — Infrastructure** — Forgejo Actions CI（pytest/coverage/ruff 全绿）、coverage 门槛 69、ruff 静态检查、测试依赖声明
 - [x] **Phase 2 — Test-base refactor** — 纯 pytest 统一、conftest factory fixtures、markers 注册、config.py 100% 覆盖
-- [ ] Phase 3 — Fill unit-test gaps (pending)
+- [x] **Phase 3 — Fill unit-test gaps** — transcoder 73%、main() 91%、CLI 全量、ai_analyze 98%，总覆盖 82%
 - [ ] Phase 4 — Integration tests (pending)
 - [ ] Phase 5 — Regression & performance (pending)
 

@@ -75,6 +75,11 @@
   - Task 6: conftest 的 make_history/make_video_file/make_video_tree 转为 factory fixtures；test_history.py 14 处样板接入
   - Task 7: 注册 unit/integration/slow markers + `--strict-markers`；全部 140 用例标注 unit
   - Task 8: 新增 test_config.py（7 用例），src/config.py 覆盖 0 → 100%，总覆盖 69.84 → 70.09%
-- Phase 3: pending
+- Phase 3: ✅ completed (2026-08-02)
+  - Task 9: 新增 test_transcoder_helpers.py（33 用例），transcoder.py 52% → 73%
+  - Task 10: test_main.py 覆盖 main() 入口 lock/信号/异常/shutdown，main.py 66% → 78%
+  - Task 11: CLI flags 全量覆盖（+15 用例，含 --library 三种形态），main.py → 91%
+  - Task 12: ai_analyze.py 函数式重构 + 14 用例，覆盖率 0 → 98%
+  - 总覆盖率 70.09 → 82%（208 passed）
 - Phase 4: pending
 - Phase 5: pending
