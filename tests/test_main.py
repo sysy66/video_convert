@@ -92,6 +92,26 @@ class TestCliOverrides:
         finally:
             config.VMAF_REQUIRED = original
 
+    def test_vmaf_async_enables(self):
+        original = config.VMAF_ASYNC
+        try:
+            config.VMAF_ASYNC = False
+            with patch.object(sys, "argv", ["main", "--vmaf-async"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_ASYNC is True
+        finally:
+            config.VMAF_ASYNC = original
+
+    def test_default_leaves_async_disabled(self):
+        original = config.VMAF_ASYNC
+        try:
+            config.VMAF_ASYNC = False
+            with patch.object(sys, "argv", ["main"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_ASYNC is False
+        finally:
+            config.VMAF_ASYNC = original
+
     def test_encoder_adds_to_skip_codecs(self):
         original_encoder = config.VIDEO_ENCODER
         original_skip = config.SKIP_CODECS.copy()
@@ -255,6 +275,60 @@ class TestMainLoop:
 
         mock_transcode.assert_called_once()
         assert results[0].name == "a.mp4"
+
+    def test_vmaf_async_lifecycle(self):
+        _reset_running()
+
+        def stop_after_walk(*_a, **_kw):
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.config.VMAF_ASYNC", True),
+            patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_process"),
+            patch("main.transcode"),
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+            patch("main.start_vmaf_workers") as mock_start,
+            patch("main.recover_pending_vmaf") as mock_recover,
+            patch("main.drain_vmaf_tasks") as mock_drain,
+        ):
+            main.main_loop()
+
+        mock_start.assert_called_once()
+        mock_recover.assert_called_once()
+        mock_drain.assert_called_once()
+
+    def test_vmaf_sync_skips_worker_lifecycle(self):
+        _reset_running()
+
+        def stop_after_walk(*_a, **_kw):
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.config.VMAF_ASYNC", False),
+            patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_process"),
+            patch("main.transcode"),
+            patch("main.History"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.mark_stale_started_as_failed"),
+            patch("main.cleanup_vmaf_logs"),
+            patch("main.start_vmaf_workers") as mock_start,
+            patch("main.recover_pending_vmaf") as mock_recover,
+            patch("main.drain_vmaf_tasks") as mock_drain,
+        ):
+            main.main_loop()
+
+        mock_start.assert_not_called()
+        mock_recover.assert_not_called()
+        mock_drain.assert_not_called()
 
 
 class TestMainEntry:
