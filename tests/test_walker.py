@@ -1,94 +1,59 @@
-import tempfile
-import unittest
-from pathlib import Path
-
 from src.walker import walk_directory
 
 
-class TestWalkerBasic(unittest.TestCase):
-    @staticmethod
-    def _make_tree(root, files):
-        for f in files:
-            p = root / f
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("content")
-
-    def test_empty_directory(self):
-        with tempfile.TemporaryDirectory() as d:
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(result, [])
-
-    def test_nonexistent_directory(self):
-        with tempfile.TemporaryDirectory() as d:
-            result = list(walk_directory(d + "/nonexistent", {".mp4"}))
-            self.assertEqual(result, [])
-
-    def test_extension_filtering(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {"a.mp4": "", "b.mkv": "", "c.txt": "", "d.jpg": ""})
-            result = list(walk_directory(d, {".mp4", ".mkv"}))
-            self.assertEqual(len(result), 2)
-            names = {p.name for p in result}
-            self.assertEqual(names, {"a.mp4", "b.mkv"})
-
-    def test_single_extension(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {"a.mp4": "", "b.mkv": ""})
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(len(result), 1)
-            self.assertEqual(result[0].name, "a.mp4")
+def _make_tree(root, files):
+    for f in files:
+        p = root / f
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("content")
 
 
-class TestWalkerHidden(unittest.TestCase):
-    @staticmethod
-    def _make_tree(root, files):
-        for f in files:
-            p = root / f
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("content")
-
-    def test_skips_hidden_files(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {".hidden.mp4": "", "normal.mp4": ""})
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(len(result), 1)
-            self.assertEqual(result[0].name, "normal.mp4")
-
-    def test_skips_hidden_directories(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {".hidden/v.mp4": "", "visible/v.mp4": ""})
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(len(result), 1)
-            self.assertIn("visible", str(result[0]))
-
-    def test_skips_temp_directories(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {".work_abc/v.mp4": "", "normal/v.mp4": ""})
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(len(result), 1)
-            self.assertIn("normal", str(result[0]))
+def test_empty_directory(tmp_path):
+    assert list(walk_directory(str(tmp_path), {".mp4"})) == []
 
 
-class TestWalkerRecursive(unittest.TestCase):
-    @staticmethod
-    def _make_tree(root, files):
-        for f in files:
-            p = root / f
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text("content")
-
-    def test_recursive_discovery(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self._make_tree(root, {"a.mp4": "", "sub/b.mp4": "", "sub/sub/c.mp4": ""})
-            result = list(walk_directory(d, {".mp4"}))
-            self.assertEqual(len(result), 3)
+def test_nonexistent_directory(tmp_path):
+    result = list(walk_directory(str(tmp_path / "nonexistent"), {".mp4"}))
+    assert result == []
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_extension_filtering(tmp_path):
+    _make_tree(tmp_path, {"a.mp4": "", "b.mkv": "", "c.txt": "", "d.jpg": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4", ".mkv"}))
+    assert len(result) == 2
+    names = {p.name for p in result}
+    assert names == {"a.mp4", "b.mkv"}
+
+
+def test_single_extension(tmp_path):
+    _make_tree(tmp_path, {"a.mp4": "", "b.mkv": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4"}))
+    assert len(result) == 1
+    assert result[0].name == "a.mp4"
+
+
+def test_skips_hidden_files(tmp_path):
+    _make_tree(tmp_path, {".hidden.mp4": "", "normal.mp4": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4"}))
+    assert len(result) == 1
+    assert result[0].name == "normal.mp4"
+
+
+def test_skips_hidden_directories(tmp_path):
+    _make_tree(tmp_path, {".hidden/v.mp4": "", "visible/v.mp4": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4"}))
+    assert len(result) == 1
+    assert "visible" in str(result[0])
+
+
+def test_skips_temp_directories(tmp_path):
+    _make_tree(tmp_path, {".work_abc/v.mp4": "", "normal/v.mp4": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4"}))
+    assert len(result) == 1
+    assert "normal" in str(result[0])
+
+
+def test_recursive_discovery(tmp_path):
+    _make_tree(tmp_path, {"a.mp4": "", "sub/b.mp4": "", "sub/sub/c.mp4": ""})
+    result = list(walk_directory(str(tmp_path), {".mp4"}))
+    assert len(result) == 3
