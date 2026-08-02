@@ -48,8 +48,8 @@ def validate_config():
         errors.extend(e)
         warnings.extend(w)
 
-    # 3. VMAF dependencies (error if VMAF_REQUIRED)
-    if config.VMAF_REQUIRED:
+    # 3. VMAF dependencies (error if VMAF_REQUIRED or VMAF_ASYNC)
+    if config.VMAF_REQUIRED or config.VMAF_ASYNC:
         if not os.path.isfile(config.VMAF_FFMPEG_PATH):
             errors.append(
                 f"VMAF_REQUIRED is True but VMAF_FFMPEG_PATH not found: {config.VMAF_FFMPEG_PATH}"

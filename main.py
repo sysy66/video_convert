@@ -15,8 +15,11 @@ from src.history import History
 from src.quality import cleanup_vmaf_logs
 from src.transcoder import (
     cleanup_stale_temp_dirs,
+    drain_vmaf_tasks,
     kill_active_ffmpeg,
     mark_stale_started_as_failed,
+    recover_pending_vmaf,
+    start_vmaf_workers,
     transcode,
 )
 from src.validation import validate_config
@@ -93,6 +96,11 @@ def _apply_cli_overrides():
     )
     parser.add_argument("--no-vmaf", action="store_true", help="Disable VMAF quality check")
     parser.add_argument("--vmaf", action="store_true", help="Enable VMAF quality check")
+    parser.add_argument(
+        "--vmaf-async",
+        action="store_true",
+        help="Async VMAF scoring: keep source, score in background, keep one file",
+    )
 
     args = parser.parse_args()
 
@@ -125,6 +133,8 @@ def _apply_cli_overrides():
         config.VMAF_REQUIRED = False
     if args.vmaf:
         config.VMAF_REQUIRED = True
+    if args.vmaf_async:
+        config.VMAF_ASYNC = True
     if args.libraries:
         raw = {}
         for lib_def in args.libraries:
@@ -175,6 +185,10 @@ def main_loop():
         log.info("  [%s] %s", name, ", ".join(parts))
     log.info("Scan interval: %ds", config.SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
+    if config.VMAF_ASYNC:
+        log.info("VMAF scoring: async (%d worker(s))", config.VMAF_WORKERS)
+        start_vmaf_workers()
+        recover_pending_vmaf(history)
     log.info("=" * 50)
 
     _SENTINEL = object()
@@ -255,6 +269,9 @@ def main_loop():
             if not _running:
                 break
             time.sleep(1)
+
+    if config.VMAF_ASYNC:
+        drain_vmaf_tasks()
 
     log.info("Shutdown complete")
     return history
