@@ -178,6 +178,29 @@ class TestRunVmaf:
                     score = _run_vmaf(ref, dist, "/ffmpeg", log_path, hwaccel=False)
         assert score == 94.0
 
+    def test_stderr_wins_over_json_pooled(self, tmp_path):
+        """回归：libvmaf 2.3.0 的 json pooled 聚合 bug 下，stderr 分数优先。
+
+        pooled_metrics.vmaf.mean 在 2.3.0 subsample 模式下只聚合视频开头一段帧
+        （虚高），而 stderr 的 VMAF score 是 ffmpeg 侧逐帧平均，始终正确。
+        """
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+        log_path = tmp_path / "out.json"
+        log_path.write_text(json.dumps({"pooled_metrics": {"vmaf": {"mean": 95.6, "min": 90.0}}}))
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            result = MagicMock()
+            result.returncode = 0
+            result.stderr = b"VMAF score: 86.542581"
+            result.stdout = b""
+            with patch("subprocess.run", return_value=result):
+                with patch("src.quality._read_vmaf_from_json", return_value=(95.6, 90.0)):
+                    score = _run_vmaf(ref, dist, "/ffmpeg", log_path, hwaccel=False)
+        assert score == 86.542581
+
     def test_sw_success_from_stderr(self, tmp_path):
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"

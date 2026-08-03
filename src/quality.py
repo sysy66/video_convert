@@ -135,15 +135,22 @@ def _run_vmaf(
             )
             return None
 
-        if log_path is not None:
-            mean, _minimum = _read_vmaf_from_json(log_path)
-            if mean is not None:
-                return mean
-
+        # stderr 的 "VMAF score:" 由 ffmpeg 侧逐帧平均得出，跨 libvmaf 版本与
+        # n_subsample 取值都正确；json 的 pooled_metrics.vmaf.mean 在 libvmaf 2.3.0
+        # 的 subsample 模式下只聚合视频开头一小段帧（聚合 bug），故 stderr 优先。
+        # The ffmpeg-printed "VMAF score:" is a per-frame average computed on the
+        # ffmpeg side, correct across libvmaf versions and n_subsample values; the
+        # json pooled_metrics.vmaf.mean only aggregates the first frames under
+        # subsampling in libvmaf 2.3.0 (aggregation bug), so stderr wins.
         output = (result.stderr + result.stdout).decode("utf-8", errors="replace")
         m = _VMAF_RE.search(output)
         if m:
             return float(m.group(1))
+
+        if log_path is not None:
+            mean, _minimum = _read_vmaf_from_json(log_path)
+            if mean is not None:
+                return mean
 
         log.warning("VMAF [%s] score not found in ffmpeg output for %s", tag, transcoded_path.name)
         return None
