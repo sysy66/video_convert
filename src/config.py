@@ -36,7 +36,12 @@ _MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "m
 
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
-VMAF_FFMPEG_PATH = "/opt/johnvansickle-ffmpeg/ffmpeg"
+# VMAF 打分必须使用新版本 ffmpeg：johnvansickle 2024 版（N-71064）在
+# fps 帧率对齐 + libvmaf 组合时会崩溃（Assertion best_input >= 0），
+# 而 /opt/ffmpeg-qsv-vmaf（git-2026-07-30）无此问题。
+# VMAF scoring requires a recent ffmpeg: the 2024 johnvansickle build crashes
+# (Assertion best_input >= 0) when combining the fps filter with libvmaf.
+VMAF_FFMPEG_PATH = "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg"
 VMAF_MODEL_PATH = os.path.join(_MODEL_DIR, "vmaf_v0.6.1.json")
 
 SCAN_INTERVAL = 1200
@@ -119,6 +124,20 @@ HISTORY_FILE = "data/history.db"
 # VMAF 采样间隔：每 N 帧只评估 1 帧。全片解码但大幅减少计算量。
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
+
+# VMAF 打分前统一帧率对齐。VFR 源被 QSV/软件编码器规整为 CFR 后，
+# 产物与源的帧序会产生累计漂移，导致 libvmaf 逐帧对比错位、分数虚低。
+# 打分时给两个输入都加 fps 滤镜归一到同一时间网格，可消除该系统性误差。
+# 目标帧率优先从源视频实际帧率自动推导（适配任意帧率），VMAF_ALIGN_FPS_RATE
+# 仅在源探测失败（如 ffprobe 不可用）时作为缺省值。
+# 实测（Arc A310 + av1_qsv）：同一产物不对齐 63.19，对齐后 94.83 且三次一致。
+# Rate-alignment before VMAF: a VFR source normalized to CFR by the encoder drifts
+# out of per-frame sync with its own source, spuriously deflating libvmaf scores.
+# Both inputs get a fps filter so they land on the same time grid. The target rate
+# is auto-derived from the source for generality; VMAF_ALIGN_FPS_RATE is only the
+# fallback when probing (ffprobe) fails. Measured: 63.19 -> 94.83 (3x reproducible).
+VMAF_ALIGN_FPS = True
+VMAF_ALIGN_FPS_RATE = "30000/1001"
 
 # VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
 # Directory for per-run VMAF json logs; kept even when the result is rejected, for auditing.

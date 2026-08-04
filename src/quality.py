@@ -10,7 +10,7 @@ import subprocess
 import time
 
 from src import config
-from src.probe import get_video_pix_fmt
+from src.probe import get_video_frame_rate, get_video_pix_fmt
 
 log = __import__("logging").getLogger(__name__)
 
@@ -60,6 +60,28 @@ def _read_vmaf_from_json(log_path):
         return (None, None)
 
 
+def _align_fps_string(original_path, ffprobe_path):
+    """
+    VFR 源被转码规整为 CFR 后，产物与源帧序会产生累计漂移，导致 libvmaf
+    逐帧对比错位、分数虚低。开启 VMAF_ALIGN_FPS 时给两个输入都加 fps 滤镜
+    归一到同一时间网格，消除系统性打分误差（实测 63.19 -> 94.83）。
+    目标帧率优先从源视频实际帧率自动推导（hd video probe fallback），避免
+    硬编码与源不匹配时造成额外重采样；推导失败才退回 VMAF_ALIGN_FPS_RATE。
+
+    Build the fps filter string for frame-rate alignment. Derives the target
+    rate from the source video for true generality, falling back to the
+    configured VMAF_ALIGN_FPS_RATE only when probing fails.
+    """
+    if not config.VMAF_ALIGN_FPS:
+        return ""
+    rate = None
+    if ffprobe_path:
+        rate = get_video_frame_rate(original_path, ffprobe_path)
+    if not rate:
+        rate = config.VMAF_ALIGN_FPS_RATE
+    return f"fps={rate}"
+
+
 def _run_vmaf(
     original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, ffprobe_path=None
 ):
@@ -72,6 +94,8 @@ def _run_vmaf(
 
     :param hwaccel: True 时启用 QSV 硬件解码（hwdownload 后接软件 libvmaf）
     """
+    _fps = _align_fps_string(original_path, ffprobe_path)
+
     if hwaccel:
         ffprobe_path = ffprobe_path or config.FFPROBE_PATH
         ref_fmt = _hw_download_format(original_path, ffprobe_path)
@@ -79,9 +103,9 @@ def _run_vmaf(
         hwaccel_flags = ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
         filter_complex = (
             "[0:v]hwdownload,format=" + ref_fmt + "[ref_dl];"
-            "[ref_dl]setpts=PTS-STARTPTS[r0];"
+            "[ref_dl]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[r0];"
             "[1:v]hwdownload,format=" + dist_fmt + "[dist_dl];"
-            "[dist_dl]setpts=PTS-STARTPTS[d0];"
+            "[dist_dl]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[d0];"
             "[d0][r0]scale2ref=flags=bicubic[d1][r1];"
             "[d1]format=yuv420p[dist];"
             "[r1]format=yuv420p[ref];"
@@ -95,8 +119,8 @@ def _run_vmaf(
         )
     else:
         filter_complex = (
-            "[1:v]setpts=PTS-STARTPTS[d0];"
-            "[0:v]setpts=PTS-STARTPTS[r0];"
+            "[1:v]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[d0];"
+            "[0:v]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[r0];"
             "[d0][r0]scale2ref=flags=bicubic[d1][r1];"
             "[d1]format=yuv420p[dist];"
             "[r1]format=yuv420p[ref];"
@@ -131,7 +155,10 @@ def _run_vmaf(
         result = subprocess.run(cmd, capture_output=True, timeout=config.VMAF_TIMEOUT)
         if result.returncode != 0:
             log.warning(
-                "VMAF [%s] failed (rc=%d) for %s", tag, result.returncode, transcoded_path.name
+                "VMAF [%s] failed (rc=%d) for %s",
+                tag,
+                result.returncode,
+                os.path.basename(str(transcoded_path)),
             )
             return None
 
@@ -152,12 +179,12 @@ def _run_vmaf(
             if mean is not None:
                 return mean
 
-        log.warning("VMAF [%s] score not found in ffmpeg output for %s", tag, transcoded_path.name)
+        log.warning("VMAF [%s] score not found in ffmpeg output for %s", tag, os.path.basename(str(transcoded_path)))
         return None
     except subprocess.TimeoutExpired:
-        log.warning("VMAF [%s] timed out for %s", tag, transcoded_path.name)
+        log.warning("VMAF [%s] timed out for %s", tag, os.path.basename(str(transcoded_path)))
     except Exception as e:
-        log.warning("VMAF [%s] failed for %s: %s", tag, transcoded_path.name, e)
+        log.warning("VMAF [%s] failed for %s: %s", tag, os.path.basename(str(transcoded_path)), e)
 
     return None
 

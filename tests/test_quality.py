@@ -254,6 +254,84 @@ class TestRunVmaf:
         assert "-hwaccel" in call_args
         assert "qsv" in call_args
 
+    def test_fps_align_derives_rate_from_source(self, tmp_path):
+        """开启 VMAF_ALIGN_FPS 时，帧率从源自动推导并应用到两个输入。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality.config.VMAF_ALIGN_FPS", True):
+                with patch("src.quality.get_video_frame_rate", return_value="24000/1001"):
+                    result = MagicMock(returncode=0, stderr=b"VMAF score: 90.0", stdout=b"")
+                    with patch("subprocess.run", return_value=result) as mock_run:
+                        with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                            _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False,
+                                      ffprobe_path="/ffprobe")
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert fc.count("fps=24000/1001") == 2
+        assert "[d0][r0]scale2ref" in fc
+
+    def test_fps_align_fallback_to_default_rate(self, tmp_path):
+        """源帧率探测失败时回退到 VMAF_ALIGN_FPS_RATE 缺省值。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality.config.VMAF_ALIGN_FPS", True):
+                with patch("src.quality.get_video_frame_rate", return_value=None):
+                    result = MagicMock(returncode=0, stderr=b"VMAF score: 90.0", stdout=b"")
+                    with patch("subprocess.run", return_value=result) as mock_run:
+                        with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                            _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False)
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert fc.count(f"fps={config.VMAF_ALIGN_FPS_RATE}") == 2
+
+    def test_fps_align_in_hw_filter_complex(self, tmp_path):
+        """开启 VMAF_ALIGN_FPS 时，HW 路径两个输入也应插入 fps 滤镜。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality._hw_download_format", return_value="nv12"):
+                result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+                with patch("subprocess.run", return_value=result) as mock_run:
+                    with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                        _run_vmaf(ref, dist, "/ffmpeg", tmp_path / "o.json", hwaccel=True,
+                                  ffprobe_path="/ffprobe")
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert fc.count(f"fps={config.VMAF_ALIGN_FPS_RATE}") == 2
+        assert "hwdownload" in fc
+
+    def test_fps_align_disabled_no_fps(self, tmp_path):
+        """关闭 VMAF_ALIGN_FPS 时不插入 fps 滤镜（保持旧行为）。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality.config.VMAF_ALIGN_FPS", False):
+                result = MagicMock(returncode=0, stderr=b"VMAF score: 90.0", stdout=b"")
+                with patch("subprocess.run", return_value=result) as mock_run:
+                    with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                        _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False)
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert "fps=" not in fc
+
     def test_vmaf_timeout_is_passed(self, tmp_path):
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"
