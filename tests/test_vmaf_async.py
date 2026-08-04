@@ -175,6 +175,16 @@ class TestHandleVmafTask:
             str(source), str(output), vmaf_score=95.0, rejected=False
         )
 
+    def test_six_tuple_task_with_codec_elapsed(self, tmp_path):
+        source, output, history, task = self._setup_files(tmp_path)
+        with patch("src.vmaf_async.compute_vmaf", return_value=95.0):
+            _handle_vmaf_task(task + (123.4,))
+        assert not source.exists()
+        assert output.exists()
+        history.mark_done.assert_called_once_with(
+            str(source), str(output), vmaf_score=95.0, rejected=False
+        )
+
     def test_reject_deletes_output_keeps_source(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         with patch("src.vmaf_async.compute_vmaf", return_value=60.0):

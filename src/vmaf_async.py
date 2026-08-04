@@ -9,10 +9,11 @@ from src.quality import compute_vmaf, should_accept
 
 log = __import__("logging").getLogger(__name__)
 
-# 异步 VMAF 打分任务队列：任务元组 (source, output, ratio, safe_stem, history)。
+# 异步 VMAF 打分任务队列：任务元组 (source, output, ratio, safe_stem, history, codec_elapsed)。
 # 无界队列，任务仅含路径元组不占内存；打分并发由 worker 数控制。
-# Async VMAF scoring task queue; tasks are (source, output, ratio, safe_stem, history)
-# tuples. Unbounded: entries are lightweight path tuples, concurrency is bounded by workers.
+# Async VMAF scoring task queue; tasks are
+# (source, output, ratio, safe_stem, history, codec_elapsed) tuples. Unbounded:
+# entries are lightweight path tuples, concurrency is bounded by workers.
 vmaf_tasks = queue.Queue()
 _VMAF_STOP = object()
 _vmaf_worker_threads = []
@@ -22,7 +23,8 @@ _vmaf_workers_started = False
 
 def _handle_vmaf_task(task):
     """处理单个异步 VMAF 打分任务：打分后按 should_accept 决策文件去留并标记历史。"""
-    source, output, ratio, safe_stem, history = task
+    # 兼容 5 元组（recover_pending_vmaf 恢复路径 codec_elapsed 未知，传 None）
+    source, output, ratio, safe_stem, history, codec_elapsed = (task + (None,))[:6]
     source = Path(source)
     output = Path(output)
 
@@ -44,10 +46,11 @@ def _handle_vmaf_task(task):
             return
         history.mark_done(str(source), str(output), vmaf_score=vmaf_score, rejected=False)
         log.info(
-            "ACCEPT (async): %s (VMAF %.2f, ratio %.1f%%, %.1fs)",
+            "ACCEPT (async): %s (VMAF %.2f, ratio %.1f%%, codec %s + vmaf %.1fs)",
             output.name,
             vmaf_score or 0,
             ratio * 100,
+            f"{codec_elapsed:.1f}" if codec_elapsed is not None else "N/A",
             vmaf_elapsed,
         )
     else:
@@ -73,10 +76,11 @@ def _handle_vmaf_task(task):
             return
         history.mark_done(str(source), None, vmaf_score=vmaf_score, rejected=True)
         log.warning(
-            "REJECT (async): %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+            "REJECT (async): %s (VMAF %s, ratio %.1f%%, codec %s + vmaf %.1fs, keeping original)",
             output.name,
             f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
             ratio * 100,
+            f"{codec_elapsed:.1f}" if codec_elapsed is not None else "N/A",
             vmaf_elapsed,
         )
 
@@ -146,7 +150,7 @@ def recover_pending_vmaf(history):
             ratio = Path(output_path).stat().st_size / Path(filepath).stat().st_size
         except OSError:
             ratio = 0
-        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history))
+        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history, None))
         count += 1
     if count:
         log.info("Recovered %d pending VMAF task(s)", count)

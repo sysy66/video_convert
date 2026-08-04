@@ -197,6 +197,7 @@ class TestTranscodeVmafAsync:
         assert task[1] == str(list(env["output_dir"].glob("*.mkv"))[0])
         assert task[3] == "synth_320x240_1s_h264"
         assert task[4] is env["history"]
+        assert task[5] >= 0
 
         _handle_vmaf_task(task)
 

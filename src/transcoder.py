@@ -270,12 +270,13 @@ def transcode(
                 return False
             history.mark_pending_vmaf(str(filepath), str(final_path))
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put((str(filepath), str(final_path), ratio, safe_stem, history))
+            vmaf_tasks.put((str(filepath), str(final_path), ratio, safe_stem, history, elapsed))
             log.info(
-                "VMAF PENDING (async): %s (%s, ratio %.1f%%, queued for scoring)",
+                "VMAF PENDING (async): %s (%s, ratio %.1f%%, codec %.1fs, queued for scoring)",
                 final_path.name,
                 _format_size(output_size),
                 ratio * 100,
+                elapsed,
             )
             return True
 
