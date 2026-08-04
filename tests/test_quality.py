@@ -178,12 +178,8 @@ class TestRunVmaf:
                     score = _run_vmaf(ref, dist, "/ffmpeg", log_path, hwaccel=False)
         assert score == 94.0
 
-    def test_stderr_wins_over_json_pooled(self, tmp_path):
-        """回归：libvmaf 2.3.0 的 json pooled 聚合 bug 下，stderr 分数优先。
-
-        pooled_metrics.vmaf.mean 在 2.3.0 subsample 模式下只聚合视频开头一段帧
-        （虚高），而 stderr 的 VMAF score 是 ffmpeg 侧逐帧平均，始终正确。
-        """
+    def test_json_pooled_wins_over_stderr(self, tmp_path):
+        """分数唯一来源是 json pooled_metrics.vmaf.mean，不再解析 stderr。"""
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"
         ref.write_text("x")
@@ -199,9 +195,10 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result):
                 with patch("src.quality._read_vmaf_from_json", return_value=(95.6, 90.0)):
                     score = _run_vmaf(ref, dist, "/ffmpeg", log_path, hwaccel=False)
-        assert score == 86.542581
+        assert score == 95.6
 
-    def test_sw_success_from_stderr(self, tmp_path):
+    def test_no_log_path_returns_none_when_json_unavailable(self, tmp_path):
+        """无 log_path 且 rc=0 时，stderr 不再取分，返回 None。"""
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"
         ref.write_text("x")
@@ -215,7 +212,7 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result):
                 with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
                     score = _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False)
-        assert score == 88.5
+        assert score is None
 
     def test_nonzero_returncode(self, tmp_path):
         ref = tmp_path / "ref.mkv"
@@ -264,11 +261,12 @@ class TestRunVmaf:
         with patch("src.quality.config.VMAF_MODEL_PATH", None):
             with patch("src.quality.config.VMAF_ALIGN_FPS", True):
                 with patch("src.quality.get_video_frame_rate", return_value="24000/1001"):
-                    result = MagicMock(returncode=0, stderr=b"VMAF score: 90.0", stdout=b"")
+                    result = MagicMock(returncode=0, stderr=b"", stdout=b"")
                     with patch("subprocess.run", return_value=result) as mock_run:
                         with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
-                            _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False,
-                                      ffprobe_path="/ffprobe")
+                            _run_vmaf(
+                                ref, dist, "/ffmpeg", None, hwaccel=False, ffprobe_path="/ffprobe"
+                            )
 
         call_args = mock_run.call_args[0][0]
         fc = call_args[call_args.index("-filter_complex") + 1]
@@ -285,7 +283,7 @@ class TestRunVmaf:
         with patch("src.quality.config.VMAF_MODEL_PATH", None):
             with patch("src.quality.config.VMAF_ALIGN_FPS", True):
                 with patch("src.quality.get_video_frame_rate", return_value=None):
-                    result = MagicMock(returncode=0, stderr=b"VMAF score: 90.0", stdout=b"")
+                    result = MagicMock(returncode=0, stderr=b"", stdout=b"")
                     with patch("subprocess.run", return_value=result) as mock_run:
                         with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
                             _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False)
@@ -306,8 +304,14 @@ class TestRunVmaf:
                 result = MagicMock(returncode=0, stderr=b"", stdout=b"")
                 with patch("subprocess.run", return_value=result) as mock_run:
                     with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
-                        _run_vmaf(ref, dist, "/ffmpeg", tmp_path / "o.json", hwaccel=True,
-                                  ffprobe_path="/ffprobe")
+                        _run_vmaf(
+                            ref,
+                            dist,
+                            "/ffmpeg",
+                            tmp_path / "o.json",
+                            hwaccel=True,
+                            ffprobe_path="/ffprobe",
+                        )
 
         call_args = mock_run.call_args[0][0]
         fc = call_args[call_args.index("-filter_complex") + 1]
@@ -356,6 +360,24 @@ class TestComputeVmaf:
 
         score = compute_vmaf(ref, dist, ffmpeg_path=None)
         assert score is None
+
+    def test_generates_default_log_path(self, tmp_path):
+        """未传 log_path 时自动生成到 VMAF_LOG_DIR 的 json 日志（取分来源）。"""
+        ref = tmp_path / "My Video 1080p.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_HWACCEL", False):
+            with patch("src.quality.config.VMAF_LOG_DIR", str(tmp_path / "vmaf_logs")):
+                with patch("src.quality._run_vmaf", return_value=90.0) as mock_run:
+                    score = compute_vmaf(ref, dist, ffmpeg_path="/ffmpeg")
+
+        assert score == 90.0
+        log_path = mock_run.call_args[0][3]
+        assert log_path.parent == tmp_path / "vmaf_logs"
+        assert log_path.name.startswith("My_Video_1080p.")
+        assert log_path.name.endswith(".json")
 
     def test_hw_then_fallback(self, tmp_path):
         ref = tmp_path / "ref.mkv"

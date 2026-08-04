@@ -8,13 +8,12 @@ import os
 import re
 import subprocess
 import time
+from pathlib import Path
 
 from src import config
 from src.probe import get_video_frame_rate, get_video_pix_fmt
 
 log = __import__("logging").getLogger(__name__)
-
-_VMAF_RE = re.compile(r"VMAF score:\s*([\d.]+)")
 
 
 def _hw_download_format(filepath, ffprobe_path):
@@ -162,24 +161,23 @@ def _run_vmaf(
             )
             return None
 
-        # stderr 的 "VMAF score:" 由 ffmpeg 侧逐帧平均得出，跨 libvmaf 版本与
-        # n_subsample 取值都正确；json 的 pooled_metrics.vmaf.mean 在 libvmaf 2.3.0
-        # 的 subsample 模式下只聚合视频开头一小段帧（聚合 bug），故 stderr 优先。
-        # The ffmpeg-printed "VMAF score:" is a per-frame average computed on the
-        # ffmpeg side, correct across libvmaf versions and n_subsample values; the
-        # json pooled_metrics.vmaf.mean only aggregates the first frames under
-        # subsampling in libvmaf 2.3.0 (aggregation bug), so stderr wins.
-        output = (result.stderr + result.stdout).decode("utf-8", errors="replace")
-        m = _VMAF_RE.search(output)
-        if m:
-            return float(m.group(1))
-
+        # 分数唯一来源是 libvmaf json 日志的 pooled_metrics.vmaf.mean。
+        # 该值由 libvmaf 聚合（libvmaf 3.2+ 在 subsample 模式下聚合正确，
+        # 实测与逐帧均值一致），不再解析 stderr。
+        # The only score source is pooled_metrics.vmaf.mean from the libvmaf
+        # json log. Aggregation is done inside libvmaf (3.2+ aggregates correctly
+        # under n_subsample; verified identical to a per-frame average), so
+        # stderr is no longer parsed for scoring.
         if log_path is not None:
             mean, _minimum = _read_vmaf_from_json(log_path)
             if mean is not None:
                 return mean
 
-        log.warning("VMAF [%s] score not found in ffmpeg output for %s", tag, os.path.basename(str(transcoded_path)))
+        log.warning(
+            "VMAF [%s] score not found in json log for %s",
+            tag,
+            os.path.basename(str(transcoded_path)),
+        )
         return None
     except subprocess.TimeoutExpired:
         log.warning("VMAF [%s] timed out for %s", tag, os.path.basename(str(transcoded_path)))
@@ -193,13 +191,14 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
     """
     计算转码前后视频的 VMAF 分数。
     使用显式 VMAF 模型、scale2ref 分辨率对齐，避免参考/失真分辨率不匹配导致分数虚低。
-    若传入 log_path，则输出逐帧 json 日志用于事后审计。
+    json 日志总是落盘：未传 log_path 时自动写入 VMAF_LOG_DIR（供事后审计与取分）。
     VMAF_HWACCEL=True 时优先使用 QSV 硬解加速；失败后按 VMAF_HW_FALLBACK 决定是否回退到软解。
 
     Compute the VMAF score between original and transcoded video.
     Uses an explicit VMAF model and scale2ref resolution alignment to avoid
     mismatched-resolution comparisons that spuriously deflate the score.
-    If log_path is given, a per-frame json log is written for later auditing.
+    A json log is always written: when log_path is omitted it defaults into
+    VMAF_LOG_DIR (for auditing and scoring).
     When VMAF_HWACCEL is enabled, tries QSV hardware decode first; falls back
     to software decode on failure based on VMAF_HW_FALLBACK.
 
@@ -207,8 +206,8 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
     :param transcoded_path: 转码后视频路径（失真）(Path to the transcoded video, distorted)
     :param ffmpeg_path: 支持 libvmaf 的 ffmpeg 路径，默认从 config 获取
                         (Path to ffmpeg with libvmaf, defaults to config)
-    :param log_path: json 日志输出路径，None 表示不输出
-                     (Path for json log output, None to skip)
+    :param log_path: json 日志输出路径，None 时自动生成到 VMAF_LOG_DIR
+                     (Path for json log output, defaults to VMAF_LOG_DIR when None)
     :return: VMAF 分数 (0-100)，失败或不可用时返回 None
              (VMAF score 0-100, or None on failure/unavailability)
     """
@@ -217,6 +216,10 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
     if not ffmpeg_path:
         log.warning("VMAF not configured, skipping quality check")
         return None
+
+    if log_path is None:
+        safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(original_path).stem)[:80]
+        log_path = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{time.strftime('%Y%m%d-%H%M%S')}.json"
 
     if config.VMAF_HWACCEL:
         score = _run_vmaf(
