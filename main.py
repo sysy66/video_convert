@@ -97,12 +97,12 @@ def _apply_cli_overrides():
     parser.add_argument(
         "--vmaf-ffmpeg",
         metavar="PATH",
-        help="FFmpeg path for VMAF scoring (default: John van Sickle build)",
+        help="FFmpeg path for VMAF scoring (default: config.VMAF_FFMPEG_PATH)",
     )
     parser.add_argument(
         "--vmaf-model",
         metavar="PATH",
-        help="VMAF model file path (default: data/models/vmaf_v0.6.1.json)",
+        help="VMAF model file path (default: data/models/vmaf_v0.6.1neg.json)",
     )
     parser.add_argument(
         "--vmaf-hwaccel", action="store_true", help="Enable VMAF QSV hardware decode acceleration"

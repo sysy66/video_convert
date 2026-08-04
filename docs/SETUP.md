@@ -26,37 +26,7 @@ vainfo
 /usr/lib/jellyfin-ffmpeg/ffprobe -version
 ```
 
-### 1.2 FFmpeg — johnvansickle（用于 VMAF 评估 / for VMAF）
-
-路径: `/opt/johnvansickle-ffmpeg/ffmpeg`
-
-用途：软件解码 + libvmaf 计算 VMAF 分数。该 ffmpeg 不参与转码，仅在质量评估阶段使用。
-
-**Ubuntu / Debian:**
-
-```bash
-sudo mkdir -p /opt/johnvansickle-ffmpeg
-curl -Lo /tmp/ffmpeg.tar.xz \
-  https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz
-sudo tar -xf /tmp/ffmpeg.tar.xz --strip-components=1 \
-  ffmpeg-git-*-amd64-static/ffmpeg -C /opt/johnvansickle-ffmpeg/
-rm /tmp/ffmpeg.tar.xz
-sudo chmod +x /opt/johnvansickle-ffmpeg/ffmpeg
-
-mkdir -p data/models
-curl -Lo data/models/vmaf_v0.6.1.json \
-  https://raw.githubusercontent.com/Netflix/vmaf/master/model/vmaf_v0.6.1.json
-```
-
-**Verify:**
-```bash
-/opt/johnvansickle-ffmpeg/ffmpeg -version
-python3 -c "from src.config import VMAF_ENABLED; print('VMAF enabled:', VMAF_ENABLED)"
-```
-
-`VMAF_ENABLED = True` when `/opt/johnvansickle-ffmpeg/ffmpeg` exists.
-
-### 1.3 FFmpeg — 自编译（QSV + libvmaf 统一版 / unified build）
+### 1.2 FFmpeg — 自编译（QSV + libvmaf 统一版 / unified build）
 
 路径: `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg`
 
@@ -120,7 +90,7 @@ curl -Lo data/models/vmaf_v0.6.1neg.json \
 
 使用 `--ffmpeg /opt/ffmpeg-qsv-vmaf/bin/ffmpeg --ffprobe /opt/ffmpeg-qsv-vmaf/bin/ffprobe` 切换到此自定义构建。
 
-### 1.4 Python
+### 1.3 Python
 
 No third-party Python packages are required. The project uses only the standard library.
 
@@ -147,8 +117,7 @@ video_convert/
 │   ├── history.db-shm
 │   ├── history.db-wal
 │   ├── models/
-│   │   ├── vmaf_v0.6.1.json       # 旧版整数特征
-│   │   └── vmaf_v0.6.1neg.json    # 新版负浮点特征
+│   │   └── vmaf_v0.6.1neg.json    # 负浮点特征模型（自编译统一版使用）
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
@@ -228,11 +197,10 @@ It compares the original and transcoded video and produces a score (0–100).
 
 Requires `src/quality.py` as the Python wrapper.
 
-VMAF 模型文件（`data/models/vmaf_v0.6.1.json`，旧版整数特征，适合 johnvansickle / jellyfin ffmpeg）。
-自编译 QSV+libvmaf 版 ffmpeg 可使用 `data/models/vmaf_v0.6.1neg.json`（新版负浮点特征），
-通过 `--vmaf-ffmpeg` CLI 指定路径，并在 `VMAF_MODEL_PATH` 中手动配置对应模型。
+VMAF 模型文件为 `data/models/vmaf_v0.6.1neg.json`（负浮点特征，匹配自编译统一版 libvmaf），
+为默认模型；如需其他版本可通过 `--vmaf-model` CLI 指定，并在 `VMAF_MODEL_PATH` 中手动配置。
 
-各模型的下载方式见对应部署章节（[1.2](#12-ffmpeg--johnvansickle用于-vmaf-评估--for-vmaf) / [1.3](#13-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)）。
+模型下载方式见部署章节 [1.2](#12-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)。
 
 ### Behaviour / 行为
 
@@ -299,7 +267,7 @@ nohup python3 main.py > data/app.log 2>&1 &
 | Symptom | Cause | Fix |
 |---------|-------|------|
 | `TRANSCODE FAILED: exit code 1` | ffmpeg error | Check `.ffmpeg.log` in the `.work_*` temp directory |
-| `VMAF failed for ...` | libvmaf binary or model missing | Run `python3 -c "from src.config import VMAF_ENABLED; print(VMAF_ENABLED)"` |
+| `VMAF failed for ...` | libvmaf binary or model missing | Run `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -filters | grep libvmaf` and check `data/models/vmaf_v0.6.1neg.json` |
 | Unexpectedly low VMAF | Corrupt source or frame misalignment | Inspect `data/vmaf_logs/<stem>.json` for per-frame scores |
 | `SKIP (codec=hevc)` | Already HEVC, no re-encode needed | Normal behaviour |
 | Stale `.work_*` dirs | Process crash or power outage | Auto-cleaned each scan cycle; `mark_stale_started_as_failed` resets stuck entries |

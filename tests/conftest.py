@@ -85,9 +85,8 @@ def qsv_available(transcode_ffmpeg):
 def vmaf_ffmpeg():
     """带 libvmaf 的 ffmpeg 路径；候选自编译统一版 → config.VMAF_FFMPEG_PATH → PATH，均无则 skip。
 
-    注意：2024 版 johnvansickle 静态构建有 scale2ref 断言 bug
-    （Assertion best_input >= 0 failed at fftools/ffmpeg_filter.c:2075），
-    故优先使用 /opt/ffmpeg-qsv-vmaf 自编译统一版（SETUP.md 1.3）。
+    优先使用 /opt/ffmpeg-qsv-vmaf 自编译统一版（SETUP.md 1.2）：
+    旧版静态构建在 fps+libvmaf 组合下有 scale2ref 断言 bug，可能影响测试。
     """
     candidates = (
         "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg",
@@ -109,7 +108,7 @@ def vmaf_ffmpeg():
             continue
         if "libvmaf" in output:
             return cand
-    pytest.skip("未找到带 libvmaf 的 ffmpeg（如 /opt/johnvansickle-ffmpeg/ffmpeg）")
+    pytest.skip("未找到带 libvmaf 的 ffmpeg（如 /opt/ffmpeg-qsv-vmaf/bin/ffmpeg）")
 
 
 @pytest.fixture

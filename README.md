@@ -29,8 +29,8 @@ cd video_convert
 # edit src/config.py — set LIBRARIES to your watch directory
 
 # 3. (Optional) Set up VMAF
-#    Place bin/ffmpeg (johnvansickle static build with libvmaf)
-#    and data/models/vmaf_v0.6.1.json in the project tree.
+#    Use the self-built unified ffmpeg (/opt/ffmpeg-qsv-vmaf/bin/ffmpeg, QSV + libvmaf)
+#    and data/models/vmaf_v0.6.1neg.json in the project tree.
 #    See docs/SETUP.md for details.
 
 # 4. Run
