@@ -148,11 +148,13 @@ VMAF_LOG_RETENTION_DAYS = 7
 VMAF_TIMEOUT = 36000
 # VMAF 开启 QSV 硬件加速解码（HW VMAF 失败时自动回退到纯软件）
 # Enable QSV hardware-accelerated decoding for VMAF (falls back to software on failure)
-VMAF_HWACCEL = False
-VMAF_HW_FALLBACK = False
+VMAF_HWACCEL = True
+VMAF_HW_FALLBACK = True
 # VMAF 是否为转码的硬性要求：True=不可用时拒绝，False=不可用时仍接受（仅按大小比判断）。
+# 默认关闭（VMAF 需通过 --vmaf sync|async 显式启用）。
 # Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
-VMAF_REQUIRED = True
+# Disabled by default; enable via --vmaf sync|async.
+VMAF_REQUIRED = False
 
 # 异步 VMAF 打分：True=转码成功后先保留源文件并移到输出区，后台线程打分后决定去留。
 # 打分 worker 线程数（VMAF 极耗解码器资源，默认 1 即可）。

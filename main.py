@@ -105,19 +105,22 @@ def _apply_cli_overrides():
         help="VMAF model file path (default: data/models/vmaf_v0.6.1neg.json)",
     )
     parser.add_argument(
-        "--vmaf-hwaccel", action="store_true", help="Enable VMAF QSV hardware decode acceleration"
+        "--vmaf",
+        nargs="?",
+        const="sync",
+        default=None,
+        choices=["off", "sync", "async"],
+        help="VMAF quality check: off (default) | sync | async",
     )
     parser.add_argument(
-        "--vmaf-hw-fallback",
+        "--no-vmaf-hwaccel",
         action="store_true",
-        help="Enable VMAF HW→SW fallback when HW path fails",
+        help="Disable VMAF QSV hardware decode acceleration",
     )
-    parser.add_argument("--no-vmaf", action="store_true", help="Disable VMAF quality check")
-    parser.add_argument("--vmaf", action="store_true", help="Enable VMAF quality check")
     parser.add_argument(
-        "--vmaf-async",
+        "--no-vmaf-hw-fallback",
         action="store_true",
-        help="Async VMAF scoring: keep source, score in background, keep one file",
+        help="Disable VMAF HW→SW fallback when HW path fails",
     )
 
     args = parser.parse_args()
@@ -147,16 +150,13 @@ def _apply_cli_overrides():
         config.VMAF_FFMPEG_PATH = args.vmaf_ffmpeg
     if args.vmaf_model:
         config.VMAF_MODEL_PATH = args.vmaf_model
-    if args.vmaf_hwaccel:
-        config.VMAF_HWACCEL = True
-    if args.vmaf_hw_fallback:
-        config.VMAF_HW_FALLBACK = True
-    if args.no_vmaf:
-        config.VMAF_REQUIRED = False
-    if args.vmaf:
-        config.VMAF_REQUIRED = True
-    if args.vmaf_async:
-        config.VMAF_ASYNC = True
+    if args.vmaf is not None:
+        config.VMAF_REQUIRED = args.vmaf != "off"
+        config.VMAF_ASYNC = args.vmaf == "async"
+    if args.no_vmaf_hwaccel:
+        config.VMAF_HWACCEL = False
+    if args.no_vmaf_hw_fallback:
+        config.VMAF_HW_FALLBACK = False
     if args.libraries:
         raw = {}
         for lib_def in args.libraries:

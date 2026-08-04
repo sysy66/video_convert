@@ -65,54 +65,53 @@ class TestSignalHandler:
 
 
 class TestCliOverrides:
-    def test_no_vmaf_sets_required_false(self):
-        original = config.VMAF_REQUIRED
+    def test_vmaf_off_disables_required_and_async(self):
+        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
         try:
-            with patch.object(sys, "argv", ["main", "--no-vmaf"]):
+            config.VMAF_REQUIRED = True
+            config.VMAF_ASYNC = True
+            with patch.object(sys, "argv", ["main", "--vmaf", "off"]):
                 main._apply_cli_overrides()
             assert config.VMAF_REQUIRED is False
+            assert config.VMAF_ASYNC is False
         finally:
-            config.VMAF_REQUIRED = original
+            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
 
-    def test_vmaf_sets_required_true(self):
-        original = config.VMAF_REQUIRED
+    def test_vmaf_sync_enables_required_not_async(self):
+        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
         try:
             config.VMAF_REQUIRED = False
+            config.VMAF_ASYNC = False
             with patch.object(sys, "argv", ["main", "--vmaf"]):
                 main._apply_cli_overrides()
             assert config.VMAF_REQUIRED is True
-        finally:
-            config.VMAF_REQUIRED = original
-
-    def test_default_leaves_required_unchanged(self):
-        original = config.VMAF_REQUIRED
-        try:
-            config.VMAF_REQUIRED = True
-            with patch.object(sys, "argv", ["main"]):
-                main._apply_cli_overrides()
-            assert config.VMAF_REQUIRED is True
-        finally:
-            config.VMAF_REQUIRED = original
-
-    def test_vmaf_async_enables(self):
-        original = config.VMAF_ASYNC
-        try:
-            config.VMAF_ASYNC = False
-            with patch.object(sys, "argv", ["main", "--vmaf-async"]):
-                main._apply_cli_overrides()
-            assert config.VMAF_ASYNC is True
-        finally:
-            config.VMAF_ASYNC = original
-
-    def test_default_leaves_async_disabled(self):
-        original = config.VMAF_ASYNC
-        try:
-            config.VMAF_ASYNC = False
-            with patch.object(sys, "argv", ["main"]):
-                main._apply_cli_overrides()
             assert config.VMAF_ASYNC is False
         finally:
-            config.VMAF_ASYNC = original
+            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+
+    def test_vmaf_async_enables_required_and_async(self):
+        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        try:
+            config.VMAF_REQUIRED = False
+            config.VMAF_ASYNC = False
+            with patch.object(sys, "argv", ["main", "--vmaf", "async"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_REQUIRED is True
+            assert config.VMAF_ASYNC is True
+        finally:
+            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+
+    def test_default_leaves_vmaf_settings_unchanged(self):
+        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        try:
+            config.VMAF_REQUIRED = False
+            config.VMAF_ASYNC = False
+            with patch.object(sys, "argv", ["main"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_REQUIRED is False
+            assert config.VMAF_ASYNC is False
+        finally:
+            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
 
     def test_encoder_adds_to_skip_codecs(self):
         original_encoder = config.VIDEO_ENCODER
@@ -196,15 +195,25 @@ class TestCliOverridesPaths:
             main._apply_cli_overrides()
         assert config.VMAF_MODEL_PATH == "/tmp/model.json"
 
-    def test_vmaf_hwaccel_enables(self):
-        with patch.object(sys, "argv", ["main", "--vmaf-hwaccel"]):
-            main._apply_cli_overrides()
-        assert config.VMAF_HWACCEL is True
+    def test_no_vmaf_hwaccel_disables(self):
+        original = config.VMAF_HWACCEL
+        try:
+            config.VMAF_HWACCEL = True
+            with patch.object(sys, "argv", ["main", "--no-vmaf-hwaccel"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_HWACCEL is False
+        finally:
+            config.VMAF_HWACCEL = original
 
-    def test_vmaf_hw_fallback_enables(self):
-        with patch.object(sys, "argv", ["main", "--vmaf-hw-fallback"]):
-            main._apply_cli_overrides()
-        assert config.VMAF_HW_FALLBACK is True
+    def test_no_vmaf_hw_fallback_disables(self):
+        original = config.VMAF_HW_FALLBACK
+        try:
+            config.VMAF_HW_FALLBACK = True
+            with patch.object(sys, "argv", ["main", "--no-vmaf-hw-fallback"]):
+                main._apply_cli_overrides()
+            assert config.VMAF_HW_FALLBACK is False
+        finally:
+            config.VMAF_HW_FALLBACK = original
 
 
 class TestCliOverridesLibraries:
