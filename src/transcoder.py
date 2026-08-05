@@ -17,6 +17,8 @@ from src.probe import (
     get_streams_info,
     get_video_frame_count,
     get_video_frame_rate,
+    get_video_stream_duration,
+    video_stream_covers_container,
 )
 from src.process_guard import (
     _active_ffmpeg_lock,
@@ -267,10 +269,29 @@ def transcode(
             if expected_frames:
                 out_info = get_streams_info(output_path, ffprobe_path)
                 out_duration = out_info["duration"] if out_info else None
+                # 视频流自身时长：容器时长可能被完整复制的音频/字幕撑满（视频轨被
+                # 截断时容器时长仍接近源时长），故视频流时长异常同样触发精确帧数统计。
+                # 探测不到视频流时长时（如 ffmpeg 写出的 mkv）回退到容器时长判断。
+                out_video_duration = get_video_stream_duration(out_info)
+                # 时长的最后防线：seek 到输出末尾读视频包，确认视频轨覆盖到容器末尾。
+                # 视频轨被截断时容器末尾只剩音频/字幕包，此探测会判 False。
+                tail_covered = video_stream_covers_container(
+                    output_path, ffprobe_path, total_duration
+                )
                 # 时长异常（远短于源）才进入精确帧数统计；duration 探测失败时保守按异常处理
-                duration_suspicious = out_duration is None or (
-                    total_duration is not None
-                    and out_duration < total_duration * config.FRAME_COUNT_MIN_RATIO
+                duration_suspicious = (
+                    out_duration is None
+                    or tail_covered is not True
+                    or (
+                        total_duration is not None
+                        and out_duration < total_duration * config.FRAME_COUNT_MIN_RATIO
+                    )
+                    or (
+                        out_video_duration is not None
+                        and total_duration is not None
+                        and out_video_duration
+                        < total_duration * config.FRAME_COUNT_MIN_RATIO
+                    )
                 )
                 if duration_suspicious:
                     actual_frames = get_video_frame_count(output_path, ffprobe_path)

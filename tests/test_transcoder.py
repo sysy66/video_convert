@@ -336,6 +336,7 @@ class TestTranscodeFrameCountAnomaly:
             ),
             patch("src.transcoder.get_video_frame_rate", return_value="30"),
             patch("src.transcoder.get_streams_info", return_value=self._OUTPUT_INFO),
+            patch("src.transcoder.video_stream_covers_container", return_value=True),
             patch(
                 "src.transcoder.get_video_frame_count", side_effect=frame_counts
             ) as mock_count,
@@ -361,6 +362,7 @@ class TestTranscodeFrameCountAnomaly:
             ),
             patch("src.transcoder.get_video_frame_rate", return_value="30"),
             patch("src.transcoder.get_streams_info", return_value=self._OUTPUT_INFO),
+            patch("src.transcoder.video_stream_covers_container", return_value=True),
             patch(
                 "src.transcoder.get_video_frame_count", return_value=100
             ) as mock_count,
@@ -380,7 +382,10 @@ class TestTranscodeFrameCountAnomaly:
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
         history = MagicMock()
-        out_ok = {"duration": 119.0}
+        out_ok = {
+            "duration": 119.0,
+            "streams": [{"codec_type": "video", "duration": 119.0}],
+        }
 
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
@@ -389,12 +394,38 @@ class TestTranscodeFrameCountAnomaly:
             ),
             patch("src.transcoder.get_video_frame_rate", return_value="30"),
             patch("src.transcoder.get_streams_info", return_value=out_ok),
+            patch("src.transcoder.video_stream_covers_container", return_value=True),
             patch("src.transcoder.get_video_frame_count") as mock_count,
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
         assert result is True
         mock_count.assert_not_called()
+
+    def test_container_duration_full_but_video_tail_missing_triggers_check(self, tmp_path):
+        # 回归场景（Demon Slayer）：mkv 不写流级时长，容器时长被完整复制的
+        # 音频/字幕撑满（≈源时长），但视频轨只编码了几秒就 rc=0 退出——
+        # 尾窗探测发现容器末尾没有视频包 → 仍须触发精确帧数统计
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+        out_deceptive = {"duration": 9283.0}  # 无流级时长（ffmpeg 写出的 mkv 实测如此）
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress", side_effect=self._write_output
+            ),
+            patch("src.transcoder.get_video_frame_rate", return_value="30"),
+            patch("src.transcoder.get_streams_info", return_value=out_deceptive),
+            patch("src.transcoder.video_stream_covers_container", return_value=False),
+            patch("src.transcoder.get_video_frame_count", return_value=100) as mock_count,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is False
+        assert mock_count.call_count == 2  # 精确帧数统计确实被执行（初检 + sw 重试后）
+        history.mark_failed.assert_called_once()
 
     def test_no_expected_frames_skips_check(self, tmp_path):
         # get_video_frame_rate 无效 → expected_frames 为 None → 跳过帧数校验

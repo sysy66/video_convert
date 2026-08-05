@@ -253,3 +253,82 @@ def get_streams_info(filepath, ffprobe_path):
     except Exception as e:
         log.error("ffprobe error for %s: %s", filepath, e)
         return None
+
+
+def get_video_stream_duration(streams_info):
+    """
+    从 get_streams_info 的结果中取首个视频流的时长（秒）。
+    无视频流或时长不可用时返回 None。容器 format.duration 可能被完整复制的
+    音频/字幕撑满，掩盖视频轨被截断的事实，因此需要按视频流自身时长判断。
+    注意：ffmpeg 写出的 mkv 通常不写流级时长（返回 None），此时需用
+    video_stream_covers_container 做廉价的包级探测。
+    """
+    if not streams_info:
+        return None
+    for s in streams_info.get("streams", []):
+        if s.get("codec_type") == "video":
+            duration = s.get("duration")
+            if duration is None:
+                return None
+            try:
+                return float(duration)
+            except (ValueError, TypeError):
+                return None
+    return None
+
+
+def video_stream_covers_container(filepath, ffprobe_path, total_duration, tail_window=30.0):
+    """
+    廉价探测视频轨是否覆盖到容器末尾：seek 到容器最后 tail_window 秒，读视频包，
+    若存在 pts >= total_duration * FRAME_COUNT_MIN_RATIO 的包则视为正常。
+    视频轨被截断（vpp_qsv 只编码了几帧就 rc=0 退出）时，容器时长会被完整复制的
+    音频/字幕撑满，而末尾区间没有视频包——此探测在 ~1s 内区分两者。
+    返回 True/False；探测失败返回 None（调用方保守按可疑处理）。
+    """
+    if not ffprobe_path:
+        log.error("FFPROBE_PATH not configured")
+        return None
+    if not total_duration or total_duration <= 0:
+        return None
+    window = min(max(tail_window, 5.0), total_duration * 0.05)
+    start = max(0.0, total_duration - window)
+    interval = f"{start:.3f}%{total_duration:.3f}"
+    cmd = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "packet=pts_time",
+        "-read_intervals",
+        interval,
+        "-of",
+        "csv=p=0",
+        str(filepath),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        log.error("ffprobe not found at %s", ffprobe_path)
+        return None
+    except subprocess.TimeoutExpired:
+        log.error("ffprobe timed out for %s", filepath)
+        return None
+    except Exception as e:
+        log.error("ffprobe error for %s: %s", filepath, e)
+        return None
+    if result.returncode != 0:
+        log.error("ffprobe failed for %s: %s", filepath, result.stderr.strip())
+        return None
+    threshold = total_duration * 0.5
+    for line in result.stdout.splitlines():
+        pts = line.strip()
+        if not pts or pts == "N/A":
+            continue
+        try:
+            if float(pts) >= threshold:
+                return True
+        except ValueError:
+            continue
+    return False
