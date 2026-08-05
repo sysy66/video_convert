@@ -234,11 +234,3 @@ VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
 ACCEPT_RATIO_MAX = 1.00  # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
 ACCEPT_RATIO_LOW = 0.75  # VMAF 在中间区间时允许的最大 ratio
-
-# 转码后帧数校验阈值：输出帧数低于 源时长×源帧率 × 此系数 时判定为静默失败
-# （vpp_qsv 偶发只编码十几帧就 rc=0 退出，需靠帧数校验兜底并触发软件缩放重试）。
-# Post-transcode frame-count check threshold: output frames below
-# source_duration * source_fps * FRAME_COUNT_MIN_RATIO means the encode silently
-# stalled (vpp_qsv sometimes exits rc=0 after a handful of frames), so we fall
-# back to software scaling.
-FRAME_COUNT_MIN_RATIO = 0.5
