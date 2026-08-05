@@ -308,6 +308,114 @@ class TestTranscode:
         assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
 
 
+class TestTranscodeFrameCountAnomaly:
+    _SOURCE_INFO = {
+        "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264"}],
+        "duration": 120.0,
+    }
+    _OUTPUT_INFO = {"duration": 10.0}  # 远短于源 → 触发帧数校验
+
+    def _write_output(self, cmd, total_duration, file_stem, **kwargs):
+        output_path = Path(cmd[-1])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("transcoded")
+        return (0, "")
+
+    def test_low_frames_triggers_sw_fallback_then_succeeds(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        # 第一次精确帧数统计 100(<1800)，sw 重试后 3000(>=1800) → 成功
+        frame_counts = [100, 3000]
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress", side_effect=self._write_output
+            ),
+            patch("src.transcoder.get_video_frame_rate", return_value="30"),
+            patch("src.transcoder.get_streams_info", return_value=self._OUTPUT_INFO),
+            patch(
+                "src.transcoder.get_video_frame_count", side_effect=frame_counts
+            ) as mock_count,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        assert mock_count.call_count == 2
+        assert (tmp_path / "test.mkv").exists()
+        assert not history.mark_failed.called
+        history.mark_done.assert_called_once()
+
+    def test_low_frames_after_sw_fallback_marks_failed(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        # 两次帧数统计都是 100(<1800)：sw 重试后依旧不足 → 判失败
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress", side_effect=self._write_output
+            ),
+            patch("src.transcoder.get_video_frame_rate", return_value="30"),
+            patch("src.transcoder.get_streams_info", return_value=self._OUTPUT_INFO),
+            patch(
+                "src.transcoder.get_video_frame_count", return_value=100
+            ) as mock_count,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is False
+        assert mock_count.call_count == 2
+        history.mark_done.assert_not_called()
+        history.mark_failed.assert_called_once()
+        msg = history.mark_failed.call_args[0][1]
+        assert "Frame count anomaly after sw fallback" in msg
+        assert input_file.exists()
+
+    def test_duration_not_suspicious_skips_frame_count(self, tmp_path):
+        # 输出时长与源一致 → 不做全量帧数统计（h 性能优化路径）
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+        out_ok = {"duration": 119.0}
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress", side_effect=self._write_output
+            ),
+            patch("src.transcoder.get_video_frame_rate", return_value="30"),
+            patch("src.transcoder.get_streams_info", return_value=out_ok),
+            patch("src.transcoder.get_video_frame_count") as mock_count,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        mock_count.assert_not_called()
+
+    def test_no_expected_frames_skips_check(self, tmp_path):
+        # get_video_frame_rate 无效 → expected_frames 为 None → 跳过帧数校验
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=self._SOURCE_INFO),
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress", side_effect=self._write_output
+            ),
+            patch("src.transcoder.get_video_frame_rate", return_value="junk"),
+            patch("src.transcoder.get_video_frame_count") as mock_count,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        mock_count.assert_not_called()
+
+
 class TestCleanupTemp:
     def test_removes_existing_dir(self, tmp_path):
         d = tmp_path / ".work_abc123"

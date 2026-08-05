@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 import pytest
 
-from src.probe import get_streams_info, get_video_codec
+from src.probe import (
+    fps_fraction_to_float,
+    get_expected_frame_count,
+    get_streams_info,
+    get_video_codec,
+    get_video_frame_count,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -150,4 +156,108 @@ class TestGetStreamsInfo:
             mock_run.return_value.stdout = "not json"
             mock_run.return_value.stderr = ""
             result = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+        assert result is None
+
+
+class TestFpsFractionToFloat:
+    def test_fraction(self):
+        assert fps_fraction_to_float("24000/1001") == pytest.approx(23.976, rel=1e-4)
+        assert fps_fraction_to_float("30000/1001") == pytest.approx(29.97, rel=1e-4)
+
+    def test_decimal(self):
+        assert fps_fraction_to_float("23.976") == pytest.approx(23.976)
+
+    def test_whitespace(self):
+        assert fps_fraction_to_float(" 30 ") == 30.0
+
+    def test_int_string(self):
+        assert fps_fraction_to_float("60") == 60.0
+
+    def test_zero_denominator(self):
+        assert fps_fraction_to_float("30/0") is None
+
+    def test_non_numeric_fraction(self):
+        assert fps_fraction_to_float("abc/def") is None
+
+    def test_invalid(self):
+        assert fps_fraction_to_float("") is None
+        assert fps_fraction_to_float(None) is None
+        assert fps_fraction_to_float("abc") is None
+
+    def test_negative_or_zero_decimal(self):
+        assert fps_fraction_to_float("0") is None
+        assert fps_fraction_to_float("-30") is None
+
+
+class TestGetExpectedFrameCount:
+    def test_computes_frames(self):
+        assert get_expected_frame_count(120, "30000/1001") == 3596
+
+    def test_decimal_fps(self):
+        assert get_expected_frame_count(10, "29.97") == 299
+
+    def test_missing_duration(self):
+        assert get_expected_frame_count(None, "30000/1001") is None
+
+    def test_invalid_fps(self):
+        assert get_expected_frame_count(120, "junk") is None
+        assert get_expected_frame_count(120, None) is None
+
+    def test_zero_duration(self):
+        assert get_expected_frame_count(0, "30") == 0
+
+
+class TestGetVideoFrameCount:
+    def test_success(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "12345\n"
+            mock_run.return_value.stderr = ""
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result == 12345
+
+    def test_empty_ffprobe_path(self):
+        assert get_video_frame_count("/out.mkv", "") is None
+        assert get_video_frame_count("/out.mkv", None) is None
+
+    def test_nonzero_exit_code(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stdout = ""
+            mock_run.return_value.stderr = "decode error"
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result is None
+
+    def test_empty_stdout(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = ""
+            mock_run.return_value.stderr = ""
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result is None
+
+    def test_non_numeric_stdout(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "lots of frames\n"
+            mock_run.return_value.stderr = ""
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result is None
+
+    def test_file_not_found(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = FileNotFoundError()
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result is None
+
+    def test_timeout(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffprobe", timeout=300)
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
+        assert result is None
+
+    def test_generic_exception(self):
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = PermissionError()
+            result = get_video_frame_count("/out.mkv", "/usr/bin/ffprobe")
         assert result is None
