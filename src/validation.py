@@ -58,7 +58,7 @@ def validate_config():
             errors.append(f"VMAF_FFMPEG_PATH not executable: {config.VMAF_FFMPEG_PATH}")
         if config.VMAF_MODEL_PATH and not os.path.isfile(config.VMAF_MODEL_PATH):
             errors.append(
-                f"VMAF_MODEL_PATH not found (built-in model will be used): {config.VMAF_MODEL_PATH}"
+                f"VMAF_MODEL_PATH not found (VMAF will be unavailable): {config.VMAF_MODEL_PATH}"
             )
 
     # 4. Data directories — create if needed

@@ -97,8 +97,6 @@ _LIBRARIES_RAW = load_libraries_from_conf()
 LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 
 
-_MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "models")
-
 FFMPEG_PATH = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
 FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 # VMAF 打分必须使用新版本 ffmpeg：fps 帧率对齐 + libvmaf 组合在旧构建会崩溃
@@ -107,7 +105,7 @@ FFPROBE_PATH = "/usr/lib/jellyfin-ffmpeg/ffprobe"
 # VMAF scoring requires a recent ffmpeg: combining the fps filter with libvmaf
 # crashes on older builds (Assertion best_input >= 0 at fftools/ffmpeg_filter.c).
 VMAF_FFMPEG_PATH = "/opt/ffmpeg-qsv-vmaf/bin/ffmpeg"
-VMAF_MODEL_PATH = os.path.join(_MODEL_DIR, "vmaf_v0.6.1neg.json")
+VMAF_MODEL_PATH = "/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json"
 
 SCAN_INTERVAL = 1200
 # 文件稳定窗口：mtime 距今超过该秒数才认为写入完成（防止残缺文件入队转码）。

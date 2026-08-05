@@ -15,6 +15,9 @@ pytestmark = pytest.mark.unit
 
 def _reset_running():
     main._running = True
+    config.LIBRARIES = {
+        "test": {"input": "/tmp/vc-test", "output": "/tmp/vc-test", "cache": "/tmp/vc-test"}
+    }
 
 
 @pytest.fixture(autouse=True)

@@ -72,11 +72,11 @@ sudo make install
 ```
 
 **下载对应 VMAF 模型：**
-自编译 ffmpeg 通常链接较新版本 libvmaf，需使用负浮点特征模型：
+自编译 ffmpeg 通常链接较新版本 libvmaf，需使用负浮点特征模型，随统一版安装到 `/opt/ffmpeg-qsv-vmaf/models/`：
 
 ```bash
-mkdir -p data/models
-curl -Lo data/models/vmaf_v0.6.1neg.json \
+sudo mkdir -p /opt/ffmpeg-qsv-vmaf/models
+sudo curl -Lo /opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json \
   https://raw.githubusercontent.com/Netflix/vmaf/master/model/vmaf_v0.6.1neg.json
 ```
 
@@ -111,13 +111,11 @@ cd /path/to/video_convert
 
 ```
 video_convert/
-├── data/                # Runtime data: logs, history, models (excluded from git)
+├── data/                # Runtime data: logs, history (excluded from git)
 │   ├── app.log
 │   ├── history.db               # SQLite (WAL mode)
 │   ├── history.db-shm
 │   ├── history.db-wal
-│   ├── models/
-│   │   └── vmaf_v0.6.1neg.json    # 负浮点特征模型（自编译统一版使用）
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
@@ -197,7 +195,7 @@ It compares the original and transcoded video and produces a score (0–100).
 
 Requires `src/quality.py` as the Python wrapper.
 
-VMAF 模型文件为 `data/models/vmaf_v0.6.1neg.json`（负浮点特征，匹配自编译统一版 libvmaf），
+VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮点特征，匹配自编译统一版 libvmaf），
 为默认模型；如需其他版本可通过 `--vmaf-model` CLI 指定，并在 `VMAF_MODEL_PATH` 中手动配置。
 
 模型下载方式见部署章节 [1.2](#12-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)。
@@ -267,7 +265,7 @@ nohup python3 main.py > data/app.log 2>&1 &
 | Symptom | Cause | Fix |
 |---------|-------|------|
 | `TRANSCODE FAILED: exit code 1` | ffmpeg error | Check `.ffmpeg.log` in the `.work_*` temp directory |
-| `VMAF failed for ...` | libvmaf binary or model missing | Run `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -filters | grep libvmaf` and check `data/models/vmaf_v0.6.1neg.json` |
+| `VMAF failed for ...` | libvmaf binary or model missing | Run `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -filters | grep libvmaf` and check `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` |
 | Unexpectedly low VMAF | Corrupt source or frame misalignment | Inspect `data/vmaf_logs/<stem>.json` for per-frame scores |
 | `SKIP (codec=hevc)` | Already HEVC, no re-encode needed | Normal behaviour |
 | Stale `.work_*` dirs | Process crash or power outage | Auto-cleaned each scan cycle; `mark_stale_started_as_failed` resets stuck entries |

@@ -102,7 +102,7 @@ def _apply_cli_overrides():
     parser.add_argument(
         "--vmaf-model",
         metavar="PATH",
-        help="VMAF model file path (default: data/models/vmaf_v0.6.1neg.json)",
+        help="VMAF model file path (default: /opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json)",
     )
     parser.add_argument(
         "--vmaf",

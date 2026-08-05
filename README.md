@@ -36,7 +36,7 @@ python3 main.py
 
 # 3. (Optional) Set up VMAF
 #    Use the self-built unified ffmpeg (/opt/ffmpeg-qsv-vmaf/bin/ffmpeg, QSV + libvmaf)
-#    and data/models/vmaf_v0.6.1neg.json in the project tree.
+#    and /opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json.
 #    See docs/SETUP.md for details.
 
 # 4. Run
