@@ -204,7 +204,10 @@ class TestHandleVmafTask:
             str(source), "VMAF 45.00 below 60, input may be incomplete"
         )
 
-    def test_score_none_required_rejects(self, tmp_path):
+    def test_score_none_marks_failed_for_retry(self, tmp_path):
+        # VMAF scoring failed (e.g. interrupted by shutdown / decode error) → retry,
+        # NOT a permanent rejection which would block the file forever.
+        # VMAF_REQUIRED=True forces the reject branch so the score-None path runs.
         source, output, history, task = self._setup_files(tmp_path)
         with (
             patch("src.vmaf_async.compute_vmaf", return_value=None),
@@ -213,7 +216,10 @@ class TestHandleVmafTask:
             _handle_vmaf_task(task)
         assert source.exists()
         assert not output.exists()
-        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=None, rejected=True)
+        history.mark_done.assert_not_called()
+        history.mark_failed.assert_called_once_with(
+            str(source), "VMAF scoring failed, will retry"
+        )
 
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)

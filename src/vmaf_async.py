@@ -60,9 +60,19 @@ def _handle_vmaf_task(task):
             log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
             history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
             return
+        # 打分本身失败（vmaf_score is None，如打分进程被打断/解码错误）：
+        # 记 failed 触发退避重试，而不是当作“质量不达标”永久 rejected 封锁该文件。
+        if vmaf_score is None:
+            history.mark_failed(str(source), "VMAF scoring failed, will retry")
+            log.warning(
+                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed for retry)",
+                output.name,
+                ratio * 100,
+            )
+            return
         # 极端低分视为输入/产物异常（如写入中的残缺文件被误转码），
         # 记 failed 触发退避重试，而不是永久 rejected 封锁该文件。
-        if vmaf_score is not None and vmaf_score < config.VMAF_EXTREME_LOW:
+        if vmaf_score < config.VMAF_EXTREME_LOW:
             history.mark_failed(
                 str(source),
                 f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",
