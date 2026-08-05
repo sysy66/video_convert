@@ -21,7 +21,7 @@ Watches directories for new video files, transcodes them to HEVC 10-bit via Inte
 ```bash
 # 1. Install Jellyfin FFmpeg (for QSV transcoding)
 curl -fsSL https://repo.jellyfin.org/install.sh | sudo bash
-sudo apt install jellyfin-ffmpeg
+sudo apt install jellyfin-ffmpeg7
 
 # 2. Clone & configure
 git clone <url> video_convert

@@ -16,7 +16,9 @@ sudo apt install intel-media-va-driver vainfo
 
 # 2. 安装 Jellyfin FFmpeg
 curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash
-sudo apt install jellyfin-ffmpeg
+# 新版仓库已把 jellyfin-ffmpeg 元包拆分为 jellyfin-ffmpeg7 / jellyfin-ffmpeg8（旧的包名不存在），
+# 两者安装路径相同（/usr/lib/jellyfin-ffmpeg/）；本机验证版本为 7.1.4，装 7 即可
+sudo apt install jellyfin-ffmpeg7
 ```
 
 **Verify:**
@@ -30,8 +32,10 @@ vainfo
 
 路径: `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg`
 
-用途：将 Intel QSV 硬件编码（`hevc_qsv` / `av1_qsv`）和 libvmaf 质量评估集成到同一个 ffmpeg 二进制中，
-替代之前需要两个独立 ffmpeg 的方案。该二进制供转码管线统一调用。
+用途：将 Intel QSV 硬件编码（`hevc_qsv` / `av1_qsv`）与 libvmaf 质量评估集成到同一个 ffmpeg 二进制中
+（jellyfin 版 ffmpeg 不带 libvmaf）。程序默认用它执行 VMAF 打分（`config.VMAF_FFMPEG_PATH`）；
+转码默认仍用 jellyfin（`config.FFMPEG_PATH`），如需 QSV 编码也走本构建，可用
+`--ffmpeg` / `--ffprobe` 切换。
 
 **Ubuntu / Debian:**
 
@@ -54,9 +58,12 @@ ninja -C build
 sudo ninja -C build install
 sudo ldconfig
 
-# 4. 克隆 FFmpeg（--depth 1 只取最新源码，避免完整克隆过大导致断线）
-git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg-src
+# 4. 克隆 FFmpeg 并切到稳定分支（--depth 1 只取最新源码，避免完整克隆过大导致断线；
+#    git.ffmpeg.org 偶尔 DNS 解析失败，可用 GitHub 镜像 https://github.com/FFmpeg/FFmpeg.git）
+git clone --depth 1 --branch release/8.1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src
 cd /tmp/ffmpeg-src
+# 注意：必须使用稳定分支（release/8.1，如 tag n8.1.2），不要用 git master——
+# master 在 2026-07 曾引入附件流 bug（-map 0:t? 复制附件 + QSV 编码时输出被截断为个位数帧）
 
 # 5. 配置（libvmaf + QSV 同时启用，嵌入 RUNPATH 使二进制自带库搜索路径）
 ./configure --prefix=/opt/ffmpeg-qsv-vmaf \
@@ -119,19 +126,40 @@ video_convert/
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
+│   ├── ai_analyze.py
 │   ├── config.py
+│   ├── ffmpeg_runner.py
+│   ├── filter.py
 │   ├── history.py
+│   ├── path_utils.py
 │   ├── probe.py
+│   ├── process_guard.py
 │   ├── quality.py
-│   ├── scanner.py
-│   └── transcoder.py
+│   ├── temp_cleanup.py
+│   ├── transcoder.py
+│   ├── validation.py
+│   ├── vmaf_async.py
+│   └── walker.py
 ├── tests/
 │   ├── conftest.py
+│   ├── fixtures/
+│   ├── test_ai_analyze.py
+│   ├── test_benchmarks.py
+│   ├── test_config.py
+│   ├── test_filter.py
 │   ├── test_history.py
 │   ├── test_main.py
 │   ├── test_probe.py
-│   ├── test_scanner.py
-│   └── test_transcoder.py
+│   ├── test_probe_integration.py
+│   ├── test_quality.py
+│   ├── test_regression.py
+│   ├── test_transcode_e2e.py
+│   ├── test_transcoder.py
+│   ├── test_transcoder_helpers.py
+│   ├── test_validation.py
+│   ├── test_vmaf_async.py
+│   ├── test_vmaf_integration.py
+│   └── test_walker.py
 ├── main.py
 ├── pyproject.toml
 ├── README.md
@@ -268,6 +296,7 @@ nohup python3 main.py > data/app.log 2>&1 &
 | `VMAF failed for ...` | libvmaf binary or model missing | Run `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg -filters | grep libvmaf` and check `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` |
 | Unexpectedly low VMAF | Corrupt source or frame misalignment | Inspect `data/vmaf_logs/<stem>.json` for per-frame scores |
 | `SKIP (codec=hevc)` | Already HEVC, no re-encode needed | Normal behaviour |
+| 转码输出仅数帧 | /opt 自编译版为 git-master 构建（附件流截断 bug） | 升级到 release/8.1 稳定版重编，见 [1.2](#12-ffmpeg--自编译qsv--libvmaf-统一版--unified-build) |
 | Stale `.work_*` dirs | Process crash or power outage | Auto-cleaned each scan cycle; `mark_stale_started_as_failed` resets stuck entries |
 | NFS locked `.nfs*` files | NFS file handle leak | `lsof +D /path/to/dir` to find the holding process |
 | Long transcode timeout (4h) | NFS hang or very large file | Default batch timeout kills stuck tasks; they retry next cycle with backoff |
