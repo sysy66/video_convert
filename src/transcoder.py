@@ -22,7 +22,7 @@ from src.process_guard import (
     register_ffmpeg_pid,
     unregister_ffmpeg_pid,
 )
-from src.quality import compute_vmaf, should_accept
+from src.quality import compute_vmaf, vmaf_verdict
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -296,10 +296,22 @@ def transcode(
             )
             return True
 
-        # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分）
+        # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分），
+        # 与 async 路径一致：不入队、不做任何质量判定。
+        if ratio > config.ACCEPT_RATIO_MAX:
+            _cleanup_temp(temp_dir)
+            history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
+            log.warning(
+                "REJECT: %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
+                filepath.name,
+                ratio * 100,
+                config.ACCEPT_RATIO_MAX * 100,
+            )
+            return True
+
         vmaf_score = None
         vmaf_elapsed = None
-        if config.VMAF_REQUIRED and ratio <= config.ACCEPT_RATIO_MAX:
+        if config.VMAF_REQUIRED:
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = (
                 Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
@@ -308,7 +320,39 @@ def transcode(
             vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
             vmaf_elapsed = _time.monotonic() - vmaf_start
 
-        if should_accept(vmaf_score, ratio):
+        # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
+        # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
+        # 记 failed 触发退避重试，而不是永久 rejected 封锁该文件。
+        if config.VMAF_REQUIRED:
+            verdict = vmaf_verdict(vmaf_score, ratio)
+        else:
+            verdict = "accept"
+
+        if verdict == "retry":
+            _cleanup_temp(temp_dir)
+            if vmaf_score is None:
+                history.mark_failed(str(filepath), "VMAF scoring failed, will retry")
+                log.warning(
+                    "VMAF SCORING FAILED (sync): %s (ratio %.1f%%, marking failed for retry)",
+                    filepath.name,
+                    ratio * 100,
+                )
+            else:
+                history.mark_failed(
+                    str(filepath),
+                    f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, "
+                    f"input may be incomplete",
+                )
+                log.warning(
+                    "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, "
+                    "marking failed for retry)",
+                    filepath.name,
+                    vmaf_score,
+                    ratio * 100,
+                )
+            return False
+
+        if verdict == "accept":
             final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
             if final_path.name != output_filename:
                 log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)

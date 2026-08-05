@@ -5,7 +5,7 @@ import time as _time
 from pathlib import Path
 
 from src import config
-from src.quality import compute_vmaf, should_accept
+from src.quality import compute_vmaf, vmaf_verdict
 
 log = __import__("logging").getLogger(__name__)
 
@@ -33,7 +33,41 @@ def _handle_vmaf_task(task):
     vmaf_score = compute_vmaf(source, output, log_path=vmaf_log)
     vmaf_elapsed = _time.monotonic() - vmaf_start
 
-    if should_accept(vmaf_score, ratio):
+    verdict = vmaf_verdict(vmaf_score, ratio)
+
+    if verdict == "retry":
+        # 打分本身失败（vmaf_score is None，如打分进程被打断/解码错误）或极端低分
+        # （视为输入/产物异常，如写入中的残缺文件被误转码）：
+        # 均记 failed 触发退避重试，而不是当作“质量不达标”永久 rejected 封锁该文件。
+        # Scoring failures (None) and extreme-low scores both mark failed for backoff
+        # retry instead of permanently rejecting the file.
+        try:
+            output.unlink()
+        except OSError as e:
+            log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
+            history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
+            return
+        if vmaf_score is None:
+            history.mark_failed(str(source), "VMAF scoring failed, will retry")
+            log.warning(
+                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed for retry)",
+                output.name,
+                ratio * 100,
+            )
+        else:
+            history.mark_failed(
+                str(source),
+                f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",
+            )
+            log.warning(
+                "VMAF EXTREME LOW (async): %s (VMAF %.2f, ratio %.1f%%, marking failed for retry)",
+                output.name,
+                vmaf_score,
+                ratio * 100,
+            )
+        return
+
+    if verdict == "accept":
         if not output.exists():
             log.error("VMAF ACCEPT FAILED: output missing for %s, marking failed", source.name)
             history.mark_failed(str(source), "VMAF accept failed: output missing")
@@ -53,46 +87,24 @@ def _handle_vmaf_task(task):
             f"{codec_elapsed:.1f}" if codec_elapsed is not None else "N/A",
             vmaf_elapsed,
         )
-    else:
-        try:
-            output.unlink()
-        except OSError as e:
-            log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
-            history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
-            return
-        # 打分本身失败（vmaf_score is None，如打分进程被打断/解码错误）：
-        # 记 failed 触发退避重试，而不是当作“质量不达标”永久 rejected 封锁该文件。
-        if vmaf_score is None:
-            history.mark_failed(str(source), "VMAF scoring failed, will retry")
-            log.warning(
-                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed for retry)",
-                output.name,
-                ratio * 100,
-            )
-            return
-        # 极端低分视为输入/产物异常（如写入中的残缺文件被误转码），
-        # 记 failed 触发退避重试，而不是永久 rejected 封锁该文件。
-        if vmaf_score < config.VMAF_EXTREME_LOW:
-            history.mark_failed(
-                str(source),
-                f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",
-            )
-            log.warning(
-                "VMAF EXTREME LOW (async): %s (VMAF %.2f, ratio %.1f%%, marking failed for retry)",
-                output.name,
-                vmaf_score,
-                ratio * 100,
-            )
-            return
-        history.mark_done(str(source), None, vmaf_score=vmaf_score, rejected=True)
-        log.warning(
-            "REJECT (async): %s (VMAF %s, ratio %.1f%%, codec %s + vmaf %.1fs, keeping original)",
-            output.name,
-            f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
-            ratio * 100,
-            f"{codec_elapsed:.1f}" if codec_elapsed is not None else "N/A",
-            vmaf_elapsed,
-        )
+        return
+
+    # verdict == "reject"
+    try:
+        output.unlink()
+    except OSError as e:
+        log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
+        history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
+        return
+    history.mark_done(str(source), None, vmaf_score=vmaf_score, rejected=True)
+    log.warning(
+        "REJECT (async): %s (VMAF %s, ratio %.1f%%, codec %s + vmaf %.1fs, keeping original)",
+        output.name,
+        f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+        ratio * 100,
+        f"{codec_elapsed:.1f}" if codec_elapsed is not None else "N/A",
+        vmaf_elapsed,
+    )
 
 
 def _vmaf_worker():

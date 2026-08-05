@@ -267,28 +267,49 @@ def cleanup_vmaf_logs():
     return count
 
 
+def vmaf_verdict(vmaf_score, ratio):
+    """
+    统一 sync/async 打分后决策。规则：
+      - ratio > ACCEPT_RATIO_MAX → "reject"（超标必拒，两端一致）
+      - vmaf_score 为 None → "retry"（打分失败，记 failed 退避重试，不永久封锁）
+      - vmaf_score < VMAF_EXTREME_LOW → "retry"（极端低分视为输入/产物异常，同样重试）
+      - 其余 → 按 should_accept 给出 "accept"/"reject"
+
+    Unified post-scoring verdict for sync and async paths. Rules:
+      - ratio > ACCEPT_RATIO_MAX → "reject" (must reject, same for both modes)
+      - vmaf_score is None → "retry" (scoring failed; mark failed for backoff retry)
+      - vmaf_score < VMAF_EXTREME_LOW → "retry" (extreme low suggests incomplete input)
+      - otherwise → should_accept decides "accept"/"reject"
+
+    :param vmaf_score: VMAF 分数 (VMAF score, 0-100 or None)
+    :param ratio: 输出/输入文件大小比 (output/input size ratio)
+    :return: "accept" | "reject" | "retry"
+    """
+    if ratio > config.ACCEPT_RATIO_MAX:
+        return "reject"
+    if vmaf_score is None:
+        return "retry"
+    if vmaf_score < config.VMAF_EXTREME_LOW:
+        return "retry"
+    return "accept" if should_accept(vmaf_score, ratio) else "reject"
+
+
 def should_accept(vmaf_score, ratio):
     """
-    判断是否接受转码结果。规则：
-      - VMAF 不可用 → 取决于 VMAF_REQUIRED 配置（默认拒绝）
+    判断是否接受转码结果（vmaf_verdict 已保证传入的 vmaf_score 非 None）。规则：
       - VMAF ≥ VMAF_ACCEPT_HIGH → ratio ≤ ACCEPT_RATIO_MAX 才接受
       - VMAF < VMAF_ACCEPT_LOW → 拒绝
       - 中间区间 → ratio ≤ ACCEPT_RATIO_LOW（缩小 ≥25%）才接受
 
-    Decide whether to accept the transcoded result. Rules:
-      - VMAF unavailable → depends on VMAF_REQUIRED (default reject)
+    Decide whether to accept the transcoded result (vmaf_score is non-None here). Rules:
       - VMAF ≥ VMAF_ACCEPT_HIGH → accept only if ratio ≤ ACCEPT_RATIO_MAX
       - VMAF < VMAF_ACCEPT_LOW → reject
       - Middle range → accept only if ratio ≤ ACCEPT_RATIO_LOW (≥25% smaller)
 
-    :param vmaf_score: VMAF 分数 (VMAF score, 0-100 or None)
+    :param vmaf_score: VMAF 分数 (VMAF score, 0-100)
     :param ratio: 输出/输入文件大小比 (output/input size ratio)
     :return: True 接受 (accept), False 拒绝 (reject)
     """
-    if vmaf_score is None:
-        if config.VMAF_REQUIRED:
-            return False
-        return ratio <= config.ACCEPT_RATIO_MAX
     if vmaf_score >= config.VMAF_ACCEPT_HIGH:
         return ratio <= config.ACCEPT_RATIO_MAX
     if vmaf_score < config.VMAF_ACCEPT_LOW:

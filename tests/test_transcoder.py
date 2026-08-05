@@ -304,7 +304,71 @@ class TestTranscode:
             patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
         assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
+
+    def test_vmaf_scoring_failed_marks_failed_for_retry(self, tmp_path):
+        # sync 模式打分失败（compute_vmaf → None）：与 async 一致记 failed 退避重试
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", True),
+            patch("src.transcoder.compute_vmaf", return_value=None),
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is False
+        history.mark_failed.assert_called_once()
+        assert history.mark_failed.call_args[0][1] == "VMAF scoring failed, will retry"
+        history.mark_done.assert_not_called()
+        assert not list(tmp_path.glob(".work_*"))
+
+    def test_vmaf_extreme_low_marks_failed_for_retry(self, tmp_path):
+        # sync 模式极端低分（< VMAF_EXTREME_LOW）：与 async 一致记 failed 退避重试
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", True),
+            patch("src.transcoder.config.VMAF_EXTREME_LOW", 60),
+            patch("src.transcoder.compute_vmaf", return_value=55.0),
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is False
+        history.mark_failed.assert_called_once()
+        assert "below 60" in history.mark_failed.call_args[0][1]
+        history.mark_done.assert_not_called()
+        assert not list(tmp_path.glob(".work_*"))
+
+    def test_vmaf_off_mode_never_scores(self, tmp_path):
+        # off 模式（VMAF_REQUIRED=False）：不调打分、不做质量判定，直接接受
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", False),
+            patch("src.transcoder.compute_vmaf") as mock_vmaf,
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        mock_vmaf.assert_not_called()
+        history.mark_done.assert_called_once()
+        assert history.mark_done.call_args[1]["rejected"] is False
 
 
 class TestCleanupTemp:
