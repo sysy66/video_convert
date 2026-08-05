@@ -12,6 +12,12 @@ from src.ffmpeg_runner import (
     _run_ffmpeg_with_progress,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
+from src.probe import (
+    get_expected_frame_count,
+    get_streams_info,
+    get_video_frame_count,
+    get_video_frame_rate,
+)
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
@@ -185,8 +191,14 @@ def transcode(
         except OSError:
             pass
 
-        # QSV filter reinit 失败则立即用软件缩放重试（新建临时目录避免冲突）
-        if returncode != 0 and "Error reinitializing filters" in stderr:
+        # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
+        sw_fallback_attempted = False
+
+        def _retry_sw_fallback():
+            nonlocal returncode, stderr, temp_dir, output_path, sw_fallback_attempted
+            if sw_fallback_attempted:
+                return
+            sw_fallback_attempted = True
             log.warning("QSV SW FALLBACK: %s - re-trying with software scale", filepath.name)
             old_temp_dir = output_path.parent
             _cleanup_temp(temp_dir)
@@ -209,6 +221,16 @@ def transcode(
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
             )
+            try:
+                (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
+            except OSError:
+                pass
+
+        # QSV filter reinit 失败则立即用软件缩放重试（新建临时目录避免冲突）
+        if returncode != 0 and (
+            "Error reinitializing filters" in stderr or "Error initializing filters" in stderr
+        ):
+            _retry_sw_fallback()
 
         # 最终 stderr 写入 .ffmpeg.log
         try:
@@ -230,6 +252,92 @@ def transcode(
             _cleanup_temp(temp_dir)
             history.mark_failed(str(filepath), "Output file not found after transcode")
             return False
+
+        # 帧数验证（Option A）：vpp_qsv 偶发只编码十几帧就 rc=0 退出，
+        # 输出文件存在且 returncode 为 0，但视频帧数严重不足。此时用软件缩放重试一次。
+        # 先做廉价的时长探测，可疑时才做精确帧数统计（避免对健康文件全量解码计数）。
+        # Frame-count validation: vpp_qsv can exit rc=0 after encoding only a handful
+        # of frames, leaving a present-but-truncated output. We detect it here and
+        # retry once with software scaling. A cheap duration probe gates the exact
+        # (slow, full-decode) frame count so healthy files aren't penalized.
+        if not sw_fallback_attempted:
+            expected_frames = get_expected_frame_count(
+                total_duration, get_video_frame_rate(filepath, ffprobe_path)
+            )
+            if expected_frames:
+                out_info = get_streams_info(output_path, ffprobe_path)
+                out_duration = out_info["duration"] if out_info else None
+                # 时长异常（远短于源）才进入精确帧数统计；duration 探测失败时保守按异常处理
+                duration_suspicious = out_duration is None or (
+                    total_duration is not None
+                    and out_duration < total_duration * config.FRAME_COUNT_MIN_RATIO
+                )
+                if duration_suspicious:
+                    actual_frames = get_video_frame_count(output_path, ffprobe_path)
+                    if (
+                        actual_frames is not None
+                        and actual_frames < expected_frames * config.FRAME_COUNT_MIN_RATIO
+                    ):
+                        log.warning(
+                            "FRAME COUNT ANOMALY: %s - got %d frames, expected ~%d; "
+                            "retrying with software scale",
+                            filepath.name,
+                            actual_frames,
+                            expected_frames,
+                        )
+                        _retry_sw_fallback()
+                        # 重试后重新校验（returncode / 输出存在性 / 帧数）
+                        try:
+                            (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
+                        except OSError:
+                            pass
+                        if returncode != 0:
+                            error_msg = stderr.strip() or f"exit code {returncode}"
+                            elapsed = _time.monotonic() - start_time
+                            log.error(
+                                "TRANSCODE FAILED: %s (%.1fs) - %s",
+                                filepath.name,
+                                elapsed,
+                                error_msg,
+                            )
+                            _cleanup_temp(temp_dir)
+                            history.mark_failed(str(filepath), error_msg)
+                            return False
+                        if not output_path.exists():
+                            elapsed = _time.monotonic() - start_time
+                            log.error(
+                                "TRANSCODE FAILED: output not found for %s (%.1fs)",
+                                filepath.name,
+                                elapsed,
+                            )
+                            _cleanup_temp(temp_dir)
+                            history.mark_failed(
+                                str(filepath), "Output file not found after transcode"
+                            )
+                            return False
+                        # 软件缩放输出仍需帧数校验：若依旧帧数不足，判定失败（不再次重试）
+                        actual_frames_retry = get_video_frame_count(output_path, ffprobe_path)
+                        if (
+                            actual_frames_retry is not None
+                            and actual_frames_retry
+                            < expected_frames * config.FRAME_COUNT_MIN_RATIO
+                        ):
+                            elapsed = _time.monotonic() - start_time
+                            log.error(
+                                "TRANSCODE FAILED: frame count still low after sw fallback for %s "
+                                "(%d frames, expected ~%d, %.1fs)",
+                                filepath.name,
+                                actual_frames_retry,
+                                expected_frames,
+                                elapsed,
+                            )
+                            _cleanup_temp(temp_dir)
+                            history.mark_failed(
+                                str(filepath),
+                                f"Frame count anomaly after sw fallback: "
+                                f"{actual_frames_retry} frames, expected ~{expected_frames}",
+                            )
+                            return False
 
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0

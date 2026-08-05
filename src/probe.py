@@ -131,6 +131,87 @@ def get_video_frame_rate(filepath, ffprobe_path):
     return _valid(entries.get("r_frame_rate", ""))
 
 
+def fps_fraction_to_float(fps_str):
+    """
+    把 ffprobe 返回的帧率字符串（如 "24000/1001" 或 "23.976"）转为 float。
+    无效输入返回 None。
+    Convert a frame-rate string (e.g. "24000/1001" or "23.976") to float, or None.
+    """
+    if not fps_str:
+        return None
+    s = str(fps_str).strip()
+    if "/" in s:
+        num, _, den = s.partition("/")
+        try:
+            n, d = int(num), int(den)
+        except ValueError:
+            return None
+        return n / d if d else None
+    try:
+        v = float(s)
+        return v if v > 0 else None
+    except ValueError:
+        return None
+
+
+def get_expected_frame_count(duration, fps_str):
+    """
+    由时长（秒）与帧率字符串估算应输出的总帧数，供转码后帧数校验使用。
+    任一参数无效时返回 None。
+    Estimate the expected total frame count from duration (seconds) and a frame-rate
+    string, for post-transcode frame-count validation. Returns None if either is invalid.
+    """
+    fps = fps_fraction_to_float(fps_str)
+    if duration is None or fps is None:
+        return None
+    return int(duration * fps)
+
+
+def get_video_frame_count(filepath, ffprobe_path):
+    """
+    统计视频流的实际帧数（全量解码计数，精确但较慢，仅用于异常校验时调用）。
+    返回 int 帧数，失败返回 None。
+    Count the actual number of video frames via full decode (accurate but slow;
+    intended only for anomaly validation). Returns int, or None on failure.
+    """
+    if not ffprobe_path:
+        log.error("FFPROBE_PATH not configured")
+        return None
+    cmd = [
+        ffprobe_path,
+        "-v",
+        "error",
+        "-count_frames",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=nb_read_frames",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(filepath),
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            log.error("ffprobe frame count failed for %s: %s", filepath, result.stderr.strip())
+            return None
+        text = result.stdout.strip()
+        try:
+            return int(text) if text else None
+        except ValueError:
+            log.error("unexpected frame count output for %s: %r", filepath, text)
+            return None
+    except FileNotFoundError:
+        log.error("ffprobe not found at %s", ffprobe_path)
+        return None
+    except subprocess.TimeoutExpired:
+        log.error("ffprobe timed out for %s", filepath)
+        return None
+    except Exception as e:
+        log.error("ffprobe error for %s: %s", filepath, e)
+        return None
+
+
 def get_streams_info(filepath, ffprobe_path):
     if not ffprobe_path:
         log.error("FFPROBE_PATH not configured")

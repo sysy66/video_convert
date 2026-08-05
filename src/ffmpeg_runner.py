@@ -59,6 +59,10 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         # Software-scale fallback: keep frames in system memory, convert with
         # software format filter, then upload to QSV via hwupload
         cmd.extend(["-hwaccel_output_format", "none"])
+        # sw_fallback 时需要显式初始化 QSV 设备，为 hwupload 滤镜提供
+        # 设备上下文；否则 "Error initializing filters" 并非真实编码失败
+        if sw_fallback:
+            cmd.extend(["-init_hw_device", "qsv=hw"])
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
