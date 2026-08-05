@@ -348,7 +348,7 @@ def transcode(
         # Async VMAF: move the output into place but keep the source; a background
         # worker scores it later and keeps exactly one of the two files.
         if config.VMAF_ASYNC:
-            if ratio > config.ACCEPT_RATIO_MAX and config.VMAF_REQUIRED:
+            if ratio > config.ACCEPT_RATIO_MAX:
                 # ratio 超标必拒（VMAF ≥ 93 也要求 ratio ≤ ACCEPT_RATIO_MAX），
                 # 直接拒绝不入队，省去昂贵的采样打分。
                 _cleanup_temp(temp_dir)
