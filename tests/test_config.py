@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import _normalize_libraries
+from src.config import _normalize_libraries, load_libraries_from_conf
 
 pytestmark = pytest.mark.unit
 
@@ -41,3 +41,45 @@ class TestNormalizeLibraries:
 
     def test_empty_dict(self):
         assert _normalize_libraries({}) == {}
+
+
+class TestLoadLibrariesFromConf:
+    def test_missing_file_returns_empty(self, tmp_path):
+        assert load_libraries_from_conf(str(tmp_path / "nope.conf")) == {}
+
+    def test_single_path(self, tmp_path):
+        p = tmp_path / "libs.conf"
+        p.write_text("movies = /mnt/movies\n")
+        assert load_libraries_from_conf(str(p)) == {"movies": "/mnt/movies"}
+
+    def test_three_part_path(self, tmp_path):
+        p = tmp_path / "libs.conf"
+        p.write_text("shows = /mnt/shows, /mnt/out, /mnt/cache\n")
+        assert load_libraries_from_conf(str(p)) == {
+            "shows": {"input": "/mnt/shows", "output": "/mnt/out", "cache": "/mnt/cache"}
+        }
+
+    def test_comments_and_blank_lines_ignored(self, tmp_path):
+        p = tmp_path / "libs.conf"
+        p.write_text(
+            "# comment\n\n"
+            "movies = /mnt/movies\n"
+            "# another\n"
+            "shorts = /mnt/shorts, /mnt/out, /mnt/cache\n"
+        )
+        assert load_libraries_from_conf(str(p)) == {
+            "movies": "/mnt/movies",
+            "shorts": {"input": "/mnt/shorts", "output": "/mnt/out", "cache": "/mnt/cache"},
+        }
+
+    def test_malformed_line_raises(self, tmp_path):
+        p = tmp_path / "libs.conf"
+        p.write_text("bad = /a, /b\n")
+        with pytest.raises(ValueError, match="invalid value"):
+            load_libraries_from_conf(str(p))
+
+    def test_missing_separator_raises(self, tmp_path):
+        p = tmp_path / "libs.conf"
+        p.write_text("noeq\n")
+        with pytest.raises(ValueError, match="malformed line"):
+            load_libraries_from_conf(str(p))

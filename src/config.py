@@ -3,16 +3,34 @@ import os
 # 多库支持：名称 → {input, output, cache} 映射。
 # Multi-library support: name → {input, output, cache} mapping.
 #
-# 简单字符串格式（input=output=cache 相同）：
-#   LIBRARIES = {"test1": "/mnt/test1"}
-# 字典格式（可分别指定 output/cache，省略的字段默认同 input）：
-#   LIBRARIES = {"test1": {"input": "/mnt/test1", "output": "/mnt/out", "cache": "/mnt/tmp"}}
-_LIBRARIES_RAW = {
-    "test1": {"input": "/mnt/NFS-5070-tmp1", "output": "/mnt/tmp0", "cache": "/mnt/transcode_cache"}
-}
+# 库列表从项目根目录的 libraries.conf 读取（每行一个库），无需改代码：
+#   # 名称 = 输入[, 输出[, 缓存]]
+#   movies = /mnt/movies
+#   shows  = /mnt/shows, /mnt/out, /mnt/cache
+# 输出/缓存省略时与输入相同；以 # 开头的行是注释。
+# Libraries are read from libraries.conf in the project root (one per line),
+# so users never edit source. Format: name = input[, output[, cache]].
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LIBRARIES_CONF_FILE = os.path.join(_PROJECT_ROOT, "libraries.conf")
+LIBRARIES_CONF_TEMPLATE = """\
+# 视频转码媒体库配置（每行一个库）
+# Video transcode library configuration (one library per line)
+#
+# 格式：名称 = 输入[, 输出[, 缓存]]
+# Format: name = input[, output[, cache]]
+# 输出/缓存省略时与输入相同；以 # 开头的行是注释。
+# output/cache default to input when omitted; lines starting with # are comments.
+#
+# 示例 / Examples:
+# movies = /mnt/movies
+# shows  = /mnt/shows, /mnt/out, /mnt/cache
+"""
 
 
 def _normalize_libraries(raw):
+    """把两种外部表示（纯字符串或 {input, output, cache} 字典）统一为完整字段。
+    纯字符串表示 input=output=cache；字典缺失的字段默认与 input 相同。
+    """
     normalized = {}
     for name, value in raw.items():
         if isinstance(value, str):
@@ -29,6 +47,53 @@ def _normalize_libraries(raw):
     return normalized
 
 
+def _parse_library_value(name, value):
+    """解析单条库定义的值部分，返回 str（仅输入）或 {input, output, cache} 字典。"""
+    parts = [p.strip() for p in value.split(",")]
+    if len(parts) == 1:
+        if not parts[0]:
+            raise ValueError(f"Library [{name}]: empty path")
+        return parts[0]
+    if len(parts) == 3 and all(parts):
+        return {"input": parts[0], "output": parts[1], "cache": parts[2]}
+    raise ValueError(
+        f"Library [{name}]: invalid value {value!r}; expected PATH or input,output,cache"
+    )
+
+
+def load_libraries_from_conf(path=None):
+    """从配置文件读取库定义，返回原始（未规范化）字典；文件不存在时返回空字典。"""
+    path = path or LIBRARIES_CONF_FILE
+    raw = {}
+    if not os.path.exists(path):
+        return raw
+    with open(path, "r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, sep, value = line.partition("=")
+            name = name.strip()
+            value = value.strip()
+            if not sep or not name or not value:
+                raise ValueError(f"{path}:{lineno}: malformed line {line!r}")
+            raw[name] = _parse_library_value(name, value)
+    return raw
+
+
+def ensure_libraries_conf(path=None):
+    """若配置文件不存在则生成带示例注释的模板，方便用户"开箱即用"。"""
+    path = path or LIBRARIES_CONF_FILE
+    if not os.path.exists(path):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(LIBRARIES_CONF_TEMPLATE)
+        except OSError:
+            pass
+    return path
+
+
+_LIBRARIES_RAW = load_libraries_from_conf()
 LIBRARIES = _normalize_libraries(_LIBRARIES_RAW)
 
 

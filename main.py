@@ -305,6 +305,14 @@ def main():
     _apply_cli_overrides()
     _setup_logging()
 
+    config.ensure_libraries_conf()
+    if not config.LIBRARIES:
+        log.warning(
+            "No libraries configured: edit %s (a sample template was created) "
+            "or pass --library NAME=PATH",
+            config.LIBRARIES_CONF_FILE,
+        )
+
     lock_file = os.path.join(os.path.dirname(config.LOG_FILE), ".transcoder.lock")
     try:
         lock_fd = open(lock_file, "w")

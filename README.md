@@ -26,7 +26,13 @@ sudo apt install jellyfin-ffmpeg
 # 2. Clone & configure
 git clone <url> video_convert
 cd video_convert
-# edit src/config.py — set LIBRARIES to your watch directory
+# Run once to auto-generate a sample libraries.conf in the project root, then
+# 首次运行自动生成带注释示例的 libraries.conf（项目根目录），然后填入你的媒体路径。
+# 每行一个库：名称 = 输入[, 输出[, 缓存]]。输出/缓存省略时与输入相同。
+#   movies = /mnt/movies
+#   shows  = /mnt/shows, /mnt/out, /mnt/cache
+# 优先级：--library CLI 参数 > libraries.conf > (无内置默认)
+python3 main.py
 
 # 3. (Optional) Set up VMAF
 #    Use the self-built unified ffmpeg (/opt/ffmpeg-qsv-vmaf/bin/ffmpeg, QSV + libvmaf)

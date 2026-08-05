@@ -10,6 +10,9 @@ __pycache__/
 
 data/
 
+# 用户本机媒体库配置（每台机器不同，不纳入版本管理）
+libraries.conf
+
 *.egg-info/
 *.egg-info/*
 
