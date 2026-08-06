@@ -105,4 +105,16 @@
 
 ---
 
+## v1.5 期间追加（2026-08-02 → 08-06）
+
+- ✅ 帧数校验功能测试（`test_transcoder.py` 增补）——vpp_qsv 静默失败截断输出的拦截逻辑；
+  后随 ffmpeg n8.1.2 修复根治，校验层移除（测试相应调整）
+- ✅ VMAF 三态 CLI（`--vmaf off|sync|async`）、hwaccel 开关、`--vmaf-threads` 参数测试
+- ✅ sync/async 决策统一后的打分失败/极端低分退避重试测试
+- 最新验证（2026-08-06，本机）：
+  - 默认 `pytest`：**285 passed + 25 skipped**
+  - `--run-slow`：**295 passed + 15 skipped**（QSV/VMAF 硬件相关用例无硬件时 skip）
+
+---
+
 ## 全部阶段完成 ✅
