@@ -131,6 +131,9 @@ def _run_vmaf(
     if config.VMAF_MODEL_PATH and os.path.exists(config.VMAF_MODEL_PATH):
         opts.append(f"model='path={config.VMAF_MODEL_PATH}'")
     opts.append(f"n_subsample={config.VMAF_SUBSAMPLE}")
+    opts.append(
+        f"n_threads={config.VMAF_N_THREADS or max(1, (os.cpu_count() or 1) - 1)}"
+    )
 
     if log_path is not None:
         try:

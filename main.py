@@ -122,6 +122,12 @@ def _apply_cli_overrides():
         action="store_true",
         help="Disable VMAF HW→SW fallback when HW path fails",
     )
+    parser.add_argument(
+        "--vmaf-threads",
+        type=int,
+        metavar="N",
+        help="libvmaf threads: 0=auto (default, leave 1 core for transcoding) | >0 explicit",
+    )
 
     args = parser.parse_args()
 
@@ -157,6 +163,8 @@ def _apply_cli_overrides():
         config.VMAF_HWACCEL = False
     if args.no_vmaf_hw_fallback:
         config.VMAF_HW_FALLBACK = False
+    if args.vmaf_threads is not None:
+        config.VMAF_N_THREADS = args.vmaf_threads
     if args.libraries:
         raw = {}
         for lib_def in args.libraries:

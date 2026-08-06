@@ -188,6 +188,13 @@ HISTORY_FILE = "data/history.db"
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
 VMAF_SUBSAMPLE = 30
 
+# libvmaf 多线程数：0 = auto（默认，留 1 核给转码），>0 = 显式指定。
+# libvmaf v2+ 默认单线程（n_threads=0），多线程可数倍提速但收益随线程数递减（>4 后递减明显）。
+# Threads for libvmaf: 0 = auto (default, leave 1 core for transcoding), >0 = explicit.
+# libvmaf v2+ defaults to single-threaded; threading gives several-fold speedup but gains
+# diminish beyond ~4 threads.
+VMAF_N_THREADS = 0
+
 # VMAF 打分前统一帧率对齐。VFR 源被 QSV/软件编码器规整为 CFR 后，
 # 产物与源的帧序会产生累计漂移，导致 libvmaf 逐帧对比错位、分数虚低。
 # 打分时给两个输入都加 fps 滤镜归一到同一时间网格，可消除该系统性误差。
