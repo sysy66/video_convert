@@ -259,3 +259,29 @@ def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     reader_done.wait(timeout=10)
 
     return proc.returncode, "".join(stderr_lines)
+
+
+def _summarize_error_stderr(stderr, max_body=100, head_keep=20):
+    """
+    精简 FFmpeg 失败输出用于日志与历史记录：过滤逐帧进度行并截断过长输出。
+    FFmpeg 真正的错误集中在输出末尾，几千行 "frame=..." 进度行没有诊断价值。
+
+    Summarize FFmpeg error output for logging/history: drop per-frame progress
+    lines and truncate overly long output. The real error is at the tail; the
+    thousands of "frame=..." progress lines carry no diagnostic value.
+
+    :param stderr: 完整 FFmpeg stderr 文本 (Full FFmpeg stderr text)
+    :param max_body: 保留的非进度行数上限 (Max non-progress lines to keep)
+    :param head_keep: 超限时保留的头部行数 (Head lines kept when truncating)
+    :return: 精简后的错误摘要 (Summarized error text)
+    """
+    lines = [line.rstrip() for line in stderr.splitlines() if line.strip()]
+    body = [line for line in lines if not line.strip().startswith("frame=")]
+    if len(body) > max_body:
+        tail_keep = max(0, max_body - head_keep - 1)
+        body = (
+            body[:head_keep]
+            + ["... (truncated %d lines) ..." % (len(body) - max_body)]
+            + body[-tail_keep:]
+        )
+    return "\n".join(body) or stderr.strip()

@@ -10,6 +10,7 @@ from src.ffmpeg_runner import (
     _parse_progress_fps,
     _parse_progress_time,
     _run_ffmpeg_with_progress,
+    _summarize_error_stderr,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
 from src.process_guard import (
@@ -83,6 +84,7 @@ __all__ = [
     "_random_suffix",
     "_rmtree_robust",
     "_run_ffmpeg_with_progress",
+    "_summarize_error_stderr",
     "_unique_path",
     "_vmaf_worker",
     "_vmaf_worker_threads",
@@ -233,7 +235,7 @@ def transcode(
             pass
 
         if returncode != 0:
-            error_msg = stderr.strip() or f"exit code {returncode}"
+            error_msg = _summarize_error_stderr(stderr) or f"exit code {returncode}"
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
             _cleanup_temp(temp_dir)

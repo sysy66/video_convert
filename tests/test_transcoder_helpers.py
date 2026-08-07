@@ -235,3 +235,38 @@ class TestRmtreeRobust:
         (d / "f").write_text("x")
         with patch("shutil.rmtree", side_effect=[OSError("busy"), None]):
             assert transcoder._rmtree_robust(d) is True
+
+
+class TestSummarizeErrorStderr:
+    def test_drops_frame_progress_lines(self):
+        stderr = (
+            "ffmpeg version n8.1.2\n"
+            "frame=  101 fps=0.0 q=-0.0 size=       1KiB time=00:00:03.33\n"
+            "frame=  185 fps=185 q=-0.0 size=     251KiB\n"
+            "Error while decoding stream\n"
+        )
+        result = transcoder._summarize_error_stderr(stderr)
+        assert "frame=" not in result
+        assert "ffmpeg version n8.1.2" in result
+        assert "Error while decoding stream" in result
+
+    def test_keeps_short_output_unchanged(self):
+        stderr = "line one\nline two\n"
+        assert transcoder._summarize_error_stderr(stderr) == "line one\nline two"
+
+    def test_truncates_long_output_keeps_head_and_tail(self):
+        head = [f"head-{i}" for i in range(50)]
+        tail = [f"tail-{i}" for i in range(80)]
+        stderr = "\n".join(head + tail)
+        result = transcoder._summarize_error_stderr(stderr)
+        lines = result.splitlines()
+        assert len(lines) == 100
+        assert lines[0] == "head-0"
+        assert lines[-1] == "tail-79"
+        assert any("truncated" in line for line in lines)
+
+    def test_empty_stderr_returns_empty(self):
+        assert transcoder._summarize_error_stderr("") == ""
+
+    def test_whitespace_only_stderr_returns_empty(self):
+        assert transcoder._summarize_error_stderr("   \n  \n") == ""
