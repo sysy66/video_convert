@@ -17,8 +17,8 @@ sudo apt install intel-media-va-driver vainfo
 # 2. 安装 Jellyfin FFmpeg
 curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash
 # 新版仓库已把 jellyfin-ffmpeg 元包拆分为 jellyfin-ffmpeg7 / jellyfin-ffmpeg8（旧的包名不存在），
-# 两者安装路径相同（/usr/lib/jellyfin-ffmpeg/）；本机验证版本为 7.1.4，装 7 即可
-sudo apt install jellyfin-ffmpeg7
+# 两者安装路径相同（/usr/lib/jellyfin-ffmpeg/）；本机验证版本为 8.1.2，装 8 即可
+sudo apt install jellyfin-ffmpeg8
 ```
 
 **Verify:**
