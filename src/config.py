@@ -259,6 +259,11 @@ VMAF_REQUIRED = False
 VMAF_ASYNC = False
 VMAF_WORKERS = 1
 
+# 转换成功后保留源文件：True=不删除原文件，仅移入输出（常用于验证或临时批量转码）。
+# Keep the source file after a successful transcode: True=do not delete the original,
+# only place the output into the output directory (useful for verification or batches).
+KEEP_SOURCE = False
+
 # 质量接受规则阈值 / Quality acceptance thresholds
 # 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），按 failed 重试而非永久拒绝。
 # Extreme-low threshold: VMAF below this suggests an incomplete input/output; mark failed for retry.

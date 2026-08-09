@@ -149,6 +149,11 @@ def _apply_cli_overrides():
         help="Disable VMAF HW→SW fallback when HW path fails",
     )
     parser.add_argument(
+        "--keep-source",
+        action="store_true",
+        help="Keep the source file after a successful transcode",
+    )
+    parser.add_argument(
         "--vmaf-threads",
         type=int,
         metavar="N",
@@ -189,6 +194,8 @@ def _apply_cli_overrides():
         config.VMAF_HWACCEL = False
     if args.no_vmaf_hw_fallback:
         config.VMAF_HW_FALLBACK = False
+    if args.keep_source:
+        config.KEEP_SOURCE = True
     if args.vmaf_threads is not None:
         config.VMAF_N_THREADS = args.vmaf_threads
     if args.libraries:
@@ -278,6 +285,7 @@ def main_loop():
                 lib_info["input"],
                 lib_info.get("output"),
                 lib_info.get("cache"),
+                keep_source=config.KEEP_SOURCE,
             )
         except Exception:
             log.exception("UNHANDLED ERROR: %s", path)

@@ -130,7 +130,14 @@ def _final_dest_path(filepath, output_filename, input_dir, output_dir):
 
 
 def transcode(
-    filepath, history, ffmpeg_path, ffprobe_path, input_dir=None, output_dir=None, cache_dir=None
+    filepath,
+    history,
+    ffmpeg_path,
+    ffprobe_path,
+    input_dir=None,
+    output_dir=None,
+    cache_dir=None,
+    keep_source=False,
 ):
     """
     对单个视频文件执行转码的完整流程：
@@ -154,6 +161,8 @@ def transcode(
     :param output_dir: 输出目录，不设置则同源目录 (Output directory, defaults to source parent)
     :param cache_dir: 缓存（临时）目录，不设置则同源目录
                       (Cache/temp directory, defaults to source parent)
+    :param keep_source: True=成功后保留源文件，不删除
+                        (True=keep the source file after success, do not delete it)
     :return: True 表示成功 (True on success), False 表示失败 (False on failure)
     """
     filepath = Path(filepath)
@@ -346,7 +355,17 @@ def transcode(
                 return False
             history.mark_pending_vmaf(str(filepath), str(final_path))
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put((str(filepath), str(final_path), ratio, safe_stem, history, elapsed))
+            vmaf_tasks.put(
+                (
+                    str(filepath),
+                    str(final_path),
+                    ratio,
+                    safe_stem,
+                    history,
+                    elapsed,
+                    keep_source,
+                )
+            )
             log.info(
                 "VMAF PENDING (async): %s (%s, ratio %.1f%%, codec %.1fs, queued for scoring)",
                 final_path.name,
@@ -424,7 +443,8 @@ def transcode(
                 shutil.copyfile(str(output_path), str(final_path))
                 output_path.unlink()
                 _cleanup_temp(temp_dir)
-                filepath.unlink()
+                if not keep_source:
+                    filepath.unlink()
             except OSError as e:
                 log.error(
                     "FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",

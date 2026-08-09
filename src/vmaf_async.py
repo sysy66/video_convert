@@ -38,9 +38,11 @@ def _handle_vmaf_task(task):
     Handle one async VMAF scoring task: score the output, then decide its fate
     based on vmaf_verdict's verdict (retry/accept/reject) and update history.
     """
-    # 兼容缺少 codec_elapsed 的短任务元组，缺失时补 None。
-    # Tolerate short task tuples that omit codec_elapsed (padded with None).
-    source, output, ratio, safe_stem, history, codec_elapsed = (task + (None,))[:6]
+    # 兼容缺少 codec_elapsed/keep_source 的短任务元组，缺失时补 None。
+    # Tolerate short task tuples that omit codec_elapsed/keep_source (padded with None).
+    source, output, ratio, safe_stem, history, codec_elapsed, keep_source = (
+        task + (None, None)
+    )[:7]
     source = Path(source)
     output = Path(output)
 
@@ -89,7 +91,8 @@ def _handle_vmaf_task(task):
             history.mark_failed(str(source), "VMAF accept failed: output missing")
             return
         try:
-            source.unlink()
+            if not keep_source:
+                source.unlink()
         except OSError as e:
             log.error("VMAF ACCEPT CLEANUP FAILED: %s — %s", source.name, e)
             history.mark_failed(str(source), f"VMAF accept cleanup failed: {e}")
@@ -209,7 +212,7 @@ def recover_pending_vmaf(history):
             ratio = Path(output_path).stat().st_size / Path(filepath).stat().st_size
         except OSError:
             ratio = 0
-        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history, None))
+        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history, None, config.KEEP_SOURCE))
         count += 1
     if count:
         log.info("Recovered %d pending VMAF task(s)", count)
