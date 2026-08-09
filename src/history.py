@@ -1,3 +1,12 @@
+"""
+历史记录模块。使用 SQLite 持久化每个文件的转码状态（started/success/rejected/
+failed 等），线程安全，供扫描、转码与主循环使用。
+
+History tracking module. Persists each file's transcode status (started/success/
+rejected/failed, etc.) in SQLite, is thread-safe, and is used by the scanner,
+transcoder and main loop.
+"""
+
 import os
 import sqlite3
 import threading
@@ -44,9 +53,10 @@ class History:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute(
                 """
+                -- status 取值：started|pending_vmaf|success|rejected|failed|not required
                 CREATE TABLE IF NOT EXISTS files (
                     filepath     TEXT PRIMARY KEY,   -- 文件绝对路径 / absolute file path
-                    status       TEXT NOT NULL,      -- started|success|rejected|failed|not required
+                    status       TEXT NOT NULL,
                     started_at   REAL,
                     completed_at REAL,
                     output_path  TEXT,
@@ -143,7 +153,11 @@ class History:
             yield row["filepath"]
 
     def delete(self, filepath):
-        """删除该文件的记录（源文件已不存在的孤儿记录）。"""
+        """
+        删除该文件的记录（用于源文件已不存在的孤儿记录清理）。
+        Delete the record for a file (used when cleaning up orphan records whose
+        source file no longer exists).
+        """
         with self._lock:
             self._conn.execute("DELETE FROM files WHERE filepath=?", (filepath,))
 

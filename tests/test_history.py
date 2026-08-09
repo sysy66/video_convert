@@ -1,3 +1,8 @@
+"""history 模块单元测试：SQLite 历史状态记录与查询。
+
+Unit tests for the history module: SQLite state tracking and queries.
+"""
+
 import sqlite3
 
 import pytest

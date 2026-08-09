@@ -1,3 +1,8 @@
+"""transcoder 模块单元测试：转码流程、参数构建与错误处理。
+
+Unit tests for the transcoder module: transcode flow, argument building and errors.
+"""
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -33,7 +38,18 @@ _VIDEO_ONLY = {
 
 
 class TestBuildFfmpegCmd:
+    """测试 _build_ffmpeg_cmd（自 ffmpeg_runner 重导出）：构建 QSV 转码命令行。
+
+    Unit tests for _build_ffmpeg_cmd (re-exported from ffmpeg_runner): the
+    QSV transcode command-line construction.
+    """
+
     def test_uses_provided_paths(self):
+        """使用调用方传入的 ffmpeg/ffprobe/输入/输出路径，并返回探测到的时长。
+
+        Uses the caller-provided ffmpeg/ffprobe/input/output paths and returns
+        the probed duration.
+        """
         with patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC):
             cmd, duration = _build_ffmpeg_cmd("/my/ffmpeg", "/ffprobe", "/in.mp4", "/out.mkv")
         assert cmd[0] == "/my/ffmpeg"

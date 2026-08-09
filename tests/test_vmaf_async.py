@@ -1,3 +1,10 @@
+"""src.transcoder 异步 VMAF 管线单元测试：任务入队、worker 启停、任务处理、
+重启恢复与 pending_vmaf 过滤。
+
+Unit tests for the async VMAF pipeline in src.transcoder: task queueing,
+worker start/drain, task handling, restart recovery and pending_vmaf filtering.
+"""
+
 import queue
 from pathlib import Path
 from unittest.mock import MagicMock, patch

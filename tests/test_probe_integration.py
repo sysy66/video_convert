@@ -1,4 +1,7 @@
-"""Task 14: ffprobe 集成测试 — 对真实合成视频调用 probe 函数（需要 --run-slow）"""
+"""ffprobe 集成测试：对真实合成视频调用 probe 函数（需 --run-slow）。
+
+Integration tests for ffprobe: call probe functions on real synthetic videos (requires --run-slow).
+"""
 
 from pathlib import Path
 

@@ -63,13 +63,14 @@ def _align_fps_string(original_path, ffprobe_path):
     """
     VFR 源被转码规整为 CFR 后，产物与源帧序会产生累计漂移，导致 libvmaf
     逐帧对比错位、分数虚低。开启 VMAF_ALIGN_FPS 时给两个输入都加 fps 滤镜
-    归一到同一时间网格，消除系统性打分误差（实测 63.19 -> 94.83）。
-    目标帧率优先从源视频实际帧率自动推导（hd video probe fallback），避免
-    硬编码与源不匹配时造成额外重采样；推导失败才退回 VMAF_ALIGN_FPS_RATE。
+    归一到同一时间网格，消除系统性打分误差。目标帧率优先从源视频实际帧率
+    自动推导（get_video_frame_rate），推导失败才退回配置的 VMAF_ALIGN_FPS_RATE；
+    VMAF_ALIGN_FPS 关闭时返回空串。
 
-    Build the fps filter string for frame-rate alignment. Derives the target
-    rate from the source video for true generality, falling back to the
-    configured VMAF_ALIGN_FPS_RATE only when probing fails.
+    Build the fps filter string (e.g. "fps=30000/1001") for frame-rate alignment,
+    or "" when VMAF_ALIGN_FPS is disabled. The target rate is derived from the
+    source frame rate, falling back to the configured VMAF_ALIGN_FPS_RATE only
+    when probing fails.
     """
     if not config.VMAF_ALIGN_FPS:
         return ""
@@ -193,15 +194,19 @@ def _run_vmaf(
 def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None):
     """
     计算转码前后视频的 VMAF 分数。
-    使用显式 VMAF 模型、scale2ref 分辨率对齐，避免参考/失真分辨率不匹配导致分数虚低。
-    json 日志总是落盘：未传 log_path 时自动写入 VMAF_LOG_DIR（供事后审计与取分）。
+    使用 scale2ref 进行分辨率对齐，避免参考/失真分辨率不匹配导致分数虚低；
+    配置了 VMAF_MODEL_PATH 时附加以显式 VMAF 模型打分。
+    json 日志尽量落盘：未传 log_path 时自动写入 VMAF_LOG_DIR（供事后审计与取分）；
+    日志目录不可写时跳过落盘（仅警告）。
     VMAF_HWACCEL=True 时优先使用 QSV 硬解加速；失败后按 VMAF_HW_FALLBACK 决定是否回退到软解。
 
     Compute the VMAF score between original and transcoded video.
-    Uses an explicit VMAF model and scale2ref resolution alignment to avoid
-    mismatched-resolution comparisons that spuriously deflate the score.
-    A json log is always written: when log_path is omitted it defaults into
-    VMAF_LOG_DIR (for auditing and scoring).
+    Uses scale2ref for resolution alignment to avoid mismatched-resolution
+    comparisons that spuriously deflate the score; an explicit VMAF model is
+    used when VMAF_MODEL_PATH is configured.
+    A json log is written when possible: when log_path is omitted it defaults
+    into VMAF_LOG_DIR (for auditing and scoring); it is skipped with a warning
+    if the log directory is not writable.
     When VMAF_HWACCEL is enabled, tries QSV hardware decode first; falls back
     to software decode on failure based on VMAF_HW_FALLBACK.
 
@@ -245,8 +250,8 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
 
 def cleanup_vmaf_logs():
     """
-    删除 data/vmaf_logs/ 中超过 VMAF_LOG_RETENTION_DAYS 天的 json 日志。
-    Delete VMAF json logs older than VMAF_LOG_RETENTION_DAYS from data/vmaf_logs/.
+    删除 VMAF_LOG_DIR 中超过 VMAF_LOG_RETENTION_DAYS 天的 json 日志。
+    Delete VMAF json logs older than VMAF_LOG_RETENTION_DAYS from VMAF_LOG_DIR.
 
     :return: 删除的文件数量 (Number of deleted files)
     """

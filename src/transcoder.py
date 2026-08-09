@@ -1,3 +1,12 @@
+"""
+转码模块。实现单个视频文件的完整转码流程：构建 FFmpeg 命令、执行并实时
+记录进度、成功时替换源文件，失败时清理并标记历史状态。
+
+Transcoding module. Implements the full transcode workflow for a single video:
+build the FFmpeg command, run it with live progress logging, replace the source
+on success, and clean up / mark history on failure.
+"""
+
 import re
 import shutil
 import subprocess
@@ -97,7 +106,11 @@ __all__ = [
 
 
 def _final_dest_path(filepath, output_filename, input_dir, output_dir):
-    """计算输出区目标路径（保持相对目录结构，重名自动编号）。"""
+    """
+    计算输出区目标路径：按需保持 input_dir 下的相对目录结构，目标重名时自动编号。
+    Compute the destination path in the output area: mirror the relative structure
+    under input_dir when applicable, and auto-number if the name collides.
+    """
     if output_dir:
         output_dir = Path(output_dir)
         if input_dir:
@@ -136,6 +149,8 @@ def transcode(
     :param history: 历史记录对象 (History tracking object)
     :param ffmpeg_path: FFmpeg 可执行文件路径 (Path to the FFmpeg executable)
     :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :param input_dir: 源目录，用于在输出目录中保持相对目录结构
+                      (Source directory, used to mirror the relative structure under output_dir)
     :param output_dir: 输出目录，不设置则同源目录 (Output directory, defaults to source parent)
     :param cache_dir: 缓存（临时）目录，不设置则同源目录
                       (Cache/temp directory, defaults to source parent)

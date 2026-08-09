@@ -1,3 +1,12 @@
+"""
+探测模块。封装 ffprobe 调用，获取视频的编码、像素格式、帧率、帧间隔等元数据，
+并对帧率进行归一化/投票以处理 VFR 源。
+
+Probing module. Wraps ffprobe to obtain video metadata (codec, pixel format,
+frame rate, frame intervals, etc.) and normalizes/votes the frame rate to handle
+VFR sources.
+"""
+
 import json
 import subprocess
 from collections import Counter
@@ -32,6 +41,14 @@ _PTS_MIN_INTERVALS = 30
 
 
 def get_video_codec(filepath, ffprobe_path):
+    """探测视频流的编码名称（如 h264/hevc/av1）。
+
+    Probe the codec name of the video stream (e.g. h264/hevc/av1).
+
+    :param filepath: 视频文件路径 (Path to the video file)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :return: 小写的编码名，失败时返回 None (Lowercase codec name, or None on failure)
+    """
     if not ffprobe_path:
         log.error("FFPROBE_PATH not configured")
         return None
@@ -66,6 +83,14 @@ def get_video_codec(filepath, ffprobe_path):
 
 
 def get_video_pix_fmt(filepath, ffprobe_path):
+    """探测视频流的像素格式（如 yuv420p / yuv420p10le）。
+
+    Probe the pixel format of the video stream (e.g. yuv420p / yuv420p10le).
+
+    :param filepath: 视频文件路径 (Path to the video file)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :return: 像素格式字符串，失败时返回 None (Pixel format string, or None on failure)
+    """
     if not ffprobe_path:
         log.error("FFPROBE_PATH not configured")
         return None
@@ -100,9 +125,20 @@ def get_video_pix_fmt(filepath, ffprobe_path):
 
 def _probe_pts_intervals(filepath, ffprobe_path):
     """
-    抽样读取 v:0 流的帧时间戳（前/中/尾各 5 秒），返回帧间隔列表（微秒）。
-    分段抽样覆盖帧率中途切换的源；段间的大间隔会被过滤掉。
-    抽样失败或有效间隔不足时返回 None。
+    抽样读取 v:0 流的帧时间戳（前/中/尾各取 _PTS_SAMPLE_SECONDS 秒），
+    返回相邻帧的时间间隔列表（微秒）。分段抽样覆盖帧率中途切换的源；
+    无效间隔（≤0 或 >1 秒，含段间空隙）会被过滤，有效间隔不足则返回 None。
+
+    Sample frame PTS of stream v:0 (at the beginning/middle/end, each for
+    _PTS_SAMPLE_SECONDS seconds) and return the list of inter-frame intervals in
+    microseconds. Segmented sampling covers sources that change rate mid-stream;
+    invalid intervals (<=0 or >1s, including inter-segment gaps) are dropped, and
+    None is returned if too few valid intervals remain.
+
+    :param filepath: 视频文件路径 (Path to the video file)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :return: 帧间隔微秒列表；探测失败或有效间隔不足时返回 None
+             (List of inter-frame intervals in us, or None on failure)
     """
     intervals = ",".join(f"{p}+{_PTS_SAMPLE_SECONDS}" for p in _PTS_SAMPLE_FRACTIONS)
     cmd = [
@@ -166,6 +202,15 @@ def _vote_common_rate(diffs_us):
     33317/33333/33350us），逐桶取众数占比可能虚低；加权投票按"接近度"
     聚合，天然免疫拆桶，且接近 29.97 与 30 之间的间隔（33350us 这类中点）
     不会因平局误判。返回 (帧率分数, 得分占比)，占比不足返回 None。
+
+    Weighed vote over the common frame-rate table: each interval adds score to
+    table entries within 0.5% deviation, weighted by 1 - dev/tolerance (closer
+    scores higher). Timestamp quantization splits one nominal rate into several
+    close intervals (e.g. 33317/33333/33350us on a 90kHz tick), so a per-bucket
+    mode would under-report share; the weighted vote aggregates by proximity and
+    is robust to such splitting, and midpoints like 33350us between 29.97 and 30
+    are not misjudged by a tie. Returns (rate_fraction, score share); None if the
+    top share is too low.
     """
     votes = Counter()
     for d in diffs_us:
@@ -190,6 +235,16 @@ def _normalize_common_rate(fps_str):
     把与常见帧率表最接近且偏差 ≤0.05% 的帧率归一化为表值
     （如 "73743750/2460583"≈29.97 → "30000/1001"），其余原样返回。
     容差 0.05% 小于 30 与 29.97 的间距（0.1%），不会互相污染。
+
+    Normalize a frame-rate string to the nearest common table value when the
+    relative deviation is <=0.05% (e.g. "73743750/2460583"≈29.97 →
+    "30000/1001"), otherwise return the original string unchanged. The 0.05%
+    tolerance is smaller than the 0.1% gap between 30 and 29.97, so the two
+    never contaminate each other.
+
+    :param fps_str: ffprobe 返回的帧率字符串 (Frame-rate string from ffprobe)
+    :return: 归一化后的常见帧率分数，或原字符串
+             (Normalized common fraction, or the original string)
     """
     f = fps_fraction_to_float(fps_str)
     if f is None:
@@ -208,12 +263,13 @@ def get_video_frame_rate(filepath, ffprobe_path):
     """
     探测视频流帧率，返回 ffmpeg fps 滤镜可直接使用的分数形式，如 "30000/1001"。
     元数据 avg_frame_rate 与 r_frame_rate 一致时直接信任 avg_frame_rate；
-    不一致或缺失（疑似 VFR）时抽样帧时间戳、按间隔众数求真实内容帧率，
+    不一致或缺失（疑似 VFR）时抽样帧时间戳、对常见帧率表加权投票求真实内容帧率，
     探测失败再回退 avg_frame_rate，最后回退 r_frame_rate。
     Probe the frame rate of v:0, returning a fraction usable by the fps filter
     (e.g. "30000/1001"). Trusts avg_frame_rate when it agrees with
-    r_frame_rate; for suspected VFR sources samples frame PTS and uses the
-    interval mode, falling back to the metadata rates if probing fails.
+    r_frame_rate; for suspected VFR sources samples frame PTS and uses a weighted
+    vote over the common frame-rate table, falling back to the metadata rates if
+    probing fails.
     """
     if not ffprobe_path:
         log.error("FFPROBE_PATH not configured")
@@ -319,6 +375,16 @@ def fps_fraction_to_float(fps_str):
 
 
 def get_streams_info(filepath, ffprobe_path):
+    """探测文件所有流与容器格式信息，返回 {streams, duration} 结构（duration 可能为 None）。
+
+    Probe all streams and the container format, returning a {streams, duration}
+    structure (duration may be None).
+
+    :param filepath: 视频文件路径 (Path to the video file)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :return: 含 streams 列表与 duration 时长的字典，失败时返回 None
+             (Dict with streams list and duration, or None on failure)
+    """
     if not ffprobe_path:
         log.error("FFPROBE_PATH not configured")
         return None

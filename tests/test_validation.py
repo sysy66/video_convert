@@ -1,3 +1,8 @@
+"""validation 模块单元测试：配置与路径校验。
+
+Unit tests for the validation module: config and path validation.
+"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest

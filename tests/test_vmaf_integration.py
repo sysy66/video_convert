@@ -1,4 +1,8 @@
-"""Task 17: VMAF 集成测试 — 真实 libvmaf 计算（需要 --run-slow 且存在带 libvmaf 的 ffmpeg）"""
+"""VMAF 集成测试：真实 libvmaf 计算（需 --run-slow 且存在带 libvmaf 的 ffmpeg）。
+
+VMAF integration tests: real libvmaf computation (requires --run-slow and an
+ffmpeg built with libvmaf).
+"""
 
 import json
 from pathlib import Path

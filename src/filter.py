@@ -1,3 +1,12 @@
+"""
+过滤模块。决定一个文件是否应该提交（should_submit）或进一步处理
+（should_process），结合历史状态、文件稳定性与编码类型进行过滤。
+
+Filtering module. Decides whether a file should be submitted (should_submit) or
+further processed (should_process), based on history state, file stability and
+video codec.
+"""
+
 import time
 from pathlib import Path
 
@@ -72,6 +81,17 @@ def should_submit(filepath, history):
 
 
 def should_process(filepath, history, skip_codecs, ffprobe_path):
+    """判断文件是否应进入转码队列：历史允许、文件存在且编码不在跳过列表中。
+
+    Decide whether a file should enter the transcode queue: history permits it,
+    the file exists, and its codec is not in the skip list.
+
+    :param filepath: 源文件路径 (Path to the source file)
+    :param history: 历史记录对象 (History tracking object)
+    :param skip_codecs: 需要跳过的编码集合 (Set of codecs to skip)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :return: True 表示应处理，否则 False (True if it should be processed)
+    """
     if not _history_allows(filepath, history):
         return False
 

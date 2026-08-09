@@ -1,3 +1,10 @@
+"""共享 pytest 设施：注册 CLI 选项与 slow 测试跳过钩子，并提供临时目录、
+假视频、ffmpeg/ffprobe、QSV 与 VMAF 可用性夹具。
+
+Shared pytest facilities: CLI option registration, slow-test skip hook, and
+fixtures for temp dirs, fake videos, ffmpeg/ffprobe, QSV and VMAF availability.
+"""
+
 import os
 import shutil
 import subprocess
@@ -9,6 +16,10 @@ from src.history import History
 
 
 def pytest_addoption(parser):
+    """注册 --run-slow 命令行选项，用于启用标记为 slow 的集成测试。
+
+    Register the --run-slow CLI option that enables slow-marked integration tests.
+    """
     parser.addoption(
         "--run-slow",
         action="store_true",
@@ -18,6 +29,10 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
+    """未指定 --run-slow 时，给所有带 slow 关键字的测试打上 skip 标记。
+
+    Mark every slow-keyworded test to skip unless --run-slow is given.
+    """
     if config.getoption("--run-slow"):
         return
     skip_slow = pytest.mark.skip(reason="slow 集成测试，需要 --run-slow 启用")
@@ -28,6 +43,10 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(scope="session")
 def ffmpeg_bin():
+    """PATH 中的通用 ffmpeg 路径；未找到时跳过集成测试。
+
+    A plain ffmpeg located on PATH; skips integration tests if absent.
+    """
     path = shutil.which("ffmpeg")
     if not path:
         pytest.skip("ffmpeg 不在 PATH 中，跳过集成测试")
@@ -36,6 +55,10 @@ def ffmpeg_bin():
 
 @pytest.fixture(scope="session")
 def ffprobe_bin():
+    """PATH 中的通用 ffprobe 路径；未找到时跳过集成测试。
+
+    A plain ffprobe located on PATH; skips integration tests if absent.
+    """
     path = shutil.which("ffprobe")
     if not path:
         pytest.skip("ffprobe 不在 PATH 中，跳过集成测试")
@@ -44,6 +67,10 @@ def ffprobe_bin():
 
 @pytest.fixture(scope="session")
 def transcode_ffmpeg():
+    """由 config.FFMPEG_PATH 指定的转码 ffmpeg；不存在时跳过。
+
+    The transcode ffmpeg from config.FFMPEG_PATH; skips if it does not exist.
+    """
     path = config.FFMPEG_PATH
     if not os.path.exists(path):
         pytest.skip(f"转码 ffmpeg 不存在: {path}（config.FFMPEG_PATH）")
@@ -52,6 +79,10 @@ def transcode_ffmpeg():
 
 @pytest.fixture(scope="session")
 def transcode_ffprobe():
+    """由 config.FFPROBE_PATH 指定的转码 ffprobe；不存在时跳过。
+
+    The transcode ffprobe from config.FFPROBE_PATH; skips if it does not exist.
+    """
     path = config.FFPROBE_PATH
     if not os.path.exists(path):
         pytest.skip(f"转码 ffprobe 不存在: {path}（config.FFPROBE_PATH）")
@@ -113,6 +144,11 @@ def vmaf_ffmpeg():
 
 @pytest.fixture
 def make_history(tmp_path):
+    """工厂夹具：在 tmp_path 下新建一个 History（默认文件名 history.db）。
+
+    Factory fixture: create a new History under tmp_path (default name history.db).
+    """
+
     def _make_history(name="history.db"):
         return History(str(tmp_path / name))
 
@@ -121,6 +157,11 @@ def make_history(tmp_path):
 
 @pytest.fixture
 def make_video_file(tmp_path):
+    """工厂夹具：在 tmp_path 下写一个假视频文件并返回其路径。
+
+    Factory fixture: write a fake video file under tmp_path and return its path.
+    """
+
     def _make_video_file(name="test.mp4"):
         f = tmp_path / name
         f.write_text("fake video content")
@@ -131,6 +172,12 @@ def make_video_file(tmp_path):
 
 @pytest.fixture
 def make_video_tree(tmp_path):
+    """工厂夹具：按 {相对路径: 编解码器} 结构在 tmp_path 下建目录树。
+
+    Factory fixture: build a directory tree under tmp_path from a
+    {relative path: codec} structure.
+    """
+
     def _make_video_tree(structure):
         for path, codec in structure.items():
             p = tmp_path / path

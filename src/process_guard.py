@@ -1,3 +1,12 @@
+"""
+进程守卫模块。注册/注销活跃的 ffmpeg 子进程 PID，支持优雅关闭时终止全部
+活跃 ffmpeg，并把上次启动残留的 started 状态标记为 failed。
+
+Process guard module. Registers/unregisters active ffmpeg child PIDs, kills all
+active ffmpeg processes on graceful shutdown, and marks leftover started states
+from a previous run as failed.
+"""
+
 import os
 import signal
 import threading

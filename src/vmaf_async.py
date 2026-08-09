@@ -1,3 +1,12 @@
+"""
+异步 VMAF 打分模块。转码成功后不阻塞转码线程，而是把打分任务交给后台
+工作线程执行，由结果决定产物的去留（ACCEPT/REJECT）。
+
+Async VMAF scoring module. After a successful transcode the scoring task is
+delegated to a background worker thread instead of blocking the transcode
+thread; its result decides whether to keep or reject the output.
+"""
+
 import queue
 import re
 import threading
@@ -22,8 +31,15 @@ _vmaf_workers_started = False
 
 
 def _handle_vmaf_task(task):
-    """处理单个异步 VMAF 打分任务：打分后按 should_accept 决策文件去留并标记历史。"""
-    # 兼容 5 元组（recover_pending_vmaf 恢复路径 codec_elapsed 未知，传 None）
+    """
+    处理单个异步 VMAF 打分任务：打分后按 vmaf_verdict 返回的 verdict
+    （retry/accept/reject）决策产物去留，并更新历史记录。
+
+    Handle one async VMAF scoring task: score the output, then decide its fate
+    based on vmaf_verdict's verdict (retry/accept/reject) and update history.
+    """
+    # 兼容缺少 codec_elapsed 的短任务元组，缺失时补 None。
+    # Tolerate short task tuples that omit codec_elapsed (padded with None).
     source, output, ratio, safe_stem, history, codec_elapsed = (task + (None,))[:6]
     source = Path(source)
     output = Path(output)
@@ -108,7 +124,12 @@ def _handle_vmaf_task(task):
 
 
 def _vmaf_worker():
-    """后台 VMAF 打分 worker 循环：消费队列直到收到停止哨兵。"""
+    """
+    后台 VMAF 打分 worker 循环：不断消费队列任务，直到收到停止哨兵。
+
+    Background VMAF scoring worker loop: consumes tasks from the queue until it
+    sees the stop sentinel.
+    """
     while True:
         task = vmaf_tasks.get()
         if task is _VMAF_STOP:
@@ -120,7 +141,12 @@ def _vmaf_worker():
 
 
 def start_vmaf_workers():
-    """启动后台 VMAF 打分 worker（幂等，重复调用不产生新线程）。"""
+    """
+    启动后台 VMAF 打分 worker（幂等：重复调用不会重复创建线程）。
+
+    Start the background VMAF scoring workers (idempotent: repeated calls do not
+    create additional threads).
+    """
     global _vmaf_workers_started
     with _vmaf_workers_lock:
         if _vmaf_workers_started:
@@ -134,7 +160,12 @@ def start_vmaf_workers():
 
 
 def drain_vmaf_tasks():
-    """优雅关闭：等待队列中所有打分任务完成并停止所有 worker 线程。"""
+    """
+    优雅关闭：向每个 worker 投递停止哨兵并等待其退出，从而完成队列中剩余任务。
+
+    Graceful shutdown: enqueue a stop sentinel for each worker and wait for them
+    to exit, letting queued tasks finish first.
+    """
     global _vmaf_workers_started
     with _vmaf_workers_lock:
         if not _vmaf_workers_started:
@@ -151,7 +182,13 @@ def drain_vmaf_tasks():
 
 
 def recover_pending_vmaf(history):
-    """启动恢复：将残留的 pending_vmaf 记录重新入队打分（kill -9 后的双份文件）。"""
+    """
+    启动恢复：把历史中残留的 pending_vmaf 记录重新入队异步打分，处理 kill -9
+    后遗留的双份（源与产物同时存在）情况。
+
+    Startup recovery: re-enqueue pending_vmaf records left in history for async
+    scoring, handling the duplicate-file case left behind by kill -9.
+    """
     count = 0
     for filepath, output_path in history.iter_pending_vmaf():
         if not Path(output_path).exists():

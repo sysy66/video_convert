@@ -1,3 +1,8 @@
+"""ai_analyze 模块单元测试：请求负载构造、HTTP 调用与结果抽取。
+
+Unit tests for the ai_analyze module: payload building, HTTP calls and extraction.
+"""
+
 import json
 import urllib.error
 from unittest.mock import MagicMock, patch

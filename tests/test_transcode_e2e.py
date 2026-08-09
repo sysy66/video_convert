@@ -1,4 +1,8 @@
-"""Task 15: transcode() 端到端集成测试 — 真实 QSV 硬件编码（需要 --run-slow 且本机有 QSV）"""
+"""transcode() 端到端集成测试：真实 QSV 硬件编码（需 --run-slow 且本机有 QSV）。
+
+End-to-end integration tests for transcode(): real QSV hardware encoding
+(requires --run-slow and local QSV).
+"""
 
 from pathlib import Path
 

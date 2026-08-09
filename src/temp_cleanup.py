@@ -1,3 +1,12 @@
+"""
+临时目录清理模块。清理中断/残留的转码临时工作目录，跳过仍在活跃使用的目录，
+并稳健处理删除失败（含只读文件与挂载点等情况）。
+
+Temp-directory cleanup module. Cleans up interrupted/stale transcode work dirs,
+skipping those still in active use, and robustly handles deletion failures
+(e.g., read-only files and mount points).
+"""
+
 import os
 import shutil
 import subprocess
@@ -13,7 +22,12 @@ _active_temp_dirs_lock = threading.Lock()
 
 
 def active_temp_dirs_snapshot():
-    """返回当前活跃临时目录的副本（供 cleanup 传入，避免持锁遍历）。"""
+    """
+    返回当前活跃临时目录集合的副本（供 cleanup 传入，避免持锁遍历）。
+
+    Return a snapshot (copy) of the currently active temp dirs, so the cleanup
+    pass can use it without holding the lock during traversal.
+    """
     with _active_temp_dirs_lock:
         return set(_active_temp_dirs)
 

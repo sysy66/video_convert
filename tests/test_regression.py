@@ -1,4 +1,7 @@
-"""Task 18: 回归测试 — 锁定 fixtures 哈希与重编码确定性（需要 --run-slow）"""
+"""回归测试：锁定 fixtures 哈希与重编码输出确定性（需 --run-slow）。
+
+Regression tests: lock fixture SHA256 hashes and deterministic re-encoding (requires --run-slow).
+"""
 
 import hashlib
 import subprocess

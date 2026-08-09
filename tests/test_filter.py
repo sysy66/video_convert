@@ -1,3 +1,8 @@
+"""filter 模块单元测试：文件提交与处理过滤逻辑。
+
+Unit tests for the filter module: file submission and processing filtering.
+"""
+
 import os
 import time
 from pathlib import Path

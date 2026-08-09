@@ -1,3 +1,12 @@
+"""
+全局配置模块。集中管理所有运行参数（路径、阈值、VMAF 选项、库映射等），
+并提供 libraries.conf 的加载/解析与模板生成。
+
+Global configuration module. Centralizes runtime parameters (paths, thresholds,
+VMAF options, library mappings, etc.) and handles loading/parsing of
+libraries.conf as well as template generation.
+"""
+
 import os
 
 # 多库支持：名称 → {input, output, cache} 映射。
@@ -30,6 +39,10 @@ LIBRARIES_CONF_TEMPLATE = """\
 def _normalize_libraries(raw):
     """把两种外部表示（纯字符串或 {input, output, cache} 字典）统一为完整字段。
     纯字符串表示 input=output=cache；字典缺失的字段默认与 input 相同。
+
+    Normalize both external representations (a plain string or an
+    {input, output, cache} dict) into a complete field set. A plain string means
+    input=output=cache; missing dict fields default to the input value.
     """
     normalized = {}
     for name, value in raw.items():
@@ -48,7 +61,11 @@ def _normalize_libraries(raw):
 
 
 def _parse_library_value(name, value):
-    """解析单条库定义的值部分，返回 str（仅输入）或 {input, output, cache} 字典。"""
+    """解析单条库定义的值部分，返回 str（仅输入）或 {input, output, cache} 字典。
+
+    Parse the value part of a single library entry, returning either a str (input
+    only) or an {input, output, cache} dict.
+    """
     parts = [p.strip() for p in value.split(",")]
     if len(parts) == 1:
         if not parts[0]:
@@ -62,7 +79,11 @@ def _parse_library_value(name, value):
 
 
 def load_libraries_from_conf(path=None):
-    """从配置文件读取库定义，返回原始（未规范化）字典；文件不存在时返回空字典。"""
+    """从配置文件读取库定义，返回原始（未规范化）字典；文件不存在时返回空字典。
+
+    Load library definitions from the config file, returning the raw (unnormalized)
+    dict; an empty dict is returned if the file does not exist.
+    """
     path = path or LIBRARIES_CONF_FILE
     raw = {}
     if not os.path.exists(path):
@@ -82,7 +103,11 @@ def load_libraries_from_conf(path=None):
 
 
 def ensure_libraries_conf(path=None):
-    """若配置文件不存在则生成带示例注释的模板，方便用户"开箱即用"。"""
+    """若配置文件不存在则生成带示例注释的模板，方便用户"开箱即用"。
+
+    Create a template with sample comments if the config file does not exist, so
+    users can get started out of the box.
+    """
     path = path or LIBRARIES_CONF_FILE
     if not os.path.exists(path):
         try:

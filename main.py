@@ -1,3 +1,11 @@
+"""
+程序入口模块。负责命令行参数解析、日志初始化、单实例锁、
+目录监控循环与转码任务调度，并管理优雅关闭流程。
+
+Main entry point. Handles CLI argument parsing, logging setup, single-instance
+locking, the directory-scan loop, transcode scheduling, and graceful shutdown.
+"""
+
 import argparse
 import fcntl
 import logging
@@ -35,6 +43,12 @@ def purge_orphan_records(history):
     success 记录的源缺失是 ACCEPT 删源后的正常状态（用于同名去重），永不清理；
     started/pending_vmaf 由转码线程/启动 recover 收尾。仅处理源文件已消失的
     rejected/failed/not required 记录——记录失去意义（无文件要重试或保护）。
+
+    Purge terminal records whose source file no longer exists. A missing source on a
+    success record is the normal post-ACCEPT state (used for same-name dedup) and is
+    never removed; started/pending_vmaf records are finalized by the transcode threads
+    or startup recovery. Only rejected/failed/not-required records whose source is gone
+    are removed, since they no longer serve a purpose (nothing to retry or protect).
     """
     for filepath in history.iter_final_states():
         if not os.path.exists(filepath):
@@ -43,12 +57,20 @@ def purge_orphan_records(history):
 
 
 def signal_handler(signum, frame):
+    """将全局运行标志置为 False，触发主循环优雅退出。
+
+    Set the global running flag to False to trigger a graceful shutdown of the main loop.
+    """
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
 
 
 def _setup_logging():
+    """初始化日志：同时输出到日志文件与终端。
+
+    Initialize logging to both the log file and the console.
+    """
     _log_dir = os.path.dirname(config.LOG_FILE)
     if _log_dir:
         os.makedirs(_log_dir, exist_ok=True)
@@ -61,6 +83,10 @@ def _setup_logging():
 
 
 def _apply_cli_overrides():
+    """解析命令行参数并用其覆盖配置中的对应项。
+
+    Parse CLI arguments and apply them as overrides to the runtime configuration.
+    """
     parser = argparse.ArgumentParser(description="Video Transcoder")
     parser.add_argument(
         "-L",
@@ -191,6 +217,16 @@ def _apply_cli_overrides():
 
 
 def main_loop():
+    """运行主监控循环：校验配置、启动异步 VMAF、扫描库目录并调度转码。
+
+    循环内定期清理临时目录/过期记录，遍历各库目录，把应处理的文件提交到
+    转码线程池。收到退出信号后优雅关闭并返回历史对象。
+
+    Run the main monitoring loop: validate config, start async VMAF, scan the
+    library directories and schedule transcodes. Cleans up temp dirs/stale records
+    each cycle, submits processable files to the transcode pool, then shuts down
+    gracefully on exit signal and returns the History object.
+    """
     global _running
 
     history = History(config.HISTORY_FILE)
@@ -310,6 +346,11 @@ def main_loop():
 
 
 def main():
+    """程序入口：应用 CLI 覆盖、初始化日志、获取单实例锁并进入主循环。
+
+    Entry point: apply CLI overrides, set up logging, acquire the single-instance
+    lock, then enter the main loop.
+    """
     _apply_cli_overrides()
     _setup_logging()
 

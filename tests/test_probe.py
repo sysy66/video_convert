@@ -1,3 +1,9 @@
+"""probe 模块单元测试：编码探测、流信息解析、帧率探测与归一化/投票、PTS 帧间隔分析。
+
+Unit tests for the probe module: codec probing, stream-info parsing, frame-rate
+probing/normalization/voting, and PTS interval analysis.
+"""
+
 import json
 import subprocess
 from unittest.mock import MagicMock, patch

@@ -1,3 +1,8 @@
+"""walker 模块单元测试：目录遍历与扩展名过滤。
+
+Unit tests for the walker module: directory walking and extension filtering.
+"""
+
 import pytest
 
 from src.walker import walk_directory

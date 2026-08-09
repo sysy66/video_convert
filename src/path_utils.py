@@ -1,3 +1,11 @@
+"""
+路径工具模块。提供路径唯一化（避免覆盖）、文件大小格式化与随机后缀生成等
+通用工具函数。
+
+Path utility module. Provides generic helpers for making paths unique (avoiding
+overwrites), formatting file sizes, and generating random suffixes.
+"""
+
 import random
 import string
 

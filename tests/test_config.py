@@ -1,3 +1,8 @@
+"""config 模块单元测试：库映射解析与 libraries.conf 加载。
+
+Unit tests for the config module: library mapping parsing and conf loading.
+"""
+
 import pytest
 
 from src.config import _normalize_libraries, load_libraries_from_conf

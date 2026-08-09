@@ -1,3 +1,10 @@
+"""quality 模块单元测试：VMAF 接受/拒绝判定、HW 像素格式映射、JSON 分数解析、
+日志清理、VMAF 运行与 compute_vmaf 包装。
+
+Unit tests for the quality module: accept/reject verdicts, HW pixel-format
+mapping, JSON score parsing, log cleanup, VMAF run and compute_vmaf wrapper.
+"""
+
 import json
 import time
 from unittest.mock import MagicMock, patch

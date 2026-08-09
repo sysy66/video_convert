@@ -1,3 +1,12 @@
+"""
+配置校验模块。启动前检查配置中的路径、可执行文件、目录权限等是否有效，
+返回错误与警告列表。
+
+Config validation module. Checks before startup whether configured paths,
+executables and directory permissions are valid, returning lists of errors and
+warnings.
+"""
+
 import os
 import shutil
 
@@ -7,6 +16,18 @@ log = __import__("logging").getLogger(__name__)
 
 
 def _check_path(label, path, must_exist=True, must_be_writable=False, must_be_executable=False):
+    """校验单个路径：存在性、可写性、可执行性，返回错误消息列表。
+
+    Validate a single path for existence, writability and executability,
+    returning a list of error messages.
+
+    :param label: 路径用途描述 (Description of the path)
+    :param path: 待校验的路径 (Path to validate)
+    :param must_exist: 是否必须存在 (Whether it must exist)
+    :param must_be_writable: 是否必须可写 (Whether it must be writable)
+    :param must_be_executable: 是否必须可执行 (Whether it must be executable)
+    :return: (errors, warnings) 元组 (A tuple of (errors, warnings))
+    """
     errors = []
     warnings = []
     if must_exist and not os.path.exists(path):
@@ -23,6 +44,14 @@ def _check_path(label, path, must_exist=True, must_be_writable=False, must_be_ex
 
 
 def validate_config():
+    """校验全部配置项：库路径、ffmpeg/ffprobe、VMAF 依赖、数据目录与磁盘空间。
+
+    Validate all configuration: library paths, ffmpeg/ffprobe, VMAF dependencies,
+    data directories and disk space.
+
+    :return: (errors, warnings) 元组，errors 非空时主程序将退出 (A (errors, warnings)
+             tuple; the program exits if errors is non-empty)
+    """
     errors = []
     warnings = []
 

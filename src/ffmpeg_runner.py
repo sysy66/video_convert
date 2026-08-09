@@ -1,3 +1,11 @@
+"""
+FFmpeg 执行模块。构建 FFmpeg 命令行、执行转码并实时解析进度（时长、fps），
+以及把失败的 stderr 归纳为简洁摘要。
+
+FFmpeg runner module. Builds the FFmpeg command line, runs the transcode while
+parsing live progress (time, fps), and summarizes failed stderr output.
+"""
+
 import re
 import subprocess
 import threading
@@ -67,6 +75,9 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
     if sw_decode_needed:
+        # 软件解码回退：置于 -i 之前，作为输入选项强制输入解码器（当前固定为 vc1）
+        # Software-decode fallback: placed before -i, forces the input decoder
+        # (currently hard-coded to vc1) as an input option
         cmd.extend(["-c:v", "vc1"])
 
     enc = config.ENCODER_PARAMS[config.VIDEO_ENCODER]
@@ -177,6 +188,13 @@ def _parse_progress_time(line):
 
 
 def _parse_progress_fps(line):
+    """从 FFmpeg 进度行解析实时 fps。
+
+    Parse the real-time fps value from an FFmpeg progress line.
+
+    :param line: FFmpeg 的一行进度输出 (A single FFmpeg progress output line)
+    :return: fps 数值，未匹配时返回 None (The fps value, or None if not matched)
+    """
     m = _FPS_RE.search(line)
     if m:
         return float(m.group(1))
@@ -186,11 +204,11 @@ def _parse_progress_fps(line):
 def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):
     """
     运行 FFmpeg 命令并实时解析进度信息。
-    在后台线程中读取 stderr，每当进度前进 >=1% 时记录日志（含 fps）。
+    在后台线程中读取 stderr，每当进度前进 >=1% 时记录日志（若该行可解析出 fps 则一并记录）。
 
     Run an FFmpeg command and parse progress information in real time.
-    A background thread reads stderr and logs fps every time
-    progress advances by >=1%.
+    A background thread reads stderr and logs a message every time
+    progress advances by >=1%, including the fps when it is parseable.
 
     :param cmd: FFmpeg 命令行参数列表 (FFmpeg command-line argument list)
     :param total_duration: 视频总时长（秒），用于计算百分比；为 None 时不计算

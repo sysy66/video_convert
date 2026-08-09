@@ -1,3 +1,8 @@
+"""transcoder 辅助函数单元测试：进度解析、路径处理与进程管理辅助。
+
+Unit tests for transcoder helper functions: progress parsing, path handling, process helpers.
+"""
+
 import signal
 from unittest.mock import MagicMock, patch
 
