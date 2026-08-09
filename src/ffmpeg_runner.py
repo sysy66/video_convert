@@ -47,10 +47,13 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     duration = info["duration"]
 
     sw_decode_needed = False
+    sw_decode_codec = None
     for s in streams:
         if s.get("codec_type") == "video":
-            if s.get("codec_name", "").lower() in config.SW_DECODE_FALLBACK_CODECS:
+            codec = s.get("codec_name", "").lower()
+            if codec in config.SW_DECODE_FALLBACK_CODECS:
                 sw_decode_needed = True
+                sw_decode_codec = codec
             break
 
     cmd = [
@@ -74,11 +77,12 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
-    if sw_decode_needed:
-        # 软件解码回退：置于 -i 之前，作为输入选项强制输入解码器（当前固定为 vc1）
+    if sw_decode_needed and sw_decode_codec:
+        # 软件解码回退：置于 -i 之前，作为输入选项强制输入解码器。
+        # 解码器名取自探测到的 codec_name（与 SW_DECODE_FALLBACK_CODECS 对应）。
         # Software-decode fallback: placed before -i, forces the input decoder
-        # (currently hard-coded to vc1) as an input option
-        cmd.extend(["-c:v", "vc1"])
+        # as an input option. The decoder name comes from the probed codec_name.
+        cmd.extend(["-c:v", sw_decode_codec])
 
     enc = config.ENCODER_PARAMS[config.VIDEO_ENCODER]
 

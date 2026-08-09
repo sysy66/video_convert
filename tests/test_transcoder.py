@@ -152,6 +152,41 @@ class TestBuildFfmpegCmd:
                 cmd, duration = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
         assert "0:t?" not in cmd
 
+    @pytest.mark.parametrize("codec", sorted(config.SW_DECODE_FALLBACK_CODECS))
+    def test_sw_decode_fallback_for_fallback_codecs(self, codec):
+        """SW_DECODE_FALLBACK_CODECS 内的编码应触发软解回退：
+        输出帧留在系统内存（hwaccel_output_format none）、在 -i 前加
+        -c:v <codec> 强制软解，并用软件 format 滤镜 + hwupload 上传。
+
+        A codec in SW_DECODE_FALLBACK_CODECS should trigger software-decode
+        fallback: keep frames in system memory, force the input decoder with
+        -c:v <codec> before -i, and upload via the software-format filter.
+        """
+        streams = {
+            "streams": [{"index": 0, "codec_type": "video", "codec_name": codec}],
+            "duration": 1.0,
+        }
+        with patch("src.ffmpeg_runner.get_streams_info", return_value=streams):
+            cmd, _ = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
+        assert "-hwaccel_output_format" in cmd
+        assert "none" in cmd
+        assert "-c:v" in cmd
+        assert codec in cmd
+        assert any(a.startswith("format=p010le,hwupload") for a in cmd)
+        assert "vpp_qsv" not in cmd
+
+    def test_sw_decode_not_triggered_for_other_codecs(self):
+        """不在 SW_DECODE_FALLBACK_CODECS 内的编码（如 h264）不应触发软解回退。"""
+        streams = {
+            "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264"}],
+            "duration": 1.0,
+        }
+        with patch("src.ffmpeg_runner.get_streams_info", return_value=streams):
+            cmd, _ = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
+        assert "h264" not in cmd
+        assert any(a.startswith("vpp_qsv") for a in cmd)
+        assert not any(a.startswith("format=p010le,hwupload") for a in cmd)
+
 
 class TestTranscode:
     def _fake_progress(self, cmd, total_duration, file_stem, **kwargs):
