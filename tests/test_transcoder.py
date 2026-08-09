@@ -153,21 +153,22 @@ class TestBuildFfmpegCmd:
         assert "0:t?" not in cmd
 
     @pytest.mark.parametrize("codec", sorted(config.SW_DECODE_FALLBACK_CODECS))
-    def test_sw_decode_fallback_for_fallback_codecs(self, codec):
-        """SW_DECODE_FALLBACK_CODECS 内的编码应触发软解回退：
-        输出帧留在系统内存（hwaccel_output_format none）、在 -i 前加
-        -c:v <codec> 强制软解，并用软件 format 滤镜 + hwupload 上传。
+    def test_sw_decode_fallback_forces_softdecode(self, codec):
+        """sw_decode_fallback=True 时应强制软解：帧留系统内存（
+        -hwaccel_output_format none）、在 -i 前加 -c:v <codec> 强制软解，
+        并用软件 format 滤镜 + hwupload 上传。
 
-        A codec in SW_DECODE_FALLBACK_CODECS should trigger software-decode
-        fallback: keep frames in system memory, force the input decoder with
-        -c:v <codec> before -i, and upload via the software-format filter.
+        With sw_decode_fallback=True the command should force software decode:
+        keep frames in system memory, force the input decoder with -c:v <codec>
+        before -i, and upload via the software-format filter.
         """
-        streams = {
-            "streams": [{"index": 0, "codec_type": "video", "codec_name": codec}],
-            "duration": 1.0,
-        }
-        with patch("src.ffmpeg_runner.get_streams_info", return_value=streams):
-            cmd, _ = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
+        with (
+            patch("src.ffmpeg_runner.get_video_codec", return_value=codec),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+        ):
+            cmd, _ = _build_ffmpeg_cmd(
+                "/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv", sw_decode_fallback=True
+            )
         assert "-hwaccel_output_format" in cmd
         assert "none" in cmd
         assert "-c:v" in cmd
@@ -175,17 +176,59 @@ class TestBuildFfmpegCmd:
         assert any(a.startswith("format=p010le,hwupload") for a in cmd)
         assert "vpp_qsv" not in cmd
 
-    def test_sw_decode_not_triggered_for_other_codecs(self):
-        """不在 SW_DECODE_FALLBACK_CODECS 内的编码（如 h264）不应触发软解回退。"""
-        streams = {
-            "streams": [{"index": 0, "codec_type": "video", "codec_name": "h264"}],
-            "duration": 1.0,
-        }
-        with patch("src.ffmpeg_runner.get_streams_info", return_value=streams):
+    def test_sw_decode_fallback_with_unknown_codec(self):
+        """sw_decode_fallback=True 但解码器探测失败（返回 None）时，
+        仍走软解路径（hwupload），但无法强制 -c:v 解码器。
+
+        With sw_decode_fallback=True but a failed codec probe (None), the
+        software-decode path (hwupload) is still taken, but no -c:v decoder
+        is forced.
+        """
+        with (
+            patch("src.ffmpeg_runner.get_video_codec", return_value=None),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+        ):
+            cmd, _ = _build_ffmpeg_cmd(
+                "/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv", sw_decode_fallback=True
+            )
+        assert "none" in cmd
+        assert any(a.startswith("format=p010le,hwupload") for a in cmd)
+        assert "vpp_qsv" not in cmd
+        i_idx = cmd.index("-i")
+        assert "-c:v" not in cmd[:i_idx]
+
+    def test_sw_decode_fallback_not_triggered_when_disabled(self):
+        """sw_decode_fallback 默认关闭时，即使探测到 fallback 编码（如 vc1）
+        也不应触发软解，走 vpp_qsv 路径。
+
+        With sw_decode_fallback off by default, a fallback codec (e.g. vc1)
+        should not trigger software decode; the vpp_qsv path is used.
+        """
+        with (
+            patch("src.ffmpeg_runner.get_video_codec", return_value="vc1"),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+        ):
             cmd, _ = _build_ffmpeg_cmd("/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv")
-        assert "h264" not in cmd
         assert any(a.startswith("vpp_qsv") for a in cmd)
         assert not any(a.startswith("format=p010le,hwupload") for a in cmd)
+        assert "vc1" not in cmd
+
+    def test_sw_scale_fallback_uses_hwupload(self):
+        """sw_scale_fallback=True 时应显式初始化 QSV 设备、帧留系统内存并用
+        software format + hwupload 上传，绕开 vpp_qsv 缩放滤镜。
+
+        With sw_scale_fallback=True the command should init the QSV device,
+        keep frames in system memory and upload via software format + hwupload,
+        bypassing the vpp_qsv scale filter.
+        """
+        with patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC):
+            cmd, _ = _build_ffmpeg_cmd(
+                "/ffmpeg", "/ffprobe", "/i.mp4", "/o.mkv", sw_scale_fallback=True
+            )
+        assert "none" in cmd
+        assert "-init_hw_device" in cmd
+        assert any(a.startswith("format=p010le,hwupload") for a in cmd)
+        assert "vpp_qsv" not in cmd
 
 
 class TestTranscode:
@@ -420,6 +463,93 @@ class TestTranscode:
         mock_vmaf.assert_not_called()
         history.mark_done.assert_called_once()
         assert history.mark_done.call_args[1]["rejected"] is False
+
+    def test_fallback_codec_forced_softdecode_first(self, tmp_path):
+        """源编码在 SW_DECODE_FALLBACK_CODECS 内时，首轮即应传
+        sw_decode_fallback=True（直接软解）。
+
+        A source codec in SW_DECODE_FALLBACK_CODECS should make the first run
+        use sw_decode_fallback=True (software decode from the start).
+        """
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_video_codec", return_value="vc1"),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch(
+                "src.transcoder._build_ffmpeg_cmd", return_value=(["/ffmpeg"], 1.0)
+            ) as mock_build,
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+        ):
+            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        _, kwargs = mock_build.call_args
+        assert kwargs.get("sw_decode_fallback") is True
+
+    def test_hardware_filter_failure_cascades_to_sw_decode(self, tmp_path):
+        """硬解 filter 类错误应先用 sw_scale_fallback=True 重试，仍失败后再
+        以 sw_decode_fallback=True 级联解码重试。
+
+        A filter reinit error under hardware decode should first retry with
+        sw_scale_fallback=True, then cascade to sw_decode_fallback=True if the
+        scale retry also fails.
+        """
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_video_codec", return_value="h264"),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch(
+                "src.transcoder._build_ffmpeg_cmd",
+                return_value=(["/ffmpeg"], 1.0),
+            ) as mock_build,
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress",
+                side_effect=[(1, "Error initializing filters"), (1, "still failing"), (1, "nope")],
+            ),
+        ):
+            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        build_flags = [
+            c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")
+            for c in mock_build.call_args_list
+        ]
+        assert build_flags == [False, True, True]
+
+    def test_non_filter_error_direct_sw_decode(self, tmp_path):
+        """硬解非 filter 类错误应直接以 sw_decode_fallback=True 软解重试，
+        不经过缩放重试。
+
+        A non-filter hardware error should retry directly with
+        sw_decode_fallback=True, skipping the scale retry.
+        """
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        with (
+            patch("src.transcoder.get_video_codec", return_value="h264"),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch(
+                "src.transcoder._build_ffmpeg_cmd",
+                return_value=(["/ffmpeg"], 1.0),
+            ) as mock_build,
+            patch(
+                "src.transcoder._run_ffmpeg_with_progress",
+                side_effect=[(1, "some encode error"), (1, "still failing")],
+            ),
+        ):
+            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        build_flags = [
+            c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")
+            for c in mock_build.call_args_list
+        ]
+        assert build_flags == [False, True]
 
 
 class TestCleanupTemp:

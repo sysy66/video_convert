@@ -6,7 +6,6 @@ Transcoding module. Implements the full transcode workflow for a single video:
 build the FFmpeg command, run it with live progress logging, replace the source
 on success, and clean up / mark history on failure.
 """
-
 import re
 import shutil
 import subprocess
@@ -22,6 +21,7 @@ from src.ffmpeg_runner import (
     _summarize_error_stderr,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
+from src.probe import get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
@@ -178,39 +178,15 @@ def transcode(
         _active_transcodes.add(str(filepath))
 
     try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        log.info(
-            "TRANSCODE: %s (%s) -> %s (temp: %s)",
-            filepath.name,
-            _format_size(input_size),
-            output_filename,
-            temp_dir.name,
-        )
-
-        cmd, total_duration = _build_ffmpeg_cmd(
-            ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=False
-        )
-        log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
-
-        returncode, stderr = _run_ffmpeg_with_progress(
-            cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
-        )
-
-        # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
-        try:
-            (temp_dir / ".ffmpeg.log.qsv").write_text(stderr, encoding="utf-8")
-        except OSError:
-            pass
-
         # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
-        sw_fallback_attempted = False
+        sw_scale_fallback_attempted = False
 
-        def _retry_sw_fallback():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_fallback_attempted
-            if sw_fallback_attempted:
+        def _retry_sw_scale():
+            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted
+            if sw_scale_fallback_attempted:
                 return
-            sw_fallback_attempted = True
-            log.warning("QSV SW FALLBACK: %s - re-trying with software scale", filepath.name)
+            sw_scale_fallback_attempted = True
+            log.warning("QSV SW SCALE FALLBACK: %s - re-trying with software scale", filepath.name)
             old_temp_dir = output_path.parent
             _cleanup_temp(temp_dir)
             suffix = _random_suffix()
@@ -224,10 +200,10 @@ def transcode(
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(
-                ffmpeg_path, ffprobe_path, filepath, output_path, sw_fallback=True
+                ffmpeg_path, ffprobe_path, filepath, output_path, sw_scale_fallback=True
             )
             log.info(
-                "FFMPEG CMD (sw fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
+                "FFMPEG CMD (sw scale fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
             )
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
@@ -237,11 +213,78 @@ def transcode(
             except OSError:
                 pass
 
-        # QSV filter reinit 失败则立即用软件缩放重试（新建临时目录避免冲突）
-        if returncode != 0 and (
-            "Error reinitializing filters" in stderr or "Error initializing filters" in stderr
-        ):
-            _retry_sw_fallback()
+        # 软件解码重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
+        sw_decode_fallback_attempted = False
+
+        def _retry_sw_decode():
+            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted
+            if sw_decode_fallback_attempted:
+                return
+            sw_decode_fallback_attempted = True
+            log.warning("QSV SW DECODE FALLBACK: %s - re-trying with software scale", filepath.name)
+            old_temp_dir = output_path.parent
+            _cleanup_temp(temp_dir)
+            suffix = _random_suffix()
+            if cache_dir:
+                temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
+            else:
+                temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+            with _active_temp_dirs_lock:
+                _active_temp_dirs.discard(str(old_temp_dir))
+                _active_temp_dirs.add(str(temp_dir))
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            output_path = temp_dir / output_filename
+            cmd, _ = _build_ffmpeg_cmd(
+                ffmpeg_path, ffprobe_path, filepath, output_path, sw_decode_fallback=True
+            )
+            log.info(
+                "FFMPEG CMD (sw decode fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
+            )
+            returncode, stderr = _run_ffmpeg_with_progress(
+                cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
+            )
+            try:
+                (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
+            except OSError:
+                pass
+
+        codec = get_video_codec(filepath, ffprobe_path)
+        if codec in config.SW_DECODE_FALLBACK_CODECS:
+            sw_decode_fallback_attempted = True
+
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        log.info(
+            "TRANSCODE: %s (%s) -> %s (temp: %s)",
+            filepath.name,
+            _format_size(input_size),
+            output_filename,
+            temp_dir.name,
+        )
+
+        cmd, total_duration = _build_ffmpeg_cmd(
+            ffmpeg_path, ffprobe_path, filepath, output_path, sw_decode_fallback=sw_decode_fallback_attempted
+        )
+        log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
+
+        returncode, stderr = _run_ffmpeg_with_progress(
+            cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
+        )
+
+        # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
+        try:
+            (temp_dir / ".ffmpeg.log.qsv").write_text(stderr, encoding="utf-8")
+        except OSError:
+            pass
+
+        if returncode != 0:
+            if sw_decode_fallback_attempted:
+                pass  # 首轮已软解，失败直接落到底部判失败
+            elif "Error reinitializing filters" in stderr or "Error initializing filters" in stderr:
+                _retry_sw_scale()
+                if returncode != 0:
+                    _retry_sw_decode()  # 缩放失败 → 级联解码
+            else:
+                _retry_sw_decode()  # 硬解其他错误 → 直接软解重试
 
         # 最终 stderr 写入 .ffmpeg.log
         try:

@@ -11,13 +11,13 @@ import subprocess
 import threading
 
 from src import config
-from src.probe import get_streams_info
+from src.probe import get_streams_info, get_video_codec
 from src.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
 
 log = __import__("logging").getLogger(__name__)
 
 
-def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fallback=False):
+def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_scale_fallback=False, sw_decode_fallback=False):
     """
     构建 FFmpeg 命令行参数列表。
     通过 ffprobe 探测输入文件流信息，动态选择视频/音频/字幕/附件流，
@@ -32,7 +32,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
     :param input_path: 输入视频文件路径 (Path to the input video file)
     :param output_path: 输出视频文件路径 (Path to the output video file)
-    :param sw_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
+    :param sw_scale_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
                         Whether to use software-scale fallback (bypass vpp_qsv filter
                         compatibility issues during hwaccel reconfiguration)
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
@@ -46,15 +46,9 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
     streams = info["streams"]
     duration = info["duration"]
 
-    sw_decode_needed = False
     sw_decode_codec = None
-    for s in streams:
-        if s.get("codec_type") == "video":
-            codec = s.get("codec_name", "").lower()
-            if codec in config.SW_DECODE_FALLBACK_CODECS:
-                sw_decode_needed = True
-                sw_decode_codec = codec
-            break
+    if sw_decode_fallback:
+        sw_decode_codec = get_video_codec(input_path, ffprobe_path)
 
     cmd = [
         # 基础参数 / Basic parameters
@@ -65,19 +59,19 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         "qsv",
     ]
 
-    if sw_fallback or sw_decode_needed:
+    if sw_scale_fallback or sw_decode_fallback:
         # 软件缩放回退：帧保持在系统内存，用软件 format 转换后 hwupload 上传
         # Software-scale fallback: keep frames in system memory, convert with
         # software format filter, then upload to QSV via hwupload
         cmd.extend(["-hwaccel_output_format", "none"])
-        # sw_fallback 时需要显式初始化 QSV 设备，为 hwupload 滤镜提供
+        # sw_scale_fallback 时需要显式初始化 QSV 设备，为 hwupload 滤镜提供
         # 设备上下文；否则 "Error initializing filters" 并非真实编码失败
-        if sw_fallback:
+        if sw_scale_fallback:
             cmd.extend(["-init_hw_device", "qsv=hw"])
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
-    if sw_decode_needed and sw_decode_codec:
+    if sw_decode_fallback and sw_decode_codec:
         # 软件解码回退：置于 -i 之前，作为输入选项强制输入解码器。
         # 解码器名取自探测到的 codec_name（与 SW_DECODE_FALLBACK_CODECS 对应）。
         # Software-decode fallback: placed before -i, forces the input decoder
@@ -135,7 +129,7 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_fal
         ]
     )
 
-    if sw_fallback or sw_decode_needed:
+    if sw_scale_fallback or sw_decode_fallback:
         cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
     else:
         cmd.extend(["-vf", "vpp_qsv=format=p010le"])
