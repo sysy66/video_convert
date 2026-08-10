@@ -250,3 +250,8 @@ class History:
                 "VALUES (?, 'failed', ?, ?, NULL, ?)",
                 (filepath, started_at, time.time(), str(error)),
             )
+
+    def iter_failed(self):
+        with self._lock:
+            rows = self._conn.execute("SELECT filepath FROM files WHERE status='failed'").fetchall()
+        return [r["filepath"] for r in rows]

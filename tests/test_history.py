@@ -96,6 +96,14 @@ class TestHistoryMarks:
         assert entry["status"] == "failed"
         assert entry["error"] == "some error"
 
+    def test_iter_failed_yields_paths(self, make_history):
+        h = make_history()
+        h.mark_failed("/a.mp4", "err")
+        h.mark_failed("/b.mp4", "err")
+        h.mark_started("/c.mp4")
+        h.mark_skipped("/d.mp4", "hevc")
+        assert h.iter_failed() == ["/a.mp4", "/b.mp4"]
+
     def test_mark_started_then_done_preserves_started_at(self, make_history):
         h = make_history()
         h.mark_started("/v.mp4")

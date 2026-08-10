@@ -88,7 +88,7 @@ def load_libraries_from_conf(path=None):
     raw = {}
     if not os.path.exists(path):
         return raw
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for lineno, line in enumerate(f, start=1):
             line = line.strip()
             if not line or line.startswith("#"):
@@ -269,3 +269,7 @@ VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
 ACCEPT_RATIO_MAX = 1.00  # VMAF ≥ VMAF_ACCEPT_HIGH 时允许的最大 ratio
 ACCEPT_RATIO_LOW = 0.75  # VMAF 在中间区间时允许的最大 ratio
+
+# 启动时重试历史失败的转码（--retry-failed）。
+# Retry previously failed transcodes at startup (--retry-failed).
+RETRY_FAILED = False

@@ -14,6 +14,7 @@ import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from src import config
 from src.filter import should_process, should_submit
@@ -159,6 +160,11 @@ def _apply_cli_overrides():
         metavar="N",
         help="libvmaf threads: 0=auto (default, leave 1 core for transcoding) | >0 explicit",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry failed transcodes entries",
+    )
 
     args = parser.parse_args()
 
@@ -198,6 +204,8 @@ def _apply_cli_overrides():
         config.KEEP_SOURCE = True
     if args.vmaf_threads is not None:
         config.VMAF_N_THREADS = args.vmaf_threads
+    if args.retry_failed:
+        config.RETRY_FAILED = True
     if args.libraries:
         raw = {}
         for lib_def in args.libraries:
@@ -271,11 +279,27 @@ def main_loop():
     executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
     _pending = set()
 
-    def process_one(path, lib_info):
+    def _find_lib_for(path):
+        """返回包含该文件路径的库配置，找不到返回 None。
+
+        Return the library config whose input dir contains `path`, or None.
+        """
+        path = Path(path)
+        for lib in config.LIBRARIES.values():
+            try:
+                path.relative_to(lib["input"])
+                return lib
+            except ValueError:
+                continue
+        return None
+
+    def process_one(path, lib_info, force=False):
         if not _running:
             return
         try:
-            if not should_process(path, history, config.SKIP_CODECS, config.FFPROBE_PATH):
+            if not force and not should_process(
+                path, history, config.SKIP_CODECS, config.FFPROBE_PATH
+            ):
                 return
             transcode(
                 path,
@@ -293,6 +317,16 @@ def main_loop():
             _pending.discard(str(path))
 
     try:
+        if config.RETRY_FAILED:
+            for filepath in history.iter_failed():
+                lib_info = _find_lib_for(filepath)
+                if lib_info is None:
+                    log.warning("RETRY FAILED: no library owns %s, skipping", filepath)
+                    continue
+                _pending.add(filepath)
+                executor.submit(process_one, Path(filepath), lib_info, force=True)
+                log.info("RETRY FAILED (queued): %s", filepath)
+
         while _running:
             for lib_info in config.LIBRARIES.values():
                 cleanup_stale_temp_dirs(
@@ -302,6 +336,7 @@ def main_loop():
                     cleanup_stale_temp_dirs(
                         lib_info["input"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
                     )
+
             mark_stale_started_as_failed(history)
             purge_orphan_records(history)
             cleanup_vmaf_logs()
