@@ -96,13 +96,6 @@ class TestHistoryMarks:
         assert entry["status"] == "failed"
         assert entry["error"] == "some error"
 
-    def test_mark_failed_increments_retry_count(self, make_history):
-        h = make_history()
-        h.mark_failed("/v.mp4", "err1")
-        assert h.get_entry("/v.mp4")["retry_count"] == 0
-        h.mark_failed("/v.mp4", "err2")
-        assert h.get_entry("/v.mp4")["retry_count"] == 1
-
     def test_mark_started_then_done_preserves_started_at(self, make_history):
         h = make_history()
         h.mark_started("/v.mp4")

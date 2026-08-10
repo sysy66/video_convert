@@ -136,9 +136,6 @@ SCAN_INTERVAL = 1200
 # 文件稳定窗口：mtime 距今超过该秒数才认为写入完成（防止残缺文件入队转码）。
 # File stability window: only submit files whose mtime is older than this (seconds).
 FILE_STABLE_WINDOW = 300
-FAILED_RETRY_BASE = 3600
-FAILED_RETRY_MAX = 259200
-FAILED_RETRY_MAX_RETRIES = 3
 MAX_WORKERS = 2
 CODEC_TIMEOUT = 18000
 

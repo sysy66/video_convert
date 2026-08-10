@@ -101,13 +101,11 @@ class History:
     def get_entry(self, filepath):
         """
         返回该文件的记录字典，不存在则返回 None。
-        关键：剔除值为 NULL 的列，忠实还原旧 JSON 的“缺键”语义——否则
-        scanner 中 `entry.get("retry_count", 0)` 会拿到 None 而非默认值并报错。
+        关键：剔除值为 NULL 的列，忠实还原旧 JSON 的“缺键”语义。
 
         Return the file's record as a dict, or None if absent.
         Important: NULL-valued columns are dropped so the dict matches the old
-        JSON's "missing key" semantics—otherwise scanner's
-        `entry.get("retry_count", 0)` would get None instead of the default.
+        JSON's "missing key" semantics.
         """
         with self._lock:
             row = self._conn.execute("SELECT * FROM files WHERE filepath=?", (filepath,)).fetchone()
@@ -217,13 +215,6 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def mark_exhausted(self, filepath):
-        with self._lock:
-            self._conn.execute(
-                "UPDATE files SET status='rejected', error='exhausted_retries' WHERE filepath=?",
-                (filepath,),
-            )
-
     def mark_pending_vmaf(self, filepath, output_path):
         with self._lock:
             row = self._conn.execute(
@@ -250,13 +241,12 @@ class History:
     def mark_failed(self, filepath, error):
         with self._lock:
             row = self._conn.execute(
-                "SELECT started_at, retry_count FROM files WHERE filepath=?", (filepath,)
+                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
             ).fetchone()
             started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
-            old_retry = row["retry_count"] if row and row["retry_count"] is not None else -1
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, error, retry_count) "
-                "VALUES (?, 'failed', ?, ?, NULL, ?, ?)",
-                (filepath, started_at, time.time(), str(error), old_retry + 1),
+                "(filepath, status, started_at, completed_at, output_path, error) "
+                "VALUES (?, 'failed', ?, ?, NULL, ?)",
+                (filepath, started_at, time.time(), str(error)),
             )

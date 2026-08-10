@@ -31,20 +31,8 @@ def _history_allows(filepath, history):
         if status in ("success", "rejected", "not required"):
             return False
 
-        if status in ("started", "pending_vmaf"):
+        if status in ("started", "pending_vmaf", "failed"):
             return False
-
-        if status == "failed":
-            retry_count = entry.get("retry_count", 0)
-            delay = min(config.FAILED_RETRY_BASE * (2**retry_count), config.FAILED_RETRY_MAX)
-            if retry_count >= config.FAILED_RETRY_MAX_RETRIES:
-                log.warning("GAVE UP (exhausted retries): %s", filepath)
-                history.mark_exhausted(str(filepath))
-                return False
-            completed = entry.get("completed_at", 0)
-            if time.time() - completed < delay:
-                log.debug("SKIP (cooldown %.1fh): %s", delay / 3600, filepath.name)
-                return False
 
     return True
 
