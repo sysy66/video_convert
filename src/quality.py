@@ -279,13 +279,13 @@ def vmaf_verdict(vmaf_score, ratio):
     """
     统一 sync/async 打分后决策。规则：
       - ratio > ACCEPT_RATIO_MAX → "reject"（超标必拒，两端一致）
-      - vmaf_score 为 None → "retry"（打分失败，记 failed 退避重试，不永久封锁）
-      - vmaf_score < VMAF_EXTREME_LOW → "retry"（极端低分视为输入/产物异常，同样重试）
+      - vmaf_score 为 None → "retry"（打分失败，记 failed 永久排除，仅 --retry-failed 重试）
+      - vmaf_score < VMAF_EXTREME_LOW → "retry"（极端低分视为输入/产物异常，同样处理）
       - 其余 → 按 should_accept 给出 "accept"/"reject"
 
     Unified post-scoring verdict for sync and async paths. Rules:
       - ratio > ACCEPT_RATIO_MAX → "reject" (must reject, same for both modes)
-      - vmaf_score is None → "retry" (scoring failed; mark failed for backoff retry)
+      - vmaf_score is None → "retry" (scoring failed; mark failed, retried only via --retry-failed)
       - vmaf_score < VMAF_EXTREME_LOW → "retry" (extreme low suggests incomplete input)
       - otherwise → should_accept decides "accept"/"reject"
 

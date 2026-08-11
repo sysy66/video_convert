@@ -262,8 +262,10 @@ VMAF_WORKERS = 1
 KEEP_SOURCE = False
 
 # 质量接受规则阈值 / Quality acceptance thresholds
-# 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），按 failed 重试而非永久拒绝。
-# Extreme-low threshold: VMAF below this suggests an incomplete input/output; mark failed for retry.
+# 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），记 failed
+# 永久排除，仅 --retry-failed 启动时手动重试。
+# Extreme-low threshold: VMAF below this suggests an incomplete input/output; mark
+# failed (permanently excluded, retried only via --retry-failed).
 VMAF_EXTREME_LOW = 60
 VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝

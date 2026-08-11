@@ -401,7 +401,7 @@ def transcode(
 
         # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
         # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
-        # 记 failed 触发退避重试，而不是永久 rejected 封锁该文件。
+        # 记 failed 永久排除，仅 --retry-failed 启动时手动重试。
         if config.VMAF_REQUIRED:
             verdict = vmaf_verdict(vmaf_score, ratio)
         else:
@@ -410,9 +410,9 @@ def transcode(
         if verdict == "retry":
             _cleanup_temp(temp_dir)
             if vmaf_score is None:
-                history.mark_failed(str(filepath), "VMAF scoring failed, will retry")
+                history.mark_failed(str(filepath), "VMAF scoring failed")
                 log.warning(
-                    "VMAF SCORING FAILED (sync): %s (ratio %.1f%%, marking failed for retry)",
+                    "VMAF SCORING FAILED (sync): %s (ratio %.1f%%, marking failed)",
                     filepath.name,
                     ratio * 100,
                 )
@@ -424,7 +424,7 @@ def transcode(
                 )
                 log.warning(
                     "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, "
-                    "marking failed for retry)",
+                    "marking failed)",
                     filepath.name,
                     vmaf_score,
                     ratio * 100,

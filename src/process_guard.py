@@ -76,7 +76,7 @@ def mark_stale_started_as_failed(history):
 
     Mark all history entries with status "started" that are NOT currently being
     transcoded by this process as "failed". Handles stale entries left by power
-    outages so they get retried on the next FULL SCAN.
+    outages so they can be retried later via --retry-failed.
 
     :param history: 历史记录对象 (History object)
     """
@@ -85,7 +85,7 @@ def mark_stale_started_as_failed(history):
         with _active_transcodes_lock:
             if fp in _active_transcodes:
                 continue
-        history.mark_failed(fp, "Stale: process interrupted, will retry")
+        history.mark_failed(fp, "Stale: process interrupted")
         count += 1
     if count:
         log.info("Marked %d stale 'started' entr%s as failed", count, "y" if count == 1 else "ies")

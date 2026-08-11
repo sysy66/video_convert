@@ -225,7 +225,7 @@ class TestHandleVmafTask:
         assert not output.exists()
         history.mark_done.assert_not_called()
         history.mark_failed.assert_called_once_with(
-            str(source), "VMAF scoring failed, will retry"
+            str(source), "VMAF scoring failed"
         )
 
     def test_accept_missing_output_marks_failed(self, tmp_path):

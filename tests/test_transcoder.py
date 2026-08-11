@@ -402,7 +402,7 @@ class TestTranscode:
         assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
 
     def test_vmaf_scoring_failed_marks_failed_for_retry(self, tmp_path):
-        # sync 模式打分失败（compute_vmaf → None）：与 async 一致记 failed 退避重试
+        # sync 模式打分失败（compute_vmaf → None）：与 async 一致记 failed 永久排除
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
 
@@ -418,12 +418,12 @@ class TestTranscode:
 
         assert result is False
         history.mark_failed.assert_called_once()
-        assert history.mark_failed.call_args[0][1] == "VMAF scoring failed, will retry"
+        assert history.mark_failed.call_args[0][1] == "VMAF scoring failed"
         history.mark_done.assert_not_called()
         assert not list(tmp_path.glob(".work_*"))
 
     def test_vmaf_extreme_low_marks_failed_for_retry(self, tmp_path):
-        # sync 模式极端低分（< VMAF_EXTREME_LOW）：与 async 一致记 failed 退避重试
+        # sync 模式极端低分（< VMAF_EXTREME_LOW）：与 async 一致记 failed 永久排除
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
 

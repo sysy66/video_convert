@@ -94,8 +94,8 @@ class TestMarkStaleStartedAsFailed:
         history.iter_started.return_value = ["/a.mp4", "/b.mp4"]
         transcoder.mark_stale_started_as_failed(history)
         assert history.mark_failed.call_count == 2
-        history.mark_failed.assert_any_call("/a.mp4", "Stale: process interrupted, will retry")
-        history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted, will retry")
+        history.mark_failed.assert_any_call("/a.mp4", "Stale: process interrupted")
+        history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted")
 
     def test_skips_active_transcodes(self):
         with transcoder._active_transcodes_lock:
@@ -105,7 +105,7 @@ class TestMarkStaleStartedAsFailed:
             history.iter_started.return_value = ["/a.mp4", "/b.mp4"]
             transcoder.mark_stale_started_as_failed(history)
             history.mark_failed.assert_called_once()
-            history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted, will retry")
+            history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted")
         finally:
             _clear_active()
 

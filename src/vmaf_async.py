@@ -56,9 +56,9 @@ def _handle_vmaf_task(task):
     if verdict == "retry":
         # 打分本身失败（vmaf_score is None，如打分进程被打断/解码错误）或极端低分
         # （视为输入/产物异常，如写入中的残缺文件被误转码）：
-        # 均记 failed 触发退避重试，而不是当作“质量不达标”永久 rejected 封锁该文件。
-        # Scoring failures (None) and extreme-low scores both mark failed for backoff
-        # retry instead of permanently rejecting the file.
+        # 均记 failed 永久排除，仅 --retry-failed 启动时手动重试。
+        # Scoring failures (None) and extreme-low scores both mark failed (permanently
+        # excluded; retried only via --retry-failed).
         try:
             output.unlink()
         except OSError as e:
@@ -66,9 +66,9 @@ def _handle_vmaf_task(task):
             history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
             return
         if vmaf_score is None:
-            history.mark_failed(str(source), "VMAF scoring failed, will retry")
+            history.mark_failed(str(source), "VMAF scoring failed")
             log.warning(
-                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed for retry)",
+                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed)",
                 output.name,
                 ratio * 100,
             )
@@ -78,7 +78,7 @@ def _handle_vmaf_task(task):
                 f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",
             )
             log.warning(
-                "VMAF EXTREME LOW (async): %s (VMAF %.2f, ratio %.1f%%, marking failed for retry)",
+                "VMAF EXTREME LOW (async): %s (VMAF %.2f, ratio %.1f%%, marking failed)",
                 output.name,
                 vmaf_score,
                 ratio * 100,
