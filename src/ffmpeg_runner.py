@@ -64,10 +64,9 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_sca
         # Software-scale fallback: keep frames in system memory, convert with
         # software format filter, then upload to QSV via hwupload
         cmd.extend(["-hwaccel_output_format", "none"])
-        # sw_scale_fallback 时需要显式初始化 QSV 设备，为 hwupload 滤镜提供
+        # 显式初始化 QSV 设备，为 hwupload 滤镜提供
         # 设备上下文；否则 "Error initializing filters" 并非真实编码失败
-        if sw_scale_fallback:
-            cmd.extend(["-init_hw_device", "qsv=hw"])
+        cmd.extend(["-init_hw_device", "qsv=hw"])
     else:
         cmd.extend(["-hwaccel_output_format", "qsv"])
 
@@ -119,6 +118,11 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_sca
         if val is not None and val is not False:
             cmd.extend([f"-{flag}", str(int(val) if isinstance(val, bool) else val)])
 
+    if sw_scale_fallback or sw_decode_fallback:
+        cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
+    else:
+        cmd.extend(["-vf", "vpp_qsv=format=p010le"])
+
     cmd.extend(
         [
             # --- 音频流 / Audio stream ---
@@ -128,11 +132,6 @@ def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_sca
             "0:a?",
         ]
     )
-
-    if sw_scale_fallback or sw_decode_fallback:
-        cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
-    else:
-        cmd.extend(["-vf", "vpp_qsv=format=p010le"])
 
     # 逐流音频编码策略：直通格式复制，其余重新编码
     # Per-stream audio encoding: passthrough for compatible codecs, re-encode for others
