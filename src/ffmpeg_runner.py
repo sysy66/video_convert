@@ -17,7 +17,14 @@ from src.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
 log = __import__("logging").getLogger(__name__)
 
 
-def _build_ffmpeg_cmd(ffmpeg_path, ffprobe_path, input_path, output_path, sw_scale_fallback=False, sw_decode_fallback=False):
+def _build_ffmpeg_cmd(
+    ffmpeg_path,
+    ffprobe_path,
+    input_path,
+    output_path,
+    sw_scale_fallback=False,
+    sw_decode_fallback=False,
+):
     """
     构建 FFmpeg 命令行参数列表。
     通过 ffprobe 探测输入文件流信息，动态选择视频/音频/字幕/附件流，
@@ -296,7 +303,7 @@ def _summarize_error_stderr(stderr, max_body=100, head_keep=20):
         tail_keep = max(0, max_body - head_keep - 1)
         body = (
             body[:head_keep]
-            + ["... (truncated %d lines) ..." % (len(body) - max_body)]
+            + [f"... (truncated {len(body) - max_body} lines) ..."]
             + body[-tail_keep:]
         )
     return "\n".join(body) or stderr.strip()

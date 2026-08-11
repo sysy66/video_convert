@@ -224,9 +224,7 @@ class TestHandleVmafTask:
         assert source.exists()
         assert not output.exists()
         history.mark_done.assert_not_called()
-        history.mark_failed.assert_called_once_with(
-            str(source), "VMAF scoring failed"
-        )
+        history.mark_failed.assert_called_once_with(str(source), "VMAF scoring failed")
 
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)

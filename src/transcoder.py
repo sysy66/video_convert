@@ -6,6 +6,7 @@ Transcoding module. Implements the full transcode workflow for a single video:
 build the FFmpeg command, run it with live progress logging, replace the source
 on success, and clean up / mark history on failure.
 """
+
 import re
 import shutil
 import subprocess
@@ -212,7 +213,9 @@ def transcode(
                 ffmpeg_path, ffprobe_path, filepath, output_path, sw_scale_fallback=True
             )
             log.info(
-                "FFMPEG CMD (sw scale fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
+                "FFMPEG CMD (sw scale fallback): %s %s",
+                filepath.name,
+                " ".join(str(c) for c in cmd),
             )
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
@@ -247,7 +250,9 @@ def transcode(
                 ffmpeg_path, ffprobe_path, filepath, output_path, sw_decode_fallback=True
             )
             log.info(
-                "FFMPEG CMD (sw decode fallback): %s %s", filepath.name, " ".join(str(c) for c in cmd)
+                "FFMPEG CMD (sw decode fallback): %s %s",
+                filepath.name,
+                " ".join(str(c) for c in cmd),
             )
             returncode, stderr = _run_ffmpeg_with_progress(
                 cmd, total_duration, filepath.name, timeout=config.CODEC_TIMEOUT
@@ -271,7 +276,11 @@ def transcode(
         )
 
         cmd, total_duration = _build_ffmpeg_cmd(
-            ffmpeg_path, ffprobe_path, filepath, output_path, sw_decode_fallback=sw_decode_fallback_attempted
+            ffmpeg_path,
+            ffprobe_path,
+            filepath,
+            output_path,
+            sw_decode_fallback=sw_decode_fallback_attempted,
         )
         log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
@@ -423,8 +432,7 @@ def transcode(
                     f"input may be incomplete",
                 )
                 log.warning(
-                    "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, "
-                    "marking failed)",
+                    "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, marking failed)",
                     filepath.name,
                     vmaf_score,
                     ratio * 100,
