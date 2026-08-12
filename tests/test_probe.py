@@ -11,16 +11,15 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.probe import (
-    _normalize_common_rate,
-    _probe_pts_intervals,
-    _vote_common_rate,
-    fps_fraction_to_float,
+    VideoProbe,
     get_streams_info,
     get_video_codec,
     get_video_frame_rate,
 )
 
 pytestmark = pytest.mark.unit
+
+_probe = VideoProbe("/usr/bin/ffprobe")
 
 
 class TestProbeSuccess:
@@ -169,32 +168,32 @@ class TestGetStreamsInfo:
 
 class TestFpsFractionToFloat:
     def test_fraction(self):
-        assert fps_fraction_to_float("24000/1001") == pytest.approx(23.976, rel=1e-4)
-        assert fps_fraction_to_float("30000/1001") == pytest.approx(29.97, rel=1e-4)
+        assert VideoProbe.fps_fraction_to_float("24000/1001") == pytest.approx(23.976, rel=1e-4)
+        assert VideoProbe.fps_fraction_to_float("30000/1001") == pytest.approx(29.97, rel=1e-4)
 
     def test_decimal(self):
-        assert fps_fraction_to_float("23.976") == pytest.approx(23.976)
+        assert VideoProbe.fps_fraction_to_float("23.976") == pytest.approx(23.976)
 
     def test_whitespace(self):
-        assert fps_fraction_to_float(" 30 ") == 30.0
+        assert VideoProbe.fps_fraction_to_float(" 30 ") == 30.0
 
     def test_int_string(self):
-        assert fps_fraction_to_float("60") == 60.0
+        assert VideoProbe.fps_fraction_to_float("60") == 60.0
 
     def test_zero_denominator(self):
-        assert fps_fraction_to_float("30/0") is None
+        assert VideoProbe.fps_fraction_to_float("30/0") is None
 
     def test_non_numeric_fraction(self):
-        assert fps_fraction_to_float("abc/def") is None
+        assert VideoProbe.fps_fraction_to_float("abc/def") is None
 
     def test_invalid(self):
-        assert fps_fraction_to_float("") is None
-        assert fps_fraction_to_float(None) is None
-        assert fps_fraction_to_float("abc") is None
+        assert VideoProbe.fps_fraction_to_float("") is None
+        assert VideoProbe.fps_fraction_to_float(None) is None
+        assert VideoProbe.fps_fraction_to_float("abc") is None
 
     def test_negative_or_zero_decimal(self):
-        assert fps_fraction_to_float("0") is None
-        assert fps_fraction_to_float("-30") is None
+        assert VideoProbe.fps_fraction_to_float("0") is None
+        assert VideoProbe.fps_fraction_to_float("-30") is None
 
 
 def _pts_stdout(fps, frames=300):
@@ -281,35 +280,35 @@ class TestGetVideoFrameRate:
 class TestVoteCommonRate:
     def test_tick_quantized_30fps_merges_buckets(self):
         diffs = [33317] * 124 + [33333] * 138 + [33350] * 133 + [16667] * 20 + [50000] * 45
-        frac, ratio = _vote_common_rate(diffs)
+        frac, ratio = _probe._vote_common_rate(diffs)
         assert frac == "30/1"
         assert ratio == pytest.approx(0.80, abs=0.03)
 
     def test_2997_grid(self):
         diffs = [33367] * 150 + [33317] * 10 + [50000] * 10
-        frac, ratio = _vote_common_rate(diffs)
+        frac, ratio = _probe._vote_common_rate(diffs)
         assert frac == "30000/1001"
         assert ratio > 0.85
 
     def test_60fps(self):
         diffs = [16667] * 200 + [33333] * 10
-        frac, ratio = _vote_common_rate(diffs)
+        frac, ratio = _probe._vote_common_rate(diffs)
         assert frac == "60/1"
         assert ratio > 0.9
 
     def test_uncommon_rate_rejected(self):
         diffs = [28571] * 300
-        assert _vote_common_rate(diffs) is None
+        assert _probe._vote_common_rate(diffs) is None
 
     def test_changed_fps_mixed_dominant_wins(self):
         diffs = [33333] * 200 + [16667] * 200
-        frac, ratio = _vote_common_rate(diffs)
+        frac, ratio = _probe._vote_common_rate(diffs)
         assert frac in ("30/1", "60/1")
         assert ratio == pytest.approx(0.5, abs=0.01)
 
     def test_chaotic_intervals_rejected(self):
         diffs = [20000 + (i * 137 % 40000) for i in range(300)]
-        assert _vote_common_rate(diffs) is None
+        assert _probe._vote_common_rate(diffs) is None
 
 
 class TestProbePtsIntervals:
@@ -323,7 +322,7 @@ class TestProbePtsIntervals:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = stdout
             mock_run.return_value.stderr = ""
-            intervals = _probe_pts_intervals("/test.mp4", "/usr/bin/ffprobe")
+            intervals = _probe._probe_pts_intervals("/test.mp4")
         assert len(intervals) == 90
         assert all(i in (33333, 33334) for i in intervals)
         cmd = mock_run.call_args.args[0]
@@ -334,7 +333,7 @@ class TestProbePtsIntervals:
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stderr = "err"
-            assert _probe_pts_intervals("/test.mp4", "/usr/bin/ffprobe") is None
+            assert _probe._probe_pts_intervals("/test.mp4") is None
 
 
 class TestNormalizeCommonRate:
@@ -349,9 +348,9 @@ class TestNormalizeCommonRate:
         ],
     )
     def test_common_rates(self, rate, expected):
-        assert _normalize_common_rate(rate) == expected
+        assert _probe._normalize_common_rate(rate) == expected
 
     @pytest.mark.parametrize("rate", ["35", "27.5", "0", None, "abc"])
     def test_non_common_rates_passthrough(self, rate):
-        assert _normalize_common_rate(rate) == rate
+        assert _probe._normalize_common_rate(rate) == rate
 
