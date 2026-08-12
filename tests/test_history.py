@@ -60,7 +60,7 @@ class TestHistoryMarks:
         assert h.exists("/v.mp4")
         assert h.is_started("/v.mp4")
         assert h.is_success("/v.mp4") is False
-        assert h.get_entry("/v.mp4")["status"] == "started"
+        assert h.get_entry("/v.mp4")["status"] == "pending_transcode"
 
     def test_mark_done(self, make_history):
         h = make_history()

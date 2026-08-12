@@ -82,8 +82,10 @@ def test_skips_not_required():
     )
 
 
-def test_skips_started():
-    assert not should_process(Path("/v.mp4"), _mock_history({"status": "started"}), {"hevc"}, "/fp")
+def test_skips_pending_transcode():
+    assert not should_process(
+        Path("/v.mp4"), _mock_history({"status": "pending_transcode"}), {"hevc"}, "/fp"
+    )
 
 
 def test_failed_skips():
@@ -126,12 +128,12 @@ def test_should_submit_skips_not_required():
     assert not should_submit(Path("/v.mp4"), _mock_history({"status": "not required"}))
 
 
-def test_should_submit_skips_started():
-    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "started"}))
+def test_should_submit_skips_pending_transcode():
+    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "pending_transcode"}))
 
 
-def test_should_submit_skips_pending_vmaf():
-    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "pending_vmaf"}))
+def test_should_submit_skips_await_postprocess():
+    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "await_postprocess"}))
 
 
 def test_should_submit_skips_failed():

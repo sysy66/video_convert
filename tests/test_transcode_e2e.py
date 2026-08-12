@@ -121,7 +121,7 @@ class TestTranscodeQsv:
 
 
 class TestTranscodeVmafAsync:
-    """异步 VMAF 打分全流程：转码立即返回（源保留 + pending_vmaf），worker 打分后终态化。"""
+    """异步 VMAF 打分全流程：转码立即返回（源保留 + await_postprocess），worker 打分后终态化。"""
 
     def test_async_worker_full_flow(
         self,
@@ -150,7 +150,7 @@ class TestTranscodeVmafAsync:
                 cache_dir=str(env["cache_dir"]),
             )
             assert ok
-            # 转码返回时打分尚未进行：源保留、输出已在 output 区、状态 pending_vmaf
+            # 转码返回时打分尚未进行：源保留、输出已在 output 区、状态 await_postprocess
             assert env["src"].exists()
             outputs = list(env["output_dir"].glob("*.mkv"))
             assert len(outputs) == 1

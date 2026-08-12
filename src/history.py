@@ -1,10 +1,12 @@
 """
-历史记录模块。使用 SQLite 持久化每个文件的转码状态（started/success/rejected/
-failed 等），线程安全，供扫描、转码与主循环使用。
+历史记录模块。使用 SQLite 持久化每个文件的转码状态（pending_transcode/
+await_postprocess/success/rejected/failed/not required 等），线程安全，
+供扫描、转码与主循环使用。
 
-History tracking module. Persists each file's transcode status (started/success/
-rejected/failed, etc.) in SQLite, is thread-safe, and is used by the scanner,
-transcoder and main loop.
+History tracking module. Persists each file's transcode status
+(pending_transcode/await_postprocess/success/rejected/failed/not required,
+etc.) in SQLite, is thread-safe, and is used by the scanner, transcoder and
+main loop.
 """
 
 import os
@@ -53,7 +55,8 @@ class History:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute(
                 """
-                -- status 取值：started|pending_vmaf|success|rejected|failed|not required
+                -- status 取值：pending_transcode|await_postprocess|success|
+                --           rejected|failed|not required
                 CREATE TABLE IF NOT EXISTS files (
                     filepath     TEXT PRIMARY KEY,   -- 文件绝对路径 / absolute file path
                     status       TEXT NOT NULL,
@@ -122,14 +125,15 @@ class History:
 
     def iter_started(self):
         """
-        遍历所有 status == "started" 的文件路径（用于启动时清理残留状态）。
-        先物化成列表再 yield——调用方（mark_stale_started_as_failed）会边遍历边写。
-        Yield all filepaths whose status is "started" (for stale-state cleanup).
+        遍历所有 status == "pending_transcode" 的文件路径（用于启动时清理残余状态）。
+        先物料成列表再 yield——调用方（mark_stale_started_as_failed）会边遍历边写。
+        Yield all filepaths whose status is "pending_transcode"
+        (for stale-state cleanup).
         Materialised into a list first—the caller writes while iterating.
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT filepath FROM files WHERE status='started'"
+                "SELECT filepath FROM files WHERE status='pending_transcode'"
             ).fetchall()
         for row in rows:
             yield row["filepath"]
@@ -137,11 +141,12 @@ class History:
     def iter_final_states(self):
         """
         遍历终态记录（rejected/failed/not required）的路径，供孤儿记录清理。
-        排除 started（转码线程收尾）与 pending_vmaf（启动时 recover 处理），
-        避免与运行中的并发写者竞争。
+        排除 pending_transcode（转码线程收尾）与 await_postprocess（启动时
+        recover 处理），避免与运行中的并发写者竞争。
         Yield filepaths of terminal-state records (rejected/failed/not required)
-        for orphan cleanup. Excludes started (finished by the transcode thread)
-        and pending_vmaf (handled by recover at startup) to avoid races.
+        for orphan cleanup. Excludes pending_transcode (finished by the transcode
+        thread) and await_postprocess (handled by recover at startup) to avoid
+        races.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -169,7 +174,8 @@ class History:
         return self._get_status(filepath) == "not required"
 
     def is_started(self, filepath):
-        return self._get_status(filepath) == "started"
+        """True iff status == "pending_transcode"."""
+        return self._get_status(filepath) == "pending_transcode"
 
     def exists(self, filepath):
         with self._lock:
@@ -179,11 +185,18 @@ class History:
         return row is not None
 
     def mark_started(self, filepath):
+        """
+        标记文件进入转码就绪队头：status = "pending_transcode"，
+        记录转码开始时间戳。产物尚在 work 文件夹，未移动/打分。
+        Transition a file to the head of the transcode queue:
+        status = "pending_transcode", recording the start timestamp.
+        The output still sits in the work dir, not yet moved/scored.
+        """
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
                 "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'started', ?, NULL, NULL, NULL)",
+                "VALUES (?, 'pending_transcode', ?, NULL, NULL, NULL)",
                 (filepath, time.time()),
             )
 
@@ -216,6 +229,12 @@ class History:
             )
 
     def mark_pending_vmaf(self, filepath, output_path):
+        """
+        转码完成、产物就绪，进入后处理（移动到目标 + 可选 VMAF 打分）队列：
+        status = "await_postprocess"。
+        Transcode finished and output is ready; queue for post-processing
+        (move to target + optional VMAF scoring): status = "await_postprocess".
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT started_at FROM files WHERE filepath=?", (filepath,)
@@ -224,17 +243,24 @@ class History:
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
                 "(filepath, status, started_at, completed_at, output_path, vmaf_score, error) "
-                "VALUES (?, 'pending_vmaf', ?, ?, ?, NULL, NULL)",
+                "VALUES (?, 'await_postprocess', ?, ?, ?, NULL, NULL)",
                 (filepath, started_at, time.time(), output_path),
             )
 
     def is_pending_vmaf(self, filepath):
-        return self._get_status(filepath) == "pending_vmaf"
+        """True iff status == "await_postprocess" (transcoded, awaiting post-process)."""
+        return self._get_status(filepath) == "await_postprocess"
 
     def iter_pending_vmaf(self):
+        """
+        遍历 status == "await_postprocess" 的文件路径与产物路径（用于启动时
+        recover 重新入队）。产物已存在才返回。
+        Yield (filepath, output_path) for status == "await_postprocess"
+        entries (re-enqueued on startup by recover). The output must exist.
+        """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT filepath, output_path FROM files WHERE status='pending_vmaf'"
+                "SELECT filepath, output_path FROM files WHERE status='await_postprocess'"
             ).fetchall()
         return [(r["filepath"], r["output_path"]) for r in rows]
 

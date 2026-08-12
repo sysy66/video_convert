@@ -423,9 +423,9 @@ class TestRecoverPendingVmaf:
 
 
 class TestShouldProcessPendingVmaf:
-    def test_pending_vmaf_skips(self):
+    def test_await_postprocess_skips(self):
         history = MagicMock()
-        history.get_entry.return_value = {"status": "pending_vmaf"}
+        history.get_entry.return_value = {"status": "await_postprocess"}
         with patch("src.filter.get_video_codec") as mock_probe:
             assert should_process("/m/x.mkv", history, set(), "/ffprobe") is False
         mock_probe.assert_not_called()

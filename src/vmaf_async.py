@@ -189,14 +189,15 @@ def drain_vmaf_tasks():
 
 def recover_pending_vmaf(history, ffprobe_path=None):
     """
-    启动恢复：把历史中残留的 pending_vmaf 记录重新入队异步打分，处理 kill -9
+    启动恢复：把历史中残留的 await_postprocess 记录重新入队异步打分，处理 kill -9
     后遗留的双份（源与产物同时存在）情况。入队前按 classify_fps 重新档位化：
     若源是档3/4 混合 VFR（开启 VMAF 时本就无法打分），删除残留产物并记 failed。
 
-    Startup recovery: re-enqueue pending_vmaf records left in history for async
-    scoring, handling the duplicate-file case left behind by kill -9. Each entry is
-    re-classified with classify_fps first: a mixed-VFR source (tier 3/4) could never
-    have been scored, so its orphaned output is removed and the entry marked failed.
+    Startup recovery: re-enqueue await_postprocess records left in history for
+    async scoring, handling the duplicate-file case left behind by kill -9. Each
+    entry is re-classified with classify_fps first: a mixed-VFR source (tier 3/4)
+    could never have been scored, so its orphaned output is removed and the entry
+    marked failed.
 
     :param history: 历史记录对象 (History tracking object)
     :param ffprobe_path: ffprobe 路径，用于重新档位化；None 时不再档位化，直接按旧路径入队
