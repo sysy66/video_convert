@@ -111,8 +111,6 @@ def _build_ffmpeg_cmd(
             str(config.VIDEO_LOOK_AHEAD_DEPTH),
             "-g",
             str(config.VIDEO_GOP),
-            "-fps_mode",
-            "cfr",
             # 编码器专属参数（-bf / -extbrc / -adaptive_i / -adaptive_b / -b_strategy 等）
             # Encoder-specific arguments
         ]
