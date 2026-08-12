@@ -14,15 +14,17 @@ import time as _time
 from pathlib import Path
 
 from src import config
+from src.probe import classify_fps
 from src.quality import compute_vmaf, vmaf_verdict
 
 log = __import__("logging").getLogger(__name__)
 
-# 异步 VMAF 打分任务队列：任务元组 (source, output, ratio, safe_stem, history, codec_elapsed)。
+# 异步 VMAF 打分任务队列：任务元组
+# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate)。
 # 无界队列，任务仅含路径元组不占内存；打分并发由 worker 数控制。
 # Async VMAF scoring task queue; tasks are
-# (source, output, ratio, safe_stem, history, codec_elapsed) tuples. Unbounded:
-# entries are lightweight path tuples, concurrency is bounded by workers.
+# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate)
+# tuples. Unbounded: entries are lightweight path tuples, concurrency is bounded by workers.
 vmaf_tasks = queue.Queue()
 _VMAF_STOP = object()
 _vmaf_worker_threads = []
@@ -38,17 +40,18 @@ def _handle_vmaf_task(task):
     Handle one async VMAF scoring task: score the output, then decide its fate
     based on vmaf_verdict's verdict (retry/accept/reject) and update history.
     """
-    # 兼容缺少 codec_elapsed/keep_source 的短任务元组，缺失时补 None。
-    # Tolerate short task tuples that omit codec_elapsed/keep_source (padded with None).
-    source, output, ratio, safe_stem, history, codec_elapsed, keep_source = (
-        task + (None, None)
-    )[:7]
+    # 兼容缺少 codec_elapsed/keep_source/fps_align_rate 的短任务元组，缺失时补 None。
+    # Tolerate short task tuples that omit codec_elapsed/keep_source/fps_align_rate
+    # (padded with None).
+    source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate = (
+        task + (None,) * 8
+    )[:8]
     source = Path(source)
     output = Path(output)
 
     vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
     vmaf_start = _time.monotonic()
-    vmaf_score = compute_vmaf(source, output, log_path=vmaf_log)
+    vmaf_score = compute_vmaf(source, output, log_path=vmaf_log, fps_rate=fps_align_rate)
     vmaf_elapsed = _time.monotonic() - vmaf_start
 
     verdict = vmaf_verdict(vmaf_score, ratio)
@@ -184,13 +187,21 @@ def drain_vmaf_tasks():
     log.info("Drained %d async VMAF worker thread(s)", len(workers))
 
 
-def recover_pending_vmaf(history):
+def recover_pending_vmaf(history, ffprobe_path=None):
     """
     启动恢复：把历史中残留的 pending_vmaf 记录重新入队异步打分，处理 kill -9
-    后遗留的双份（源与产物同时存在）情况。
+    后遗留的双份（源与产物同时存在）情况。入队前按 classify_fps 重新档位化：
+    若源是档3/4 混合 VFR（开启 VMAF 时本就无法打分），删除残留产物并记 failed。
 
     Startup recovery: re-enqueue pending_vmaf records left in history for async
-    scoring, handling the duplicate-file case left behind by kill -9.
+    scoring, handling the duplicate-file case left behind by kill -9. Each entry is
+    re-classified with classify_fps first: a mixed-VFR source (tier 3/4) could never
+    have been scored, so its orphaned output is removed and the entry marked failed.
+
+    :param history: 历史记录对象 (History tracking object)
+    :param ffprobe_path: ffprobe 路径，用于重新档位化；None 时不再档位化，直接按旧路径入队
+                         (ffprobe path for reclassification; when None, entries are
+                         re-enqueued as-is)
     """
     count = 0
     for filepath, output_path in history.iter_pending_vmaf():
@@ -206,13 +217,40 @@ def recover_pending_vmaf(history):
                 pass
             history.mark_done(filepath, None, rejected=True)
             continue
+        fps_align_rate = None
+        if ffprobe_path:
+            tier, rate = classify_fps(filepath, ffprobe_path)
+            if tier not in ("1", "2"):
+                log.warning(
+                    "VMAF RECOVER: %s is mixed-VFR (tier %s), removing output and marking failed",
+                    filepath,
+                    tier,
+                )
+                try:
+                    Path(output_path).unlink()
+                except OSError:
+                    pass
+                history.mark_failed(filepath, "Mixed-VFR source not scoreable under VMAF")
+                continue
+            fps_align_rate = rate
         stem = Path(filepath).stem
         safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
         try:
             ratio = Path(output_path).stat().st_size / Path(filepath).stat().st_size
         except OSError:
             ratio = 0
-        vmaf_tasks.put((filepath, output_path, ratio, safe_stem, history, None, config.KEEP_SOURCE))
+        vmaf_tasks.put(
+            (
+                filepath,
+                output_path,
+                ratio,
+                safe_stem,
+                history,
+                None,
+                config.KEEP_SOURCE,
+                fps_align_rate,
+            )
+        )
         count += 1
     if count:
         log.info("Recovered %d pending VMAF task(s)", count)

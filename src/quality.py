@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from src import config
-from src.probe import get_video_frame_rate, get_video_pix_fmt
+from src.probe import get_video_pix_fmt
 
 log = __import__("logging").getLogger(__name__)
 
@@ -59,31 +59,35 @@ def _read_vmaf_from_json(log_path):
         return (None, None)
 
 
-def _align_fps_string(original_path, ffprobe_path):
+def _align_fps_string(rate):
     """
     VFR 源被转码规整为 CFR 后，产物与源帧序会产生累计漂移，导致 libvmaf
     逐帧对比错位、分数虚低。开启 VMAF_ALIGN_FPS 时给两个输入都加 fps 滤镜
-    归一到同一时间网格，消除系统性打分误差。目标帧率优先从源视频实际帧率
-    自动推导（get_video_frame_rate），推导失败才退回配置的 VMAF_ALIGN_FPS_RATE；
-    VMAF_ALIGN_FPS 关闭时返回空串。
+    归一到同一时间网格，消除系统性打分误差。目标帧率由调用方传入（transcode
+    侧 classify_fps 档1/2 的帧率，档1 为源 avg、档2 为投票主导帧率）；帧率缺失
+    时回退到配置的 VMAF_ALIGN_FPS_RATE 兜底。VMAF_ALIGN_FPS 关闭时返回空串
+    （总开关）。
 
     Build the fps filter string (e.g. "fps=30000/1001") for frame-rate alignment,
-    or "" when VMAF_ALIGN_FPS is disabled. The target rate is derived from the
-    source frame rate, falling back to the configured VMAF_ALIGN_FPS_RATE only
-    when probing fails.
+    or "" when VMAF_ALIGN_FPS is disabled. The target rate comes from the caller
+    (classify_fps tier-1 avg or tier-2 voted dominant rate on the transcode side);
+    a missing rate falls back to the configured VMAF_ALIGN_FPS_RATE.
     """
     if not config.VMAF_ALIGN_FPS:
         return ""
-    rate = None
-    if ffprobe_path:
-        rate = get_video_frame_rate(original_path, ffprobe_path)
     if not rate:
         rate = config.VMAF_ALIGN_FPS_RATE
     return f"fps={rate}"
 
 
 def _run_vmaf(
-    original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, ffprobe_path=None
+    original_path,
+    transcoded_path,
+    ffmpeg_path,
+    log_path,
+    hwaccel=False,
+    ffprobe_path=None,
+    fps_rate=None,
 ):
     """
     内部：构建并执行单次 ffmpeg VMAF 命令。
@@ -93,8 +97,9 @@ def _run_vmaf(
     （不会静默降级成软解再上传），从而安全回退到软件路径。
 
     :param hwaccel: True 时启用 QSV 硬件解码（hwdownload 后接软件 libvmaf）
+    :param fps_rate: 帧率对齐目标（classify_fps 档2 主导帧率），None 不插入 fps 滤镜
     """
-    _fps = _align_fps_string(original_path, ffprobe_path)
+    _fps = _align_fps_string(fps_rate)
 
     if hwaccel:
         ffprobe_path = ffprobe_path or config.FFPROBE_PATH
@@ -132,9 +137,7 @@ def _run_vmaf(
     if config.VMAF_MODEL_PATH and os.path.exists(config.VMAF_MODEL_PATH):
         opts.append(f"model='path={config.VMAF_MODEL_PATH}'")
     opts.append(f"n_subsample={config.VMAF_SUBSAMPLE}")
-    opts.append(
-        f"n_threads={config.VMAF_N_THREADS or max(1, ((os.cpu_count() or 1) + 1) // 2)}"
-    )
+    opts.append(f"n_threads={config.VMAF_N_THREADS or max(1, ((os.cpu_count() or 1) + 1) // 2)}")
 
     if log_path is not None:
         try:
@@ -191,7 +194,7 @@ def _run_vmaf(
     return None
 
 
-def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None):
+def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None, fps_rate=None):
     """
     计算转码前后视频的 VMAF 分数。
     使用 scale2ref 进行分辨率对齐，避免参考/失真分辨率不匹配导致分数虚低；
@@ -216,6 +219,9 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
                         (Path to ffmpeg with libvmaf, defaults to config)
     :param log_path: json 日志输出路径，None 时自动生成到 VMAF_LOG_DIR
                      (Path for json log output, defaults to VMAF_LOG_DIR when None)
+    :param fps_rate: 帧率对齐目标（classify_fps 档2 主导帧率），None 不插入 fps 滤镜
+                     (Frame-rate alignment target, e.g. tier-2 dominant rate; None
+                     inserts no fps filter)
     :return: VMAF 分数 (0-100)，失败或不可用时返回 None
              (VMAF score 0-100, or None on failure/unavailability)
     """
@@ -237,6 +243,7 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             log_path,
             hwaccel=True,
             ffprobe_path=config.FFPROBE_PATH,
+            fps_rate=fps_rate,
         )
         if score is not None:
             return score
@@ -245,7 +252,9 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
         else:
             return None
 
-    return _run_vmaf(original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False)
+    return _run_vmaf(
+        original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, fps_rate=fps_rate
+    )
 
 
 def cleanup_vmaf_logs():

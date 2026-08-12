@@ -22,7 +22,7 @@ from src.ffmpeg_runner import (
     _summarize_error_stderr,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
-from src.probe import get_video_codec
+from src.probe import classify_fps, get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
@@ -142,12 +142,15 @@ def transcode(
 ):
     """
     对单个视频文件执行转码的完整流程：
+      0. 开启 VMAF 时先档位化源帧率：档3/4 混合 VFR 直接 mark_failed，档2 记 CFR 目标
       1. 创建临时工作目录
       2. 构建 FFmpeg 命令并执行（含实时进度日志）
       3. 成功时用输出文件替换原文件
       4. 失败/异常时清理临时目录并标记历史
 
     Complete transcoding workflow for a single video file:
+      0. With VMAF on, classify the source frame rate first: mixed VFR (tiers 3/4)
+         is marked failed outright; tier 2 records a CFR target
       1. Create a temporary working directory
       2. Build and run the FFmpeg command (with real-time progress logging)
       3. On success, replace the original file with the output
@@ -188,11 +191,37 @@ def transcode(
         _active_transcodes.add(str(filepath))
 
     try:
+        # 档位化源帧率（仅开启 VMAF 时需要）：档3/4 混合 VFR 无法可信打分，
+        # 转码前直接 mark_failed 永久排除；档2 伪 VFR 记录 CFR 化目标帧率（转码
+        # -r）。档1/2 都记录打分对齐帧率（VMAF fps 滤镜）——档1 用源 avg 帧率，
+        # 对其恒等、无副作用，但保留兜底到 VMAF_ALIGN_FPS_RATE。
+        # Classify the source frame rate (only when VMAF is on): mixed VFR (tiers 3/4)
+        # is not scoreable, so mark_failed before transcoding; tier-2 pseudo VFR gets
+        # a CFR target (-r). Both tiers 1/2 get a scoring alignment rate (fps filter),
+        # using the source avg rate for tier 1 (an identity transform, kept as safety)
+        # with a fallback to VMAF_ALIGN_FPS_RATE.
+        fps_tier = "1"
+        cfr_rate = None
+        fps_align_rate = None
+        if config.VMAF_ASYNC or config.VMAF_REQUIRED:
+            fps_tier, fps_rate = classify_fps(filepath, ffprobe_path)
+            if fps_tier not in ("1", "2"):
+                log.warning(
+                    "MIXED VFR SKIP: %s (tier %s) - mixed-VFR source not scoreable under VMAF",
+                    filepath.name,
+                    fps_tier,
+                )
+                history.mark_failed(str(filepath), "Mixed-VFR source not scoreable under VMAF")
+                return False
+            if fps_tier == "2":
+                cfr_rate = fps_rate
+            fps_align_rate = fps_rate
+
         # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
         sw_scale_fallback_attempted = False
 
         def _retry_sw_scale():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted
+            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted, cfr_rate  # noqa: E501
             if sw_scale_fallback_attempted:
                 return
             sw_scale_fallback_attempted = True
@@ -210,7 +239,12 @@ def transcode(
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(
-                ffmpeg_path, ffprobe_path, filepath, output_path, sw_scale_fallback=True
+                ffmpeg_path,
+                ffprobe_path,
+                filepath,
+                output_path,
+                sw_scale_fallback=True,
+                cfr_rate=cfr_rate,
             )
             log.info(
                 "FFMPEG CMD (sw scale fallback): %s %s",
@@ -229,7 +263,7 @@ def transcode(
         sw_decode_fallback_attempted = False
 
         def _retry_sw_decode():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted
+            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted, cfr_rate  # noqa: E501
             if sw_decode_fallback_attempted:
                 return
             sw_decode_fallback_attempted = True
@@ -247,7 +281,12 @@ def transcode(
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
             cmd, _ = _build_ffmpeg_cmd(
-                ffmpeg_path, ffprobe_path, filepath, output_path, sw_decode_fallback=True
+                ffmpeg_path,
+                ffprobe_path,
+                filepath,
+                output_path,
+                sw_decode_fallback=True,
+                cfr_rate=cfr_rate,
             )
             log.info(
                 "FFMPEG CMD (sw decode fallback): %s %s",
@@ -281,6 +320,7 @@ def transcode(
             filepath,
             output_path,
             sw_decode_fallback=sw_decode_fallback_attempted,
+            cfr_rate=cfr_rate,
         )
         log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
@@ -373,6 +413,7 @@ def transcode(
                     history,
                     elapsed,
                     keep_source,
+                    fps_align_rate,
                 )
             )
             log.info(
@@ -405,7 +446,9 @@ def transcode(
                 Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
             )
             vmaf_start = _time.monotonic()
-            vmaf_score = compute_vmaf(filepath, output_path, log_path=vmaf_log)
+            vmaf_score = compute_vmaf(
+                filepath, output_path, log_path=vmaf_log, fps_rate=fps_align_rate
+            )
             vmaf_elapsed = _time.monotonic() - vmaf_start
 
         # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。

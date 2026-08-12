@@ -218,19 +218,29 @@ VMAF_SUBSAMPLE = 30
 # diminish beyond ~4 threads.
 VMAF_N_THREADS = 0
 
-# VMAF 打分前统一帧率对齐。VFR 源被 QSV/软件编码器规整为 CFR 后，
-# 产物与源的帧序会产生累计漂移，导致 libvmaf 逐帧对比错位、分数虚低。
-# 打分时给两个输入都加 fps 滤镜归一到同一时间网格，可消除该系统性误差。
-# 目标帧率优先从源视频实际帧率自动推导（适配任意帧率），VMAF_ALIGN_FPS_RATE
-# 仅在源探测失败（如 ffprobe 不可用）时作为缺省值。
+# VMAF 打分帧率对齐总开关。仅对"档2 伪 VFR"（元数据强 VFR 但投票出主导帧率，
+# 见 classify_fps）生效：转码时加 -r 把产物规整为 CFR，打分时给两个输入都加
+# fps 滤镜归一到同一时间网格，消除 libvmaf 逐帧对比的累计漂移。
 # 实测（Arc A310 + av1_qsv）：同一产物不对齐 63.19，对齐后 94.83 且三次一致。
-# Rate-alignment before VMAF: a VFR source normalized to CFR by the encoder drifts
-# out of per-frame sync with its own source, spuriously deflating libvmaf scores.
-# Both inputs get a fps filter so they land on the same time grid. The target rate
-# is auto-derived from the source for generality; VMAF_ALIGN_FPS_RATE is only the
-# fallback when probing (ffprobe) fails. Measured: 63.19 -> 94.83 (3x reproducible).
+# 真 CFR 源（档1）不转码、不对齐；主导帧率不明显（档3/4 混合 VFR）在开启
+# VMAF 时直接 mark_failed，不硬转。
+# Rate-alignment master switch for VMAF scoring. Only applies to "tier 2 pseudo-VFR"
+# sources (strong VFR metadata but a voted dominant rate; see classify_fps): -r
+# regularizes the output to CFR, and both scoring inputs get an fps filter onto the
+# same time grid to cancel cumulative drift in per-frame comparison. True-CFR sources
+# (tier 1) are neither regularized nor aligned; mixed VFR without a dominant rate
+# (tiers 3/4) is marked failed upfront when VMAF is on.
 VMAF_ALIGN_FPS = True
 VMAF_ALIGN_FPS_RATE = "30000/1001"
+
+# classify_fps 档2 判定阈值：帧间隔投票中主导帧率的份额须 ≥ 该值才算"伪 VFR"。
+# 低于此值视为档3/4 混合 VFR（帧率中途频繁切换），开启 VMAF 时无法可信打分。
+# 实测：chn-127 主导 30fps 占 83.2% → 档2；stars-757 主导 25fps 仅 62.1% → 档3/4。
+# classify_fps tier-2 threshold: the voted dominant frame rate must hold at least
+# this share of sampled intervals. Lower is treated as mixed VFR (tiers 3/4), which
+# cannot be scored reliably under VMAF. Measured: chn-127 30fps at 83.2% -> tier 2;
+# stars-757 25fps at only 62.1% -> tiers 3/4.
+VMAF_PSEUDO_VFR_MIN_RATIO = 0.75
 
 # VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
 # Directory for per-run VMAF json logs; kept even when the result is rejected, for auditing.

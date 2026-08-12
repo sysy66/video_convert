@@ -11,6 +11,8 @@ import json
 import subprocess
 from collections import Counter
 
+from src import config
+
 log = __import__("logging").getLogger(__name__)
 
 _COMMON_FRAME_RATES = (
@@ -132,17 +134,12 @@ class VideoProbe:
             return None
         return result.stdout.strip().lower()
 
-    def get_frame_rate(self, filepath):
+    def _probe_frame_rate_strings(self, filepath):
         """
-        探测视频流帧率，返回 ffmpeg fps 滤镜可直接使用的分数形式，如 "30000/1001"。
-        元数据 avg_frame_rate 与 r_frame_rate 一致时直接信任 avg_frame_rate；
-        不一致或缺失（疑似 VFR）时抽样帧时间戳、对常见帧率表加权投票求真实内容帧率，
-        探测失败再回退 avg_frame_rate，最后回退 r_frame_rate。
-        Probe the frame rate of v:0, returning a fraction usable by the fps filter
-        (e.g. "30000/1001"). Trusts avg_frame_rate when it agrees with
-        r_frame_rate; for suspected VFR sources samples frame PTS and uses a weighted
-        vote over the common frame-rate table, falling back to the metadata rates if
-        probing fails.
+        探测 v:0 流的 avg_frame_rate / r_frame_rate 元数据，返回校验后的
+        (avg, r) 帧率字符串对；缺失或非法时对应为 None。
+        Probe avg_frame_rate / r_frame_rate of stream v:0, returning the validated
+        (avg, r) rate-string pair; None for missing or invalid entries.
         """
         cmd = [
             self.ffprobe_path,
@@ -158,7 +155,7 @@ class VideoProbe:
         ]
         result = self._run(cmd)
         if result is None:
-            return None
+            return None, None
 
         def _valid(fr):
             if not fr:
@@ -179,6 +176,21 @@ class VideoProbe:
         entries = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
         avg = _valid(entries.get("avg_frame_rate", ""))
         r = _valid(entries.get("r_frame_rate", ""))
+        return avg, r
+
+    def get_frame_rate(self, filepath):
+        """
+        探测视频流帧率，返回 ffmpeg fps 滤镜可直接使用的分数形式，如 "30000/1001"。
+        元数据 avg_frame_rate 与 r_frame_rate 一致时直接信任 avg_frame_rate；
+        不一致或缺失（疑似 VFR）时抽样帧时间戳、对常见帧率表加权投票求真实内容帧率，
+        探测失败再回退 avg_frame_rate，最后回退 r_frame_rate。
+        Probe the frame rate of v:0, returning a fraction usable by the fps filter
+        (e.g. "30000/1001"). Trusts avg_frame_rate when it agrees with
+        r_frame_rate; for suspected VFR sources samples frame PTS and uses a weighted
+        vote over the common frame-rate table, falling back to the metadata rates if
+        probing fails.
+        """
+        avg, r = self._probe_frame_rate_strings(filepath)
         if avg and r:
             avg_f = self.fps_fraction_to_float(avg)
             r_f = self.fps_fraction_to_float(r)
@@ -188,9 +200,9 @@ class VideoProbe:
         if avg or r:
             diffs_us = self._probe_pts_intervals(filepath)
             if diffs_us is not None:
-                voted = self._vote_common_rate(diffs_us)
-                if voted is not None:
-                    frac, ratio = voted
+                ranked = self._vote_common_rates(diffs_us)
+                if ranked and ranked[0][1] >= _PTS_VOTE_MIN_RATIO:
+                    frac, ratio = ranked[0]
                     log.info(
                         "疑似 VFR %s: avg=%s r=%s 帧间隔投票 %s (%.1f%%) → 使用 %s",
                         filepath,
@@ -208,6 +220,66 @@ class VideoProbe:
                 r or "-",
             )
         return self._normalize_common_rate(avg or r)
+
+    def classify_fps(self, filepath):
+        """
+        把源帧率档位化，决定 VMAF 打分前的处理策略（配合 transcode 早短路）：
+          - "1" 真 CFR：avg_frame_rate 与 r_frame_rate 一致 → 零额外探测，
+            转码不加 -r、打分不对齐。
+          - "2" 伪 VFR：VFR 元数据但帧间隔投票出现份额 ≥ VMAF_PSEUDO_VFR_MIN_RATIO
+            的主导帧率 → 转码加 -r <frac> 规整为 CFR，打分按该帧率对齐。
+          - "3" 混合 VFR / 不可判：投票不可靠或元数据缺失 → 开启 VMAF 时转码前
+            直接 mark_failed（不做额外探测）。
+        返回 (档位, 帧率分数)；档3 帧率为 None，档1/2 为常见帧率分数。
+        Classify the source frame rate into tiers that drive the VMAF scoring
+        strategy (paired with the transcode short-circuit):
+          - "1" true CFR: avg_frame_rate agrees with r_frame_rate -> zero extra
+            probing; no -r on transcode, no alignment when scoring.
+          - "2" pseudo VFR: VFR metadata but a dominant voted rate holding at least
+            VMAF_PSEUDO_VFR_MIN_RATIO share -> -r <frac> regularizes the output to
+            CFR and scoring aligns both inputs to that rate.
+          - "3" mixed VFR / undecidable: unreliable vote or missing metadata ->
+            marked failed before transcoding when VMAF is on (no extra probing).
+        Returns (tier, rate); rate is None for tier 3, a common fraction otherwise.
+        """
+        avg, r = self._probe_frame_rate_strings(filepath)
+        if avg and r:
+            avg_f = self.fps_fraction_to_float(avg)
+            r_f = self.fps_fraction_to_float(r)
+            if avg_f and r_f and abs(avg_f - r_f) / avg_f <= _VFR_SUSPECT_RATIO:
+                return "1", self._normalize_common_rate(avg)
+
+        if not (avg or r):
+            log.warning("帧率元数据缺失 %s，判定混合 VFR 不可打分", filepath)
+            return "3", None
+
+        diffs_us = self._probe_pts_intervals(filepath)
+        if diffs_us is None:
+            log.warning("疑似 VFR %s: 帧间隔探测失败，判定混合 VFR 不可打分", filepath)
+            return "3", None
+        ranked = self._vote_common_rates(diffs_us)
+        if not ranked:
+            log.warning("疑似 VFR %s: 帧间隔投票无结果，判定混合 VFR 不可打分", filepath)
+            return "3", None
+        top_frac, top_ratio = ranked[0]
+        detail = ", ".join(f"{frac} {100.0 * ratio:.1f}%" for frac, ratio in ranked[:2])
+        log.info(
+            "疑似 VFR %s: avg=%s r=%s 前二帧率份额 %s",
+            filepath,
+            avg or "-",
+            r or "-",
+            detail,
+        )
+        if top_ratio >= config.VMAF_PSEUDO_VFR_MIN_RATIO:
+            return "2", top_frac
+        log.warning(
+            "疑似 VFR %s: 主导帧率 %s 仅占 %.1f%%（< %.0f%%），判定混合 VFR 不可打分",
+            filepath,
+            top_frac,
+            100.0 * top_ratio,
+            100.0 * config.VMAF_PSEUDO_VFR_MIN_RATIO,
+        )
+        return "3", None
 
     def get_streams_info(self, filepath):
         """探测文件所有流与容器格式信息，返回 {streams, duration} 结构（duration 可能为 None）。
@@ -328,23 +400,26 @@ class VideoProbe:
             return None
         return diffs_us
 
-    def _vote_common_rate(self, diffs_us):
+    def _vote_common_rates(self, diffs_us):
         """
         对常见帧率表加权投票：每个帧间隔给偏差 ≤0.5% 的表项加分，
         权重 = 1 - 偏差/容差（越接近得分越高）。
         时间戳量化会把同一帧率网格拆成多个接近的间隔（如 90kHz tick 下的
         33317/33333/33350us），逐桶取众数占比可能虚低；加权投票按"接近度"
         聚合，天然免疫拆桶，且接近 29.97 与 30 之间的间隔（33350us 这类中点）
-        不会因平局误判。返回 (帧率分数, 得分占比)，占比不足返回 None。
+        不会因平局误判。返回按份额降序的 (帧率分数, 得分占比) 列表。
+        与 _vote_common_rate 的区别：返回全部名次，供 classify_fps 输出前两名
+        份额明细校准阈值。
 
-        Weighed vote over the common frame-rate table: each interval adds score to
+        Weighted vote over the common frame-rate table: each interval adds score to
         table entries within 0.5% deviation, weighted by 1 - dev/tolerance (closer
         scores higher). Timestamp quantization splits one nominal rate into several
         close intervals (e.g. 33317/33333/33350us on a 90kHz tick), so a per-bucket
         mode would under-report share; the weighted vote aggregates by proximity and
         is robust to such splitting, and midpoints like 33350us between 29.97 and 30
-        are not misjudged by a tie. Returns (rate_fraction, score share); None if the
-        top share is too low.
+        are not misjudged by a tie. Returns (rate_fraction, score share) entries sorted
+        by share descending. Unlike _vote_common_rate all ranks are returned, letting
+        classify_fps log the top-two shares for threshold calibration.
         """
         votes = Counter()
         for d in diffs_us:
@@ -353,13 +428,23 @@ class VideoProbe:
                 if dev <= _PTS_MAX_DEVIATION:
                     votes[frac] += 1 - dev / _PTS_MAX_DEVIATION
         if not votes:
+            return []
+        total = len(diffs_us)
+        return [(frac, score / total) for frac, score in votes.most_common()]
+
+    def _vote_common_rate(self, diffs_us):
+        """
+        取 _vote_common_rates 的最高名次；占比低于 _PTS_VOTE_MIN_RATIO 视为
+        帧序不可靠，放弃投票结果。返回 (帧率分数, 得分占比)，否则 None。
+        Return the top entry of _vote_common_rates; None when the top share is below
+        _PTS_VOTE_MIN_RATIO (unreliable frame order).
+        """
+        ranked = self._vote_common_rates(diffs_us)
+        if not ranked:
             return None
-        frac, score = votes.most_common(1)[0]
-        ratio = score / len(diffs_us)
+        frac, ratio = ranked[0]
         if ratio < _PTS_VOTE_MIN_RATIO:
-            log.warning(
-                "帧间隔投票不可靠：最高得票 %s 仅占 %.1f%%", frac, 100.0 * ratio
-            )
+            log.warning("帧间隔投票不可靠：最高得票 %s 仅占 %.1f%%", frac, 100.0 * ratio)
             return None
         return frac, ratio
 
@@ -402,6 +487,7 @@ class VideoProbe:
 # VideoProbe.fps_fraction_to_float directly.
 # ---------------------------------------------------------------------------
 
+
 def get_video_codec(filepath, ffprobe_path):
     """探测视频流的编码名称（如 h264/hevc/av1）。见 VideoProbe.get_codec。"""
     return VideoProbe(ffprobe_path).get_codec(filepath)
@@ -415,6 +501,12 @@ def get_video_pix_fmt(filepath, ffprobe_path):
 def get_video_frame_rate(filepath, ffprobe_path):
     """探测视频流帧率（如 "30000/1001"）。见 VideoProbe.get_frame_rate。"""
     return VideoProbe(ffprobe_path).get_frame_rate(filepath)
+
+
+def classify_fps(filepath, ffprobe_path):
+    """档位化源帧率（"1" 真 CFR / "2" 伪 VFR / "3" 混合 VFR 不可打分）。
+    见 VideoProbe.classify_fps。"""
+    return VideoProbe(ffprobe_path).classify_fps(filepath)
 
 
 def get_streams_info(filepath, ffprobe_path):

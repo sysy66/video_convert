@@ -24,6 +24,7 @@ def _build_ffmpeg_cmd(
     output_path,
     sw_scale_fallback=False,
     sw_decode_fallback=False,
+    cfr_rate=None,
 ):
     """
     构建 FFmpeg 命令行参数列表。
@@ -42,6 +43,10 @@ def _build_ffmpeg_cmd(
     :param sw_scale_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
                         Whether to use software-scale fallback (bypass vpp_qsv filter
                         compatibility issues during hwaccel reconfiguration)
+    :param cfr_rate: 伪 VFR 源（classify_fps 档2）的 CFR 化目标帧率分数；
+                     作为输出选项加 -r 把产物规整为真 CFR，供后续 VMAF 逐帧对齐打分。
+                     (Tier-2 pseudo-VFR target fraction; emitted as the -r output option
+                     so the output is true CFR for aligned VMAF scoring)
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
              (cmd_list, total_duration) where duration is in seconds, or None if unknown
     :raises RuntimeError: 当流探测失败时抛出 (Raised when stream probing fails)
@@ -127,6 +132,11 @@ def _build_ffmpeg_cmd(
         cmd.extend(["-vf", "format=p010le,hwupload=extra_hw_frames=64"])
     else:
         cmd.extend(["-vf", "vpp_qsv=format=p010le"])
+
+    if cfr_rate:
+        # 伪 VFR → 真 CFR：输出选项 -r 让编码器按目标帧率规整帧序。
+        # Project the pseudo-VFR source onto a true CFR grid via the -r output option.
+        cmd.extend(["-r", str(cfr_rate)])
 
     cmd.extend(
         [

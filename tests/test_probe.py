@@ -277,6 +277,53 @@ class TestGetVideoFrameRate:
         assert get_video_frame_rate("/test.mp4", None) is None
 
 
+class TestClassifyFps:
+    _META_CFR = "avg_frame_rate=30000/1001\nr_frame_rate=30000/1001\n"
+    _META_VFR = "avg_frame_rate=2128917989/70854606\nr_frame_rate=60/1\n"
+
+    def _classify(self, meta, pts_stdout=None, pts_exception=None):
+        side_effects = [MagicMock(returncode=0, stdout=meta, stderr="")]
+        if pts_exception is not None:
+            side_effects.append(pts_exception)
+        elif pts_stdout is not None:
+            side_effects.append(MagicMock(returncode=0, stdout=pts_stdout, stderr=""))
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.side_effect = side_effects
+            tier, rate = _probe.classify_fps("/test.mp4")
+        return tier, rate, mock_run
+
+    def test_tier1_cfr_meta_agrees_no_sampling(self):
+        tier, rate, mock_run = self._classify(self._META_CFR)
+        assert (tier, rate) == ("1", "30000/1001")
+        assert mock_run.call_count == 1
+
+    def test_tier2_pseudo_vfr_dominant_share(self):
+        with patch("src.probe.config.VMAF_PSEUDO_VFR_MIN_RATIO", 0.75):
+            tier, rate, _ = self._classify(self._META_VFR, _pts_stdout(30))
+        assert (tier, rate) == ("2", "30/1")
+
+    def test_tier3_mixed_vfr_below_threshold(self):
+        # 30/60 各半 → 主导份额 ~0.5，低于 0.75 → 档3 混合 VFR
+        lines = [f"{i * 33333e-6:.9f}" for i in range(200)]
+        lines += [f"{10 + i * 16667e-6:.9f}" for i in range(200)]
+        tier, rate, _ = self._classify(self._META_VFR, "\n".join(lines) + "\n")
+        assert (tier, rate) == ("3", None)
+
+    def test_tier3_pts_probe_failure(self):
+        tier, rate, _ = self._classify(
+            self._META_VFR, pts_exception=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60)
+        )
+        assert (tier, rate) == ("3", None)
+
+    def test_tier3_no_metadata(self):
+        tier, rate, _ = self._classify("")
+        assert (tier, rate) == ("3", None)
+
+    def test_empty_ffprobe_path(self):
+        assert VideoProbe("").classify_fps("/test.mp4") == ("3", None)
+
+
 class TestVoteCommonRate:
     def test_tick_quantized_30fps_merges_buckets(self):
         diffs = [33317] * 124 + [33333] * 138 + [33350] * 133 + [16667] * 20 + [50000] * 45
@@ -353,4 +400,3 @@ class TestNormalizeCommonRate:
     @pytest.mark.parametrize("rate", ["35", "27.5", "0", None, "abc"])
     def test_non_common_rates_passthrough(self, rate):
         assert _probe._normalize_common_rate(rate) == rate
-

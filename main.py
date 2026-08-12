@@ -269,7 +269,7 @@ def main_loop():
     if config.VMAF_ASYNC:
         log.info("VMAF scoring: async (%d worker(s))", config.VMAF_WORKERS)
         start_vmaf_workers()
-        recover_pending_vmaf(history)
+        recover_pending_vmaf(history, ffprobe_path=config.FFPROBE_PATH)
     log.info("=" * 50)
 
     # 转码池常驻整个进程生命周期：扫描周期独立于转码进度，
