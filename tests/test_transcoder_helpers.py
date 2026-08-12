@@ -4,7 +4,7 @@ Unit tests for transcoder helper functions: progress parsing, path handling, pro
 """
 
 import signal
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -16,11 +16,6 @@ pytestmark = pytest.mark.unit
 def _clear_pids():
     with transcoder._active_ffmpeg_lock:
         transcoder._active_ffmpeg_pids.clear()
-
-
-def _clear_active():
-    with transcoder._active_transcodes_lock:
-        transcoder._active_transcodes.clear()
 
 
 class TestFfmpegPidRegistry:
@@ -85,36 +80,6 @@ class TestKillActiveFfmpeg:
             patch("src.process_guard._time.sleep"),
         ):
             transcoder.kill_active_ffmpeg()
-
-
-class TestMarkStaleStartedAsFailed:
-    def test_marks_stale_entries(self):
-        _clear_active()
-        history = MagicMock()
-        history.iter_started.return_value = ["/a.mp4", "/b.mp4"]
-        transcoder.mark_stale_started_as_failed(history)
-        assert history.mark_failed.call_count == 2
-        history.mark_failed.assert_any_call("/a.mp4", "Stale: process interrupted")
-        history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted")
-
-    def test_skips_active_transcodes(self):
-        with transcoder._active_transcodes_lock:
-            transcoder._active_transcodes.add("/a.mp4")
-        try:
-            history = MagicMock()
-            history.iter_started.return_value = ["/a.mp4", "/b.mp4"]
-            transcoder.mark_stale_started_as_failed(history)
-            history.mark_failed.assert_called_once()
-            history.mark_failed.assert_any_call("/b.mp4", "Stale: process interrupted")
-        finally:
-            _clear_active()
-
-    def test_no_stale_no_calls(self):
-        _clear_active()
-        history = MagicMock()
-        history.iter_started.return_value = []
-        transcoder.mark_stale_started_as_failed(history)
-        history.mark_failed.assert_not_called()
 
 
 class TestUniquePath:

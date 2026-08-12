@@ -5,6 +5,7 @@ Unit tests for the main module: CLI override parsing, log setup, signal
 handling, orphan-record cleanup, main-loop scheduling (scan/transcode/VMAF
 lifecycle/dedup/shutdown) and the program entry point.
 """
+
 import signal
 import sys
 import threading
@@ -347,7 +348,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()
@@ -376,13 +376,86 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()
 
         mock_transcode.assert_called_once()
         assert results[0].name == "a.mp4"
+
+    def test_requeues_pending_transcode_at_startup(self):
+        """启动时无条件重入队所有 pending_transcode 记录（不依赖 --retry-failed）。"""
+        _reset_running()
+        config.RETRY_FAILED = False
+        submitted = []
+        executor_cls = main.ThreadPoolExecutor
+
+        class RecordingExecutor(executor_cls):
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn, Path(args[0]).name))
+                return super().submit(fn, *args, **kwargs)
+
+        def stop_after_walk(*_a, **_kw):
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.History") as mock_history_cls,
+            patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
+            patch("main.should_process"),
+            patch("main.transcode"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.cleanup_vmaf_logs"),
+            patch("main.ThreadPoolExecutor", RecordingExecutor),
+        ):
+            history = mock_history_cls.return_value
+            history.iter_started.return_value = [
+                Path("/tmp/vc-test/a.mp4"),
+                Path("/tmp/vc-test/b.mkv"),
+            ]
+            history.iter_failed.return_value = [Path("/tmp/vc-test/c.mp4")]
+            main.main_loop()
+
+        names = [name for _fn, name in submitted]
+        assert names == ["a.mp4", "b.mkv"]
+        assert "c.mp4" not in names
+
+    def test_requeues_failed_only_with_retry_failed(self):
+        """pending_transcode 始终重入队；failed 仅当 --retry-failed 开启时重入队。"""
+        _reset_running()
+        config.RETRY_FAILED = True
+        submitted = []
+        executor_cls = main.ThreadPoolExecutor
+
+        class RecordingExecutor(executor_cls):
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn, Path(args[0]).name))
+                return super().submit(fn, *args, **kwargs)
+
+        def stop_after_walk(*_a, **_kw):
+            main._running = False
+            return iter([])
+
+        with (
+            patch("main.History") as mock_history_cls,
+            patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
+            patch("main.should_process"),
+            patch("main.transcode"),
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.cleanup_vmaf_logs"),
+            patch("main.ThreadPoolExecutor", RecordingExecutor),
+        ):
+            history = mock_history_cls.return_value
+            history.iter_started.return_value = [Path("/tmp/vc-test/a.mp4")]
+            history.iter_failed.return_value = [Path("/tmp/vc-test/x.mp4")]
+            main.main_loop()
+
+        names = [name for _fn, name in submitted]
+        assert names == ["a.mp4", "x.mp4"]
 
     def test_vmaf_async_lifecycle(self):
         """VMAF_ASYNC 为 True 时，应启停并恢复异步 VMAF worker 任务。"""
@@ -401,7 +474,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
             patch("main.start_vmaf_workers") as mock_start,
             patch("main.recover_pending_vmaf") as mock_recover,
@@ -430,7 +502,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
             patch("main.start_vmaf_workers") as mock_start,
             patch("main.recover_pending_vmaf") as mock_recover,
@@ -470,7 +541,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()
@@ -505,7 +575,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()
@@ -528,7 +597,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()
@@ -565,7 +633,6 @@ class TestMainLoop:
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
-            patch("main.mark_stale_started_as_failed"),
             patch("main.cleanup_vmaf_logs"),
         ):
             main.main_loop()

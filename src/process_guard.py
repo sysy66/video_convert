@@ -1,10 +1,8 @@
 """
-进程守卫模块。注册/注销活跃的 ffmpeg 子进程 PID，支持优雅关闭时终止全部
-  活跃 ffmpeg 并把上次启动残留的 pending_transcode 状态标记为 failed。
+进程守卫模块。注册/注销活跃的 ffmpeg 子进程 PID，支持优雅关闭时终止全部活跃 ffmpeg
 
   Process guard module. Registers/unregisters active ffmpeg child PIDs, kills all
-  active ffmpeg processes on graceful shutdown, and marks leftover
-  pending_transcode states from a previous run as failed.
+  active ffmpeg processes on graceful shutdown.
 """
 
 import os
@@ -18,12 +16,6 @@ log = __import__("logging").getLogger(__name__)
 # Track all active ffmpeg child process PIDs for orphan cleanup on graceful shutdown
 _active_ffmpeg_pids = set()
 _active_ffmpeg_lock = threading.Lock()
-
-# 追踪当前正在转码的文件路径，用于避免将本进程的 pending_transcode 条目误判为残留
-# Track filepaths currently being transcoded to avoid falsely flagging their
-# pending_transcode entries as stale
-_active_transcodes = set()
-_active_transcodes_lock = threading.Lock()
 
 
 def register_ffmpeg_pid(pid):
@@ -68,31 +60,3 @@ def kill_active_ffmpeg():
             pass
         except OSError as e:
             log.warning("Failed to SIGKILL ffmpeg PID %d: %s", pid, e)
-
-
-def mark_stale_started_as_failed(history):
-    """
-    将 history 中所有 status == "pending_transcode" 但本进程未在转码的条目标为
-    failed。用于启动 / 每个扫描周期前清理停电残余，避免滞留的
-    pending_transcode 被 FULL SCAN 跳过。
-
-    Mark all history entries with status "pending_transcode" that are NOT
-    currently being transcoded by this process as "failed". Handles stale
-    entries left by power outages so they can be retried later via
-    --retry-failed.
-
-    :param history: 历史记录对象 (History object)
-    """
-    count = 0
-    for fp in history.iter_started():
-        with _active_transcodes_lock:
-            if fp in _active_transcodes:
-                continue
-        history.mark_failed(fp, "Stale: process interrupted")
-        count += 1
-    if count:
-        log.info(
-            "Marked %d stale 'pending_transcode' entr%s as failed",
-            count,
-            "y" if count == 1 else "ies",
-        )

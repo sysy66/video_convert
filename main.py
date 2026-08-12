@@ -25,7 +25,6 @@ from src.transcoder import (
     cleanup_stale_temp_dirs,
     drain_vmaf_tasks,
     kill_active_ffmpeg,
-    mark_stale_started_as_failed,
     recover_pending_vmaf,
     start_vmaf_workers,
     transcode,
@@ -317,16 +316,34 @@ def main_loop():
         finally:
             _pending.discard(str(path))
 
+    def requeue_entry(entries) -> None:
+        """启动时把残留记录按 force=True 重新提交转码。
+
+        供 iter_started()（无条件）与 iter_failed()（--retry-failed）使用：
+        文件不属于任何库则跳过；否则入队去重集后提交，避免与扫描同名重复。
+        依赖均在下方 process_one/_find_lib_for 定义处之后才调用，故定义于此。
+
+        Requeue leftover history entries for transcoding with force=True. Used by
+        iter_started() (unconditional) and iter_failed() (with --retry-failed):
+        entries not owned by any library are skipped; others are added to the
+        dedup set before submission to avoid clashing with the scan loop.
+        """
+        for entry in entries:
+            path = Path(entry)
+            lib_info = _find_lib_for(path)
+            if lib_info is None:
+                log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
+                continue
+            if str(path) in _pending:
+                continue
+            _pending.add(str(path))
+            executor.submit(process_one, path, lib_info, force=True)
+            log.info("REQUEUE ENTRY (queued): %s", path)
+
     try:
+        requeue_entry(history.iter_started())
         if config.RETRY_FAILED:
-            for filepath in history.iter_failed():
-                lib_info = _find_lib_for(filepath)
-                if lib_info is None:
-                    log.warning("RETRY FAILED: no library owns %s, skipping", filepath)
-                    continue
-                _pending.add(filepath)
-                executor.submit(process_one, Path(filepath), lib_info, force=True)
-                log.info("RETRY FAILED (queued): %s", filepath)
+            requeue_entry(history.iter_failed())
 
         while _running:
             for lib_info in config.LIBRARIES.values():
@@ -338,7 +355,6 @@ def main_loop():
                         lib_info["input"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
                     )
 
-            mark_stale_started_as_failed(history)
             purge_orphan_records(history)
             cleanup_vmaf_logs()
 

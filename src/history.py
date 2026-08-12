@@ -125,18 +125,18 @@ class History:
 
     def iter_started(self):
         """
-        遍历所有 status == "pending_transcode" 的文件路径（用于启动时清理残余状态）。
-        先物料成列表再 yield——调用方（mark_stale_started_as_failed）会边遍历边写。
-        Yield all filepaths whose status is "pending_transcode"
-        (for stale-state cleanup).
-        Materialised into a list first—the caller writes while iterating.
+        遍历所有 status == "pending_transcode" 的文件路径（用于启动时重入队）。
+        物化成列表返回，避免返回生成器后并发写者修改导致游标问题。
+
+        Return all filepaths whose status is "pending_transcode"
+        (re-enqueued on startup). Materialised into a list so the caller can
+        iterate safely while the DB may be written to concurrently.
         """
         with self._lock:
             rows = self._conn.execute(
                 "SELECT filepath FROM files WHERE status='pending_transcode'"
             ).fetchall()
-        for row in rows:
-            yield row["filepath"]
+        return [r["filepath"] for r in rows]
 
     def iter_final_states(self):
         """

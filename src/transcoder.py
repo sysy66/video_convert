@@ -26,10 +26,7 @@ from src.probe import classify_fps, get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
-    _active_transcodes,
-    _active_transcodes_lock,
     kill_active_ffmpeg,
-    mark_stale_started_as_failed,
     register_ffmpeg_pid,
     unregister_ffmpeg_pid,
 )
@@ -73,7 +70,6 @@ __all__ = [
     "cleanup_stale_temp_dirs",
     "drain_vmaf_tasks",
     "kill_active_ffmpeg",
-    "mark_stale_started_as_failed",
     "recover_pending_vmaf",
     "start_vmaf_workers",
     "transcode",
@@ -82,8 +78,6 @@ __all__ = [
     "_active_ffmpeg_pids",
     "_active_temp_dirs",
     "_active_temp_dirs_lock",
-    "_active_transcodes",
-    "_active_transcodes_lock",
     "_build_ffmpeg_cmd",
     "_cleanup_temp",
     "_final_dest_path",
@@ -187,8 +181,6 @@ def transcode(
     with _active_temp_dirs_lock:
         _active_temp_dirs.add(str(temp_dir))
     history.mark_started(str(filepath))
-    with _active_transcodes_lock:
-        _active_transcodes.add(str(filepath))
 
     try:
         # 档位化源帧率（仅开启 VMAF 时需要）：档3/4 混合 VFR 无法可信打分，
@@ -563,7 +555,5 @@ def transcode(
         history.mark_failed(str(filepath), str(e))
         return False
     finally:
-        with _active_transcodes_lock:
-            _active_transcodes.discard(str(filepath))
         with _active_temp_dirs_lock:
             _active_temp_dirs.discard(str(temp_dir))
