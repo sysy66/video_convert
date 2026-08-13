@@ -20,9 +20,10 @@ from src.ffmpeg_runner import (
     _parse_progress_time,
     _run_ffmpeg_with_progress,
     _summarize_error_stderr,
+    parse_frame_count_from_stderr,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
-from src.probe import classify_fps, get_video_codec
+from src.probe import detect_vmaf_align_rate, get_frame_count, get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
@@ -183,37 +184,27 @@ def transcode(
     history.mark_started(str(filepath))
 
     try:
-        # 档位化源帧率（仅开启 VMAF 时需要）：档3/4 混合 VFR 无法可信打分，
-        # 转码前直接 mark_failed 永久排除；档2 伪 VFR 记录 CFR 化目标帧率（转码
-        # -r）。档1/2 都记录打分对齐帧率（VMAF fps 滤镜）——档1 用源 avg 帧率，
-        # 对其恒等、无副作用，但保留兜底到 VMAF_ALIGN_FPS_RATE。
-        # Classify the source frame rate (only when VMAF is on): mixed VFR (tiers 3/4)
-        # is not scoreable, so mark_failed before transcoding; tier-2 pseudo VFR gets
-        # a CFR target (-r). Both tiers 1/2 get a scoring alignment rate (fps filter),
-        # using the source avg rate for tier 1 (an identity transform, kept as safety)
-        # with a fallback to VMAF_ALIGN_FPS_RATE.
-        fps_tier = "1"
-        cfr_rate = None
+        # 探测打分回退投影帧率（仅开启 VMAF 时需要）：两路帧数相等时打分走帧序
+        # 对齐（不需要它），仅当帧数不相等回退 fps 网格投影时使用（三级链：投票帧率
+        # → 规范化 avg_frame_rate → r_frame_rate，全缺失为 None，打分侧兜底
+        # VMAF_ALIGN_FPS_RATE）。转码侧不产生任何帧率规整参数（实验证明 -r 致
+        # VMAF 虚低、-fps_mode cfr 致产物双倍帧，2026-08-13 chn-127）。
+        # Probe the fallback alignment rate (only when VMAF is on): frame-index
+        # alignment is used when the two inputs have equal frame counts; this rate
+        # feeds only the fps-grid projection used when the counts differ (three-level
+        # chain: voted rate -> normalized avg_frame_rate -> r_frame_rate, None when
+        # all are missing and VMAF_ALIGN_FPS_RATE backs up scoring). Transcoding adds
+        # no frame-rate options (experiments showed -r deflates scores and -fps_mode
+        # cfr doubles output frames, chn-127 2026-08-13).
         fps_align_rate = None
         if config.VMAF_ASYNC or config.VMAF_REQUIRED:
-            fps_tier, fps_rate = classify_fps(filepath, ffprobe_path)
-            if fps_tier not in ("1", "2"):
-                log.warning(
-                    "MIXED VFR SKIP: %s (tier %s) - mixed-VFR source not scoreable under VMAF",
-                    filepath.name,
-                    fps_tier,
-                )
-                history.mark_failed(str(filepath), "Mixed-VFR source not scoreable under VMAF")
-                return False
-            if fps_tier == "2":
-                cfr_rate = fps_rate
-            fps_align_rate = fps_rate
+            fps_align_rate = detect_vmaf_align_rate(filepath, ffprobe_path)
 
         # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
         sw_scale_fallback_attempted = False
 
         def _retry_sw_scale():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted, cfr_rate  # noqa: E501
+            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted  # noqa: E501
             if sw_scale_fallback_attempted:
                 return
             sw_scale_fallback_attempted = True
@@ -236,7 +227,6 @@ def transcode(
                 filepath,
                 output_path,
                 sw_scale_fallback=True,
-                cfr_rate=cfr_rate,
             )
             log.info(
                 "FFMPEG CMD (sw scale fallback): %s %s",
@@ -255,7 +245,7 @@ def transcode(
         sw_decode_fallback_attempted = False
 
         def _retry_sw_decode():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted, cfr_rate  # noqa: E501
+            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted  # noqa: E501
             if sw_decode_fallback_attempted:
                 return
             sw_decode_fallback_attempted = True
@@ -278,7 +268,6 @@ def transcode(
                 filepath,
                 output_path,
                 sw_decode_fallback=True,
-                cfr_rate=cfr_rate,
             )
             log.info(
                 "FFMPEG CMD (sw decode fallback): %s %s",
@@ -312,7 +301,6 @@ def transcode(
             filepath,
             output_path,
             sw_decode_fallback=sw_decode_fallback_attempted,
-            cfr_rate=cfr_rate,
         )
         log.info("FFMPEG CMD: %s %s", filepath.name, " ".join(str(c) for c in cmd))
 
@@ -360,6 +348,9 @@ def transcode(
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
         elapsed = _time.monotonic() - start_time
+        # 产物帧数直接取自 ffmpeg 最终进度行的 frame=N（与 -count_frames 计数
+        # 同源），免去打分前对 mkv 产物再做一次昂贵的全量解码计数。
+        dist_frame_count = parse_frame_count_from_stderr(stderr)
 
         # 异步 VMAF：文件先移入输出区但不删源，后台 worker 打分后决定去留。
         # 与内联打分完全互斥（内联 VMAF 耗时数分钟到数小时，阻塞转码线程）。
@@ -394,7 +385,7 @@ def transcode(
                 _cleanup_temp(temp_dir)
                 history.mark_failed(str(filepath), f"File move failed: {e}")
                 return False
-            history.mark_pending_vmaf(str(filepath), str(final_path))
+            history.mark_pending_vmaf(str(filepath), str(final_path), dist_frame_count)
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_tasks.put(
                 (
@@ -406,6 +397,8 @@ def transcode(
                     elapsed,
                     keep_source,
                     fps_align_rate,
+                    dist_frame_count,
+                    ffprobe_path,
                 )
             )
             log.info(
@@ -438,8 +431,16 @@ def transcode(
                 Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
             )
             vmaf_start = _time.monotonic()
+            # 源帧数走 nb_frames 容器索引快路径（mp4 秒级，mkv 回退全量计数），
+            # 产物帧数已由转码 stderr 解析，两路都不再需要打分侧全量探测
+            ref_frame_count = get_frame_count(filepath, ffprobe_path)
             vmaf_score = compute_vmaf(
-                filepath, output_path, log_path=vmaf_log, fps_rate=fps_align_rate
+                filepath,
+                output_path,
+                log_path=vmaf_log,
+                fps_rate=fps_align_rate,
+                ref_frame_count=ref_frame_count,
+                dist_frame_count=dist_frame_count,
             )
             vmaf_elapsed = _time.monotonic() - vmaf_start
 

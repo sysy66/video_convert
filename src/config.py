@@ -218,29 +218,34 @@ VMAF_SUBSAMPLE = 30
 # diminish beyond ~4 threads.
 VMAF_N_THREADS = 0
 
-# VMAF 打分帧率对齐总开关。仅对"档2 伪 VFR"（元数据强 VFR 但投票出主导帧率，
-# 见 classify_fps）生效：转码时加 -r 把产物规整为 CFR，打分时给两个输入都加
-# fps 滤镜归一到同一时间网格，消除 libvmaf 逐帧对比的累计漂移。
-# 实测（Arc A310 + av1_qsv）：同一产物不对齐 63.19，对齐后 94.83 且三次一致。
-# 真 CFR 源（档1）不转码、不对齐；主导帧率不明显（档3/4 混合 VFR）在开启
-# VMAF 时直接 mark_failed，不硬转。
-# Rate-alignment master switch for VMAF scoring. Only applies to "tier 2 pseudo-VFR"
-# sources (strong VFR metadata but a voted dominant rate; see classify_fps): -r
-# regularizes the output to CFR, and both scoring inputs get an fps filter onto the
-# same time grid to cancel cumulative drift in per-frame comparison. True-CFR sources
-# (tier 1) are neither regularized nor aligned; mixed VFR without a dominant rate
-# (tiers 3/4) is marked failed upfront when VMAF is on.
+# VMAF 打分帧率对齐总开关。打分侧对齐：优先"帧序对齐"（两路帧数相等则按帧序号
+# 逐帧配对，与容器 tbr/帧率网格无关，VFR 源不再假低分）；仅当两路帧数不相等
+# （或帧数探测失败）时才回退到 fps 网格投影，目标帧率按三级链取
+# detect_vmaf_align_rate 的返回值（帧间隔投票帧率 → 规范化 avg_frame_rate →
+# r_frame_rate），全缺失时用 VMAF_ALIGN_FPS_RATE 兜底。转码侧不产生任何帧率
+# 规整参数（实验证明 -r/-fps_mode cfr 分别致 VMAF 虚低/产物双倍帧），对齐只在
+# 打分侧进行。实测（2026-08-13 chn-127 全片）：帧序对齐 92.09 vs fps=30/1
+# 投影 62.37。
+# With VMAF_ALIGN_FPS=True scoring prefers frame-index alignment (when both
+# inputs have equal frame counts frames are paired by index, independent of the
+# container tbr/frame-rate grid, so VFR sources are no longer falsely deflated);
+# fps-grid projection is used only when the counts differ or probing fails, its
+# target rate comes from detect_vmaf_align_rate's three-level chain (voted
+# PTS-interval rate -> normalized avg_frame_rate -> r_frame_rate), falling back
+# to VMAF_ALIGN_FPS_RATE when nothing is available. Transcoding adds no
+# frame-rate regularization (experiments showed -r deflates scores and
+# -fps_mode cfr doubles output frames); alignment happens on the scoring side
+# only. Measured (2026-08-13 chn-127 full movie): frame-index 92.09 vs
+# fps=30/1 projection 62.37.
 VMAF_ALIGN_FPS = True
 VMAF_ALIGN_FPS_RATE = "30000/1001"
 
-# classify_fps 档2 判定阈值：帧间隔投票中主导帧率的份额须 ≥ 该值才算"伪 VFR"。
-# 低于此值视为档3/4 混合 VFR（帧率中途频繁切换），开启 VMAF 时无法可信打分。
-# 实测：chn-127 主导 30fps 占 83.2% → 档2；stars-757 主导 25fps 仅 62.1% → 档3/4。
-# classify_fps tier-2 threshold: the voted dominant frame rate must hold at least
-# this share of sampled intervals. Lower is treated as mixed VFR (tiers 3/4), which
-# cannot be scored reliably under VMAF. Measured: chn-127 30fps at 83.2% -> tier 2;
-# stars-757 25fps at only 62.1% -> tiers 3/4.
-VMAF_PSEUDO_VFR_MIN_RATIO = 0.75
+# 打分前帧数探测（get_frame_count / -count_frames）超时秒数：全量解码计数，
+# 超长影片（3+ 小时）也可能需要数分钟，探测失败会回退 fps 网格投影。
+# Timeout (seconds) for the pre-scoring frame count probe (get_frame_count /
+# -count_frames), which decodes the whole input; very long movies (3+ hours)
+# may take minutes, and a probe failure falls back to fps-grid projection.
+FRAME_COUNT_TIMEOUT = 3600
 
 # VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
 # Directory for per-run VMAF json logs; kept even when the result is rejected, for auditing.

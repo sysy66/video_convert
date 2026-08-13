@@ -14,7 +14,7 @@ import time as _time
 from pathlib import Path
 
 from src import config
-from src.probe import classify_fps
+from src.probe import detect_vmaf_align_rate, get_frame_count
 from src.quality import compute_vmaf, vmaf_verdict
 
 log = __import__("logging").getLogger(__name__)
@@ -40,18 +40,38 @@ def _handle_vmaf_task(task):
     Handle one async VMAF scoring task: score the output, then decide its fate
     based on vmaf_verdict's verdict (retry/accept/reject) and update history.
     """
-    # 兼容缺少 codec_elapsed/keep_source/fps_align_rate 的短任务元组，缺失时补 None。
-    # Tolerate short task tuples that omit codec_elapsed/keep_source/fps_align_rate
-    # (padded with None).
-    source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate = (
-        task + (None,) * 8
-    )[:8]
+    # 兼容缺少 codec_elapsed/keep_source/fps_align_rate/dist_frame_count/
+    # ffprobe_path 的短任务元组，缺失时补 None。
+    # Tolerate short task tuples that omit the trailing fields (padded with None).
+    (
+        source,
+        output,
+        ratio,
+        safe_stem,
+        history,
+        codec_elapsed,
+        keep_source,
+        fps_align_rate,
+        dist_frame_count,
+        ffprobe_path,
+    ) = (task + (None,) * 10)[:10]
     source = Path(source)
     output = Path(output)
 
     vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
     vmaf_start = _time.monotonic()
-    vmaf_score = compute_vmaf(source, output, log_path=vmaf_log, fps_rate=fps_align_rate)
+    # 源帧数走 nb_frames 容器索引快路径（mp4 秒级；mkv 回退全量计数，后台
+    # 线程内执行不阻塞主流程）；产物帧数由转码 stderr 解析随任务传入，
+    # recover 恢复的任务无该值（None）→ 打分回退 fps 网格投影。
+    ref_frame_count = get_frame_count(str(source), ffprobe_path) if ffprobe_path else None
+    vmaf_score = compute_vmaf(
+        source,
+        output,
+        log_path=vmaf_log,
+        fps_rate=fps_align_rate,
+        ref_frame_count=ref_frame_count,
+        dist_frame_count=dist_frame_count,
+    )
     vmaf_elapsed = _time.monotonic() - vmaf_start
 
     verdict = vmaf_verdict(vmaf_score, ratio)
@@ -190,22 +210,21 @@ def drain_vmaf_tasks():
 def recover_pending_vmaf(history, ffprobe_path=None):
     """
     启动恢复：把历史中残留的 await_postprocess 记录重新入队异步打分，处理 kill -9
-    后遗留的双份（源与产物同时存在）情况。入队前按 classify_fps 重新档位化：
-    若源是档3/4 混合 VFR（开启 VMAF 时本就无法打分），删除残留产物并记 failed。
+    后遗留的双份（源与产物同时存在）情况。入队前探测打分回退投影帧率
+    （detect_vmaf_align_rate，三级链，失败为 None 时打分侧兜底）。
 
     Startup recovery: re-enqueue await_postprocess records left in history for
-    async scoring, handling the duplicate-file case left behind by kill -9. Each
-    entry is re-classified with classify_fps first: a mixed-VFR source (tier 3/4)
-    could never have been scored, so its orphaned output is removed and the entry
-    marked failed.
+    async scoring, handling the duplicate-file case left behind by kill -9. The
+    fallback alignment rate is probed before enqueue (detect_vmaf_align_rate's
+    three-level chain; None leaves scoring to its own VMAF_ALIGN_FPS_RATE fallback).
 
     :param history: 历史记录对象 (History tracking object)
-    :param ffprobe_path: ffprobe 路径，用于重新档位化；None 时不再档位化，直接按旧路径入队
-                         (ffprobe path for reclassification; when None, entries are
-                         re-enqueued as-is)
+    :param ffprobe_path: ffprobe 路径，用于重新探测帧率；None 时不再探测，直接按旧路径入队
+                         (ffprobe path for re-probing the rate; when None, entries
+                         are re-enqueued as-is)
     """
     count = 0
-    for filepath, output_path in history.iter_pending_vmaf():
+    for filepath, output_path, dist_frame_count in history.iter_pending_vmaf():
         if not Path(output_path).exists():
             log.error("VMAF RECOVER: output missing for %s, marking failed", filepath)
             history.mark_failed(filepath, "Pending VMAF output missing on recovery")
@@ -220,20 +239,7 @@ def recover_pending_vmaf(history, ffprobe_path=None):
             continue
         fps_align_rate = None
         if ffprobe_path:
-            tier, rate = classify_fps(filepath, ffprobe_path)
-            if tier not in ("1", "2"):
-                log.warning(
-                    "VMAF RECOVER: %s is mixed-VFR (tier %s), removing output and marking failed",
-                    filepath,
-                    tier,
-                )
-                try:
-                    Path(output_path).unlink()
-                except OSError:
-                    pass
-                history.mark_failed(filepath, "Mixed-VFR source not scoreable under VMAF")
-                continue
-            fps_align_rate = rate
+            fps_align_rate = detect_vmaf_align_rate(filepath, ffprobe_path)
         stem = Path(filepath).stem
         safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
         try:
@@ -250,6 +256,8 @@ def recover_pending_vmaf(history, ffprobe_path=None):
                 None,
                 config.KEEP_SOURCE,
                 fps_align_rate,
+                dist_frame_count,
+                ffprobe_path,
             )
         )
         count += 1

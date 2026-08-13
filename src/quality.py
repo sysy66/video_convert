@@ -61,23 +61,81 @@ def _read_vmaf_from_json(log_path):
 
 def _align_fps_string(rate):
     """
-    VFR 源被转码规整为 CFR 后，产物与源帧序会产生累计漂移，导致 libvmaf
-    逐帧对比错位、分数虚低。开启 VMAF_ALIGN_FPS 时给两个输入都加 fps 滤镜
-    归一到同一时间网格，消除系统性打分误差。目标帧率由调用方传入（transcode
-    侧 classify_fps 档1/2 的帧率，档1 为源 avg、档2 为投票主导帧率）；帧率缺失
-    时回退到配置的 VMAF_ALIGN_FPS_RATE 兜底。VMAF_ALIGN_FPS 关闭时返回空串
-    （总开关）。
+    构建 fps 滤镜字符串（如 "fps=30000/1001"），供两路帧数不相等时回退到
+    fps 网格投影对齐。VMAF_ALIGN_FPS 关闭时返回空串（总开关）。
+    帧数相等时走帧序对齐路径（_frame_index_align_string），不需要该参数。
 
-    Build the fps filter string (e.g. "fps=30000/1001") for frame-rate alignment,
-    or "" when VMAF_ALIGN_FPS is disabled. The target rate comes from the caller
-    (classify_fps tier-1 avg or tier-2 voted dominant rate on the transcode side);
-    a missing rate falls back to the configured VMAF_ALIGN_FPS_RATE.
+    Build the fps filter string (e.g. "fps=30000/1001") for the fallback
+    fps-grid projection used when the two inputs have unequal frame counts;
+    returns "" when VMAF_ALIGN_FPS is disabled. Equal frame counts use the
+    frame-index alignment path (_frame_index_align_string) instead.
     """
     if not config.VMAF_ALIGN_FPS:
         return ""
     if not rate:
         rate = config.VMAF_ALIGN_FPS_RATE
     return f"fps={rate}"
+
+
+def _frame_index_align_string():
+    """
+    构建帧序对齐 setpts 字符串：把每路的帧时间戳按帧序号线性化
+    （setpts=N/30/TB，参考帧率 30 仅用于归一化、数值任意），使得两路第 n 帧
+    时间戳相等、逐帧配对对比，与源/产物的容器 tbr 声明、真实帧率完全无关。
+    2026-08-13 chn-127 全片实验：v1 产物（帧序保留）用该方式打分 92.09，
+    而旧的 fps=30/1 网格投影打分只有 62.37（VFR 帧不落网格导致的假低分）。
+    仅在 VMAF_ALIGN_FPS 开启时使用。
+
+    Build the frame-index alignment setpts string: linearizes each stream's
+    frame timestamps by frame index (setpts=N/30/TB; the 30fps reference is only
+    for normalization and its value is arbitrary), so frame n of both inputs
+    gets identical timestamps and is compared pairwise, independent of the
+    container tbr declaration and true frame rates. From the 2026-08-13 full
+    chn-127 experiment the v1 output (frame order preserved) scores 92.09 with
+    this alignment while the old fps=30/1 grid projection scored only 62.37
+    (VFR frames not on the grid were falsely downgraded). Used only when
+    VMAF_ALIGN_FPS is enabled.
+    """
+    if not config.VMAF_ALIGN_FPS:
+        return ""
+    return "setpts=N/30/TB"
+
+
+def _frame_counts_equal(ref_frame_count, dist_frame_count):
+    """
+    比较两路已知帧数是否相等。相等是帧序对齐逐帧对比的前提（帧数不等时
+    逐帧错位、分数无意义，需要回退 fps 网格投影）。任一路帧数不可得
+    （None）按不相等处理。
+
+    Compare the two known frame counts for equality. Equal counts are the
+    precondition for frame-index-aligned per-frame comparison (mismatched
+    counts misalign every frame pair and would produce a meaningless score, so
+    the fps-grid projection fallback is used instead). A missing count (None)
+    on either side is treated as unequal.
+
+    :param ref_frame_count: 参考（源）帧数，不可得时 None (Reference frame
+                            count, or None when unavailable)
+    :param dist_frame_count: 失真（产物）帧数，不可得时 None (Distorted frame
+                             count, or None when unavailable)
+    :return: 两路帧数均可得且相等时 True，否则 False (True only when both
+             counts are available and equal, else False)
+    """
+    if ref_frame_count is None or dist_frame_count is None:
+        log.warning(
+            "VMAF frame count unavailable (ref=%s dist=%s), falling back to fps grid projection",
+            ref_frame_count,
+            dist_frame_count,
+        )
+        return False
+    if ref_frame_count != dist_frame_count:
+        log.warning(
+            "VMAF frame count mismatch ref=%d dist=%d, falling back to fps grid projection",
+            ref_frame_count,
+            dist_frame_count,
+        )
+        return False
+    log.info("VMAF frame counts equal (%d), using frame-index alignment", ref_frame_count)
+    return True
 
 
 def _run_vmaf(
@@ -88,18 +146,37 @@ def _run_vmaf(
     hwaccel=False,
     ffprobe_path=None,
     fps_rate=None,
+    ref_frame_count=None,
+    dist_frame_count=None,
 ):
     """
     内部：构建并执行单次 ffmpeg VMAF 命令。
+    对齐策略（VMAF_ALIGN_FPS 开启时）：
+      1) 优先帧序对齐：两路帧数相等（_frame_counts_equal）时用 setpts=N/30/TB
+         把帧时间戳按帧序号线性化，第 n 帧与第 n 帧逐帧配对——不依赖任何
+         tbr 声明/帧率网格，VFR 源不再产生假低分（chn-127 实测 62.37→92.09）。
+      2) 帧数不等或不可得（None）时回退 fps 网格投影（旧行为，fps_rate 参数）。
     HW 模式下 hwdownload 按每路各自探测到的真实原生位深取帧（8bit → nv12，
     10bit → p010le），全程不经过 vpp_qsv 等有损转换，分数与纯软件路径逐位一致。
     若某路源编码 QSV 无法硬解（如老番 avi 的 mpeg4），hwdownload 会直接失败
     （不会静默降级成软解再上传），从而安全回退到软件路径。
 
     :param hwaccel: True 时启用 QSV 硬件解码（hwdownload 后接软件 libvmaf）
-    :param fps_rate: 帧率对齐目标（classify_fps 档2 主导帧率），None 不插入 fps 滤镜
+    :param fps_rate: 回退对齐帧率（帧数不等时的 fps 网格投影目标）
+    :param ref_frame_count: 参考帧数（调用方探测，None 视为不可得回退投影）
+    :param dist_frame_count: 失真帧数（转码 stderr 解析/探测，None 回退投影）
     """
     _fps = _align_fps_string(fps_rate)
+    # 对齐链：帧数相等 → 帧序对齐（setpts=N/30/TB，与 tbr 无关）；
+    # 否则回退旧行为（setpts=PTS-STARTPTS + fps 网格投影）。
+    # Alignment chain: equal frame counts -> frame-index alignment
+    # (setpts=N/30/TB, independent of tbr); otherwise the legacy path
+    # (setpts=PTS-STARTPTS + fps grid projection).
+    _align = _frame_index_align_string()
+    if _align and not _frame_counts_equal(ref_frame_count, dist_frame_count):
+        _align = ""
+    if not _align:
+        _align = "setpts=PTS-STARTPTS" + (_fps and "," + _fps or "")
 
     if hwaccel:
         ffprobe_path = ffprobe_path or config.FFPROBE_PATH
@@ -108,9 +185,9 @@ def _run_vmaf(
         hwaccel_flags = ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
         filter_complex = (
             "[0:v]hwdownload,format=" + ref_fmt + "[ref_dl];"
-            "[ref_dl]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[r0];"
+            "[ref_dl]" + _align + "[r0];"
             "[1:v]hwdownload,format=" + dist_fmt + "[dist_dl];"
-            "[dist_dl]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[d0];"
+            "[dist_dl]" + _align + "[d0];"
             "[d0][r0]scale2ref=flags=bicubic[d1][r1];"
             "[d1]format=yuv420p[dist];"
             "[r1]format=yuv420p[ref];"
@@ -124,8 +201,8 @@ def _run_vmaf(
         )
     else:
         filter_complex = (
-            "[1:v]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[d0];"
-            "[0:v]setpts=PTS-STARTPTS" + (_fps and "," + _fps or "") + "[r0];"
+            "[1:v]" + _align + "[d0];"
+            "[0:v]" + _align + "[r0];"
             "[d0][r0]scale2ref=flags=bicubic[d1][r1];"
             "[d1]format=yuv420p[dist];"
             "[r1]format=yuv420p[ref];"
@@ -194,7 +271,15 @@ def _run_vmaf(
     return None
 
 
-def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None, fps_rate=None):
+def compute_vmaf(
+    original_path,
+    transcoded_path,
+    ffmpeg_path=None,
+    log_path=None,
+    fps_rate=None,
+    ref_frame_count=None,
+    dist_frame_count=None,
+):
     """
     计算转码前后视频的 VMAF 分数。
     使用 scale2ref 进行分辨率对齐，避免参考/失真分辨率不匹配导致分数虚低；
@@ -219,9 +304,17 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
                         (Path to ffmpeg with libvmaf, defaults to config)
     :param log_path: json 日志输出路径，None 时自动生成到 VMAF_LOG_DIR
                      (Path for json log output, defaults to VMAF_LOG_DIR when None)
-    :param fps_rate: 帧率对齐目标（classify_fps 档2 主导帧率），None 不插入 fps 滤镜
-                     (Frame-rate alignment target, e.g. tier-2 dominant rate; None
-                     inserts no fps filter)
+    :param fps_rate: 回退对齐帧率（两路帧数不等时 fps 网格投影的目标帧率；
+                      帧数相等时走帧序对齐，不需要该参数）
+                     (Fallback alignment rate used only when the two inputs have
+                     unequal frame counts; equal counts use frame-index alignment
+                     which does not need it)
+    :param ref_frame_count: 参考帧数，None 时按不可得处理回退 fps 投影
+                            (Reference frame count; None disables frame-index
+                            alignment in favor of the fps projection)
+    :param dist_frame_count: 失真帧数，None 时按不可得处理回退 fps 投影
+                             (Distorted frame count; None disables frame-index
+                             alignment in favor of the fps projection)
     :return: VMAF 分数 (0-100)，失败或不可用时返回 None
              (VMAF score 0-100, or None on failure/unavailability)
     """
@@ -244,6 +337,8 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             hwaccel=True,
             ffprobe_path=config.FFPROBE_PATH,
             fps_rate=fps_rate,
+            ref_frame_count=ref_frame_count,
+            dist_frame_count=dist_frame_count,
         )
         if score is not None:
             return score
@@ -253,7 +348,15 @@ def compute_vmaf(original_path, transcoded_path, ffmpeg_path=None, log_path=None
             return None
 
     return _run_vmaf(
-        original_path, transcoded_path, ffmpeg_path, log_path, hwaccel=False, fps_rate=fps_rate
+        original_path,
+        transcoded_path,
+        ffmpeg_path,
+        log_path,
+        hwaccel=False,
+        ffprobe_path=config.FFPROBE_PATH,
+        fps_rate=fps_rate,
+        ref_frame_count=ref_frame_count,
+        dist_frame_count=dist_frame_count,
     )
 
 

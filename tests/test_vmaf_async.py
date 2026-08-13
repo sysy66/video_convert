@@ -56,7 +56,7 @@ class TestTranscodeAsync:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_ASYNC", True),
-            patch("src.transcoder.classify_fps", return_value=("1", None)),
+            patch("src.transcoder.detect_vmaf_align_rate", return_value=None),
             patch("src.transcoder.compute_vmaf", return_value=compute_vmaf_return),
         )
 
@@ -91,8 +91,36 @@ class TestTranscodeAsync:
         assert task[2] == pytest.approx(0.1)
         assert task[3] == "test"
         assert task[4] is history
+        assert task[8] is None  # 进度 stderr 无 frame=N 时产物帧数不可得
+        assert task[9] == "/ffprobe"  # worker 内源帧数快路径探测的 ffprobe 路径
 
-    def test_tier2_queues_with_fps_align_rate(self, tmp_path):
+    def test_dist_frame_count_parsed_from_stderr_and_queued(self, tmp_path):
+        # 转码进度 stderr 末尾 frame=N 即产物帧数，随任务入队，
+        # worker 打分直接使用，不再对 k9 产物做全量解码计数
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video" * 10)
+
+        history = MagicMock()
+
+        def _progress_with_frames(cmd, total_duration, file_stem, **kwargs):
+            output_path = Path(cmd[-1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("transcoded")
+            return (0, "frame=  5000 fps=150.0\nframe=  5000 fps=149.2 size=2048KiB\n")
+
+        p1, p2, p3, p4, p5 = self._base_patches()
+        with p1, p2, p3, p4, p5:
+            with patch(
+                "src.transcoder._run_ffmpeg_with_progress",
+                side_effect=_progress_with_frames,
+            ):
+                result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        task = vmaf_tasks.get_nowait()
+        assert task[8] == 5000
+
+    def test_detected_rate_queues_with_fps_align_rate(self, tmp_path):
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video" * 10)
 
@@ -105,13 +133,13 @@ class TestTranscodeAsync:
             p3,
             p4,
             p5,
-            patch("src.transcoder.classify_fps", return_value=("2", "25/1")),
+            patch("src.transcoder.detect_vmaf_align_rate", return_value="25/1"),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
         assert result is True
         task = vmaf_tasks.get_nowait()
-        assert task[7] == "25/1"  # 档2 打分对齐帧率随任务入队
+        assert task[7] == "25/1"  # 探测出的回退投影帧率随任务入队
 
     def test_ratio_over_max_rejects_without_queue(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -160,7 +188,7 @@ class TestTranscodeAsync:
         assert (output_dir / "sub" / "test.mkv").exists()
         assert input_file.exists()
         history.mark_pending_vmaf.assert_called_once_with(
-            str(input_file), str(output_dir / "sub" / "test.mkv")
+            str(input_file), str(output_dir / "sub" / "test.mkv"), None
         )
 
     def test_move_failure_marks_failed(self, tmp_path):
@@ -346,7 +374,7 @@ class TestRecoverPendingVmaf:
         output.write_text("o" * 50)
 
         history = MagicMock()
-        history.iter_pending_vmaf.return_value = [(str(source), str(output))]
+        history.iter_pending_vmaf.return_value = [(str(source), str(output), 777)]
 
         recover_pending_vmaf(history)
 
@@ -356,6 +384,7 @@ class TestRecoverPendingVmaf:
         assert task[2] == pytest.approx(0.5)
         assert task[3] == "movie"
         assert task[4] is history
+        assert task[8] == 777  # 持久化的产物帧数随任务恢复，启用帧序对齐
         history.mark_failed.assert_not_called()
         history.mark_done.assert_not_called()
 
@@ -364,7 +393,9 @@ class TestRecoverPendingVmaf:
         source.write_text("src")
 
         history = MagicMock()
-        history.iter_pending_vmaf.return_value = [(str(source), str(tmp_path / "gone" / "o.mkv"))]
+        history.iter_pending_vmaf.return_value = [
+            (str(source), str(tmp_path / "gone" / "o.mkv"), None)
+        ]
 
         recover_pending_vmaf(history)
 
@@ -378,7 +409,7 @@ class TestRecoverPendingVmaf:
         output.write_text("orphan")
 
         history = MagicMock()
-        history.iter_pending_vmaf.return_value = [(str(tmp_path / "gone.mkv"), str(output))]
+        history.iter_pending_vmaf.return_value = [(str(tmp_path / "gone.mkv"), str(output), None)]
 
         recover_pending_vmaf(history)
 
@@ -386,7 +417,8 @@ class TestRecoverPendingVmaf:
         history.mark_done.assert_called_once_with(str(tmp_path / "gone.mkv"), None, rejected=True)
         assert vmaf_tasks.empty()
 
-    def test_mixed_vfr_removes_output_and_marks_failed(self, tmp_path):
+    def test_align_rate_unavailable_still_queues(self, tmp_path):
+        # 帧率探测全缺失（None）不再短路：恢复入队正常打分，回退兜底交给打分侧
         source = tmp_path / "movie.mkv"
         source.write_text("s" * 100)
         output = tmp_path / "out" / "movie.mkv"
@@ -394,18 +426,18 @@ class TestRecoverPendingVmaf:
         output.write_text("o" * 50)
 
         history = MagicMock()
-        history.iter_pending_vmaf.return_value = [(str(source), str(output))]
+        history.iter_pending_vmaf.return_value = [(str(source), str(output), None)]
 
-        with patch("src.vmaf_async.classify_fps", return_value=("3", None)):
+        with patch("src.vmaf_async.detect_vmaf_align_rate", return_value=None):
             recover_pending_vmaf(history, ffprobe_path="/ffprobe")
 
-        assert not output.exists()
-        history.mark_failed.assert_called_once_with(
-            str(source), "Mixed-VFR source not scoreable under VMAF"
-        )
-        assert vmaf_tasks.empty()
+        task = vmaf_tasks.get_nowait()
+        assert task[7] is None
+        assert task[8] is None  # recover 无转码 stderr，产物帧数不可得 → 打分回退投影
+        assert task[9] == "/ffprobe"
+        history.mark_failed.assert_not_called()
 
-    def test_tier2_recovery_queues_with_rate(self, tmp_path):
+    def test_detected_rate_recovery_queues(self, tmp_path):
         source = tmp_path / "movie.mkv"
         source.write_text("s" * 100)
         output = tmp_path / "out" / "movie.mkv"
@@ -413,13 +445,15 @@ class TestRecoverPendingVmaf:
         output.write_text("o" * 50)
 
         history = MagicMock()
-        history.iter_pending_vmaf.return_value = [(str(source), str(output))]
+        history.iter_pending_vmaf.return_value = [(str(source), str(output), None)]
 
-        with patch("src.vmaf_async.classify_fps", return_value=("2", "25/1")):
+        with patch("src.vmaf_async.detect_vmaf_align_rate", return_value="25/1"):
             recover_pending_vmaf(history, ffprobe_path="/ffprobe")
 
         task = vmaf_tasks.get_nowait()
         assert task[7] == "25/1"
+        assert task[8] is None
+        assert task[9] == "/ffprobe"
 
 
 class TestShouldProcessPendingVmaf:

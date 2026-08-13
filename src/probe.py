@@ -27,8 +27,11 @@ _COMMON_FRAME_RATES = (
     ("120/1", 120.0),
 )
 
-#: avg_frame_rate 与 r_frame_rate 相对差超过该值即视为疑似 VFR，改用帧时间戳探测
-_VFR_SUSPECT_RATIO = 0.01
+#: avg_frame_rate 与 r_frame_rate 相对差不超过该值即视为一致（0.05%，即相邻
+#: 帧率档位间距 0.1% 的一半）：吸收 avg 计算噪声（nb_frames/duration 的毫级
+#: 抖动），又不吞 29.97/30、23.976/24 这类真实差异（间距恰 0.1%）。
+#: _normalize_common_rate 的归一化容差复用同一值。
+_RATE_AGREE_TOLERANCE = 0.0005
 #: 帧间隔与常见帧率表周期的最大相对偏差（0.5%），超过即拒绝投票。
 #: 足够吸收封装时间戳量化抖动（90kHz tick ±6us），又不至于让 30 与 29.97 互相污染。
 _PTS_MAX_DEVIATION = 0.005
@@ -178,108 +181,51 @@ class VideoProbe:
         r = _valid(entries.get("r_frame_rate", ""))
         return avg, r
 
-    def get_frame_rate(self, filepath):
+    def detect_vmaf_align_rate(self, filepath):
         """
-        探测视频流帧率，返回 ffmpeg fps 滤镜可直接使用的分数形式，如 "30000/1001"。
-        元数据 avg_frame_rate 与 r_frame_rate 一致时直接信任 avg_frame_rate；
-        不一致或缺失（疑似 VFR）时抽样帧时间戳、对常见帧率表加权投票求真实内容帧率，
-        探测失败再回退 avg_frame_rate，最后回退 r_frame_rate。
-        Probe the frame rate of v:0, returning a fraction usable by the fps filter
-        (e.g. "30000/1001"). Trusts avg_frame_rate when it agrees with
-        r_frame_rate; for suspected VFR sources samples frame PTS and uses a weighted
-        vote over the common frame-rate table, falling back to the metadata rates if
-        probing fails.
-        """
-        avg, r = self._probe_frame_rate_strings(filepath)
-        if avg and r:
-            avg_f = self.fps_fraction_to_float(avg)
-            r_f = self.fps_fraction_to_float(r)
-            if avg_f and r_f and abs(avg_f - r_f) / avg_f <= _VFR_SUSPECT_RATIO:
-                return self._normalize_common_rate(avg)
+        探测 VMAF 打分回退投影帧率（三级链）：帧间隔投票帧率 → 规范化
+        avg_frame_rate → r_frame_rate；全部不可用时返回 None（打分侧兜底
+        VMAF_ALIGN_FPS_RATE）。仅当 avg_frame_rate 与 r_frame_rate 相对差超过
+        0.05%（VFR 嫌疑）时才做帧时间戳投票（CFR 源零额外探测）；投票不可靠时
+        回退元数据。返回分数可直接用于 fps 滤镜，如 "30000/1001"。
 
-        if avg or r:
-            diffs_us = self._probe_pts_intervals(filepath)
-            if diffs_us is not None:
-                ranked = self._vote_common_rates(diffs_us)
-                if ranked and ranked[0][1] >= _PTS_VOTE_MIN_RATIO:
-                    frac, ratio = ranked[0]
-                    log.info(
-                        "疑似 VFR %s: avg=%s r=%s 帧间隔投票 %s (%.1f%%) → 使用 %s",
-                        filepath,
-                        avg or "-",
-                        r or "-",
-                        frac,
-                        100.0 * ratio,
-                        frac,
-                    )
-                    return frac
-            log.warning(
-                "疑似 VFR %s: 帧间隔投票不可靠，回退元数据 (avg=%s r=%s)",
-                filepath,
-                avg or "-",
-                r or "-",
-            )
-        return self._normalize_common_rate(avg or r)
-
-    def classify_fps(self, filepath):
-        """
-        把源帧率档位化，决定 VMAF 打分前的处理策略（配合 transcode 早短路）：
-          - "1" 真 CFR：avg_frame_rate 与 r_frame_rate 一致 → 零额外探测，
-            转码不加 -r、打分不对齐。
-          - "2" 伪 VFR：VFR 元数据但帧间隔投票出现份额 ≥ VMAF_PSEUDO_VFR_MIN_RATIO
-            的主导帧率 → 转码加 -r <frac> 规整为 CFR，打分按该帧率对齐。
-          - "3" 混合 VFR / 不可判：投票不可靠或元数据缺失 → 开启 VMAF 时转码前
-            直接 mark_failed（不做额外探测）。
-        返回 (档位, 帧率分数)；档3 帧率为 None，档1/2 为常见帧率分数。
-        Classify the source frame rate into tiers that drive the VMAF scoring
-        strategy (paired with the transcode short-circuit):
-          - "1" true CFR: avg_frame_rate agrees with r_frame_rate -> zero extra
-            probing; no -r on transcode, no alignment when scoring.
-          - "2" pseudo VFR: VFR metadata but a dominant voted rate holding at least
-            VMAF_PSEUDO_VFR_MIN_RATIO share -> -r <frac> regularizes the output to
-            CFR and scoring aligns both inputs to that rate.
-          - "3" mixed VFR / undecidable: unreliable vote or missing metadata ->
-            marked failed before transcoding when VMAF is on (no extra probing).
-        Returns (tier, rate); rate is None for tier 3, a common fraction otherwise.
+        Probe the fallback alignment rate for VMAF scoring (three-level chain):
+        voted PTS-interval rate -> normalized avg_frame_rate -> r_frame_rate;
+        None when all are unavailable (scoring then falls back to
+        VMAF_ALIGN_FPS_RATE). PTS sampling is done only when avg_frame_rate
+        differs from r_frame_rate by more than 0.05% (CFR sources cost no extra
+        probing); an unreliable vote falls back to the metadata rates. The
+        returned fraction is directly usable by the fps filter, e.g. "30000/1001".
         """
         avg, r = self._probe_frame_rate_strings(filepath)
         if avg and r:
             avg_f = self.fps_fraction_to_float(avg)
             r_f = self.fps_fraction_to_float(r)
-            if avg_f and r_f and abs(avg_f - r_f) / avg_f <= _VFR_SUSPECT_RATIO:
-                return "1", self._normalize_common_rate(avg)
-
-        if not (avg or r):
-            log.warning("帧率元数据缺失 %s，判定混合 VFR 不可打分", filepath)
-            return "3", None
-
-        diffs_us = self._probe_pts_intervals(filepath)
-        if diffs_us is None:
-            log.warning("疑似 VFR %s: 帧间隔探测失败，判定混合 VFR 不可打分", filepath)
-            return "3", None
-        ranked = self._vote_common_rates(diffs_us)
-        if not ranked:
-            log.warning("疑似 VFR %s: 帧间隔投票无结果，判定混合 VFR 不可打分", filepath)
-            return "3", None
-        top_frac, top_ratio = ranked[0]
-        detail = ", ".join(f"{frac} {100.0 * ratio:.1f}%" for frac, ratio in ranked[:2])
-        log.info(
-            "疑似 VFR %s: avg=%s r=%s 前二帧率份额 %s",
-            filepath,
-            avg or "-",
-            r or "-",
-            detail,
-        )
-        if top_ratio >= config.VMAF_PSEUDO_VFR_MIN_RATIO:
-            return "2", top_frac
-        log.warning(
-            "疑似 VFR %s: 主导帧率 %s 仅占 %.1f%%（< %.0f%%），判定混合 VFR 不可打分",
-            filepath,
-            top_frac,
-            100.0 * top_ratio,
-            100.0 * config.VMAF_PSEUDO_VFR_MIN_RATIO,
-        )
-        return "3", None
+            # 相对差 ≤ 0.05% 视为一致（吸收 avg 计算噪声，如 73743750/2460583
+            # vs 30000/1001 同属 29.97fps）；30/1 与 30000/1001 差 0.1%、恰在
+            # 容差外，判 VFR 嫌疑交给投票裁决，绝不吞真实帧率差异。
+            if not (avg_f and r_f and abs(avg_f - r_f) / avg_f <= _RATE_AGREE_TOLERANCE):
+                diffs_us = self._probe_pts_intervals(filepath)
+                if diffs_us is not None:
+                    voted = self._vote_common_rate(diffs_us)
+                    if voted:
+                        log.info(
+                            "疑似 VFR %s: avg=%s r=%s 帧间隔投票 %s (%.1f%%) → 回退投影帧率 %s",
+                            filepath,
+                            avg,
+                            r,
+                            voted[0],
+                            100.0 * voted[1],
+                            voted[0],
+                        )
+                        return voted[0]
+                log.warning(
+                    "疑似 VFR %s: 帧间隔投票不可靠，回退元数据 (avg=%s r=%s)",
+                    filepath,
+                    avg,
+                    r,
+                )
+        return self._normalize_common_rate(avg) if avg else r
 
     def get_streams_info(self, filepath):
         """探测文件所有流与容器格式信息，返回 {streams, duration} 结构（duration 可能为 None）。
@@ -318,6 +264,139 @@ class VideoProbe:
             except (ValueError, TypeError):
                 pass
         return {"streams": streams, "duration": duration}
+
+    def get_frame_count(self, filepath):
+        """
+        视频流帧数：优先读容器 moov 索引的 nb_frames（秒级，mp4/mov 类），
+        并用 duration×avg_frame_rate 交叉校验（偏差 >1% 视为索引虚高，如
+        文件尾损坏/流式未 finalize，自动降级全量计数）；mkv/webm 无
+        nb_frames 字段或校验失败时回退 ffprobe -count_frames 全量解码计数
+        （无硬件加速，3 小时影片约需数分钟）。计数失败返回 None。
+
+        Video-stream frame count: prefer the container moov index nb_frames
+        (instant on mp4/mov), cross-checked against duration×avg_frame_rate
+        (deviation >1% means a bloated index, e.g. truncated tail or an
+        unfinalized stream, and falls back to full counting); mkv/webm have no
+        nb_frames field, and any check failure falls back to ffprobe
+        -count_frames full decode (no hwaccel; a 3-hour movie takes minutes).
+        Returns None on failure.
+
+        :param filepath: 视频文件路径 (Path to the video file)
+        :return: 帧数整数，失败时返回 None (int frame count, or None on failure)
+        """
+        fast = self._nb_frames_checked(filepath)
+        if fast is not None:
+            return fast
+        cmd = [
+            self.ffprobe_path,
+            "-v",
+            "error",
+            "-count_frames",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=nb_read_frames",
+            "-of",
+            "csv=p=0",
+            str(filepath),
+        ]
+        result = self._run(cmd, timeout=config.FRAME_COUNT_TIMEOUT)
+        if result is None:
+            return None
+        text = result.stdout.strip()
+        if not text or text == "N/A":
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            log.error("count_frames parse error for %s: %s", filepath, text)
+            return None
+
+    def _nb_frames_checked(self, filepath):
+        """
+        nb_frames 快路径：读容器记录的帧索引（秒级，mp4/mov 类；mkv/webm
+        无此字段 → N/A），并用 duration×帧率交叉校验：avg_frame_rate 可用时
+        偏差 >1% 视为索引虚高（文件尾损坏/流式未 finalize）降级全量计数，
+        avg 缺失时用 r_frame_rate 宽松校验（>5% 降级）；校验都缺则直接信任
+        nb_frames。任何一步失败返回 None（交给 count_frames 兜底）。
+
+        nb_frames fast path: read the container's recorded frame index
+        (instant on mp4/mov; mkv/webm lack the field -> N/A) and cross-check it
+        against duration×rate: with avg_frame_rate available a deviation >1%
+        means a bloated index (truncated tail / unfinalized stream) and falls
+        back to full counting; with only r_frame_rate a looser >5% check is
+        used; with no rate at all the index is trusted as-is. Returns None on
+        any failure (leaving the count_frames fallback).
+        """
+        cmd = [
+            self.ffprobe_path,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=nb_frames,duration,avg_frame_rate,r_frame_rate",
+            "-of",
+            "json",
+            str(filepath),
+        ]
+        result = self._run(cmd)
+        if result is None:
+            return None
+        # 用 JSON 而非 CSV 位置解析：ffprobe 的多字段输出顺序由内部决定
+        # （不同版本实测 r/duration 等位置并不固定），按键名取值才稳定。
+        # JSON (not positional CSV) parsing: ffprobe decides the field order
+        # internally, so lookups by key are the stable choice.
+        try:
+            streams = json.loads(result.stdout).get("streams") or []
+        except (json.JSONDecodeError, AttributeError):
+            return None
+        if not streams:
+            return None
+        entry = streams[0]
+        nb_s = str(entry.get("nb_frames") or "").strip()
+        dur_s = str(entry.get("duration") or "").strip()
+        avg_s = str(entry.get("avg_frame_rate") or "").strip()
+        r_s = str(entry.get("r_frame_rate") or "").strip()
+        if nb_s in ("", "N/A"):
+            return None
+        try:
+            nb = int(nb_s)
+        except ValueError:
+            return None
+        if nb <= 0:
+            return None
+        try:
+            duration = float(dur_s)
+        except ValueError:
+            duration = None
+        avg_f = self.fps_fraction_to_float(avg_s)
+        if duration and avg_f and duration > 0:
+            est = duration * avg_f
+            if abs(nb - est) / est > 0.01:
+                log.warning(
+                    "nb_frames 与 duration×avg_frame_rate 偏差过大 %s"
+                    " (nb=%d est=%.0f)，回退全量计数",
+                    filepath,
+                    nb,
+                    est,
+                )
+                return None
+        elif duration and not avg_f:
+            r_f = self.fps_fraction_to_float(r_s)
+            if r_f and duration > 0:
+                est = duration * r_f
+                if abs(nb - est) / est > 0.05:
+                    log.warning(
+                        "nb_frames 与 duration×r_frame_rate 偏差过大 %s"
+                        " (nb=%d est=%.0f)，回退全量计数",
+                        filepath,
+                        nb,
+                        est,
+                    )
+                    return None
+        log.info("nb_frames fast path %s: %d", filepath, nb)
+        return nb
 
     @staticmethod
     def fps_fraction_to_float(fps_str):
@@ -408,8 +487,7 @@ class VideoProbe:
         33317/33333/33350us），逐桶取众数占比可能虚低；加权投票按"接近度"
         聚合，天然免疫拆桶，且接近 29.97 与 30 之间的间隔（33350us 这类中点）
         不会因平局误判。返回按份额降序的 (帧率分数, 得分占比) 列表。
-        与 _vote_common_rate 的区别：返回全部名次，供 classify_fps 输出前两名
-        份额明细校准阈值。
+        与 _vote_common_rate 的区别：返回全部名次，供调用方查看份额明细。
 
         Weighted vote over the common frame-rate table: each interval adds score to
         table entries within 0.5% deviation, weighted by 1 - dev/tolerance (closer
@@ -418,8 +496,8 @@ class VideoProbe:
         mode would under-report share; the weighted vote aggregates by proximity and
         is robust to such splitting, and midpoints like 33350us between 29.97 and 30
         are not misjudged by a tie. Returns (rate_fraction, score share) entries sorted
-        by share descending. Unlike _vote_common_rate all ranks are returned, letting
-        classify_fps log the top-two shares for threshold calibration.
+        by share descending. Unlike _vote_common_rate all ranks are returned so
+        callers can inspect the share detail.
         """
         votes = Counter()
         for d in diffs_us:
@@ -472,7 +550,7 @@ class VideoProbe:
             dev = abs(f - table_rate) / table_rate
             if best_dev is None or dev < best_dev:
                 best, best_dev = frac, dev
-        if best_dev is not None and best_dev <= 0.0005:
+        if best_dev is not None and best_dev <= _RATE_AGREE_TOLERANCE:
             return best
         return fps_str
 
@@ -498,17 +576,16 @@ def get_video_pix_fmt(filepath, ffprobe_path):
     return VideoProbe(ffprobe_path).get_pix_fmt(filepath)
 
 
-def get_video_frame_rate(filepath, ffprobe_path):
-    """探测视频流帧率（如 "30000/1001"）。见 VideoProbe.get_frame_rate。"""
-    return VideoProbe(ffprobe_path).get_frame_rate(filepath)
-
-
-def classify_fps(filepath, ffprobe_path):
-    """档位化源帧率（"1" 真 CFR / "2" 伪 VFR / "3" 混合 VFR 不可打分）。
-    见 VideoProbe.classify_fps。"""
-    return VideoProbe(ffprobe_path).classify_fps(filepath)
+def detect_vmaf_align_rate(filepath, ffprobe_path):
+    """探测 VMAF 打分回退投影帧率（三级链）。见 VideoProbe.detect_vmaf_align_rate。"""
+    return VideoProbe(ffprobe_path).detect_vmaf_align_rate(filepath)
 
 
 def get_streams_info(filepath, ffprobe_path):
     """探测所有流与容器格式信息。见 VideoProbe.get_streams_info。"""
     return VideoProbe(ffprobe_path).get_streams_info(filepath)
+
+
+def get_frame_count(filepath, ffprobe_path):
+    """全量解码计数视频流帧数。见 VideoProbe.get_frame_count。"""
+    return VideoProbe(ffprobe_path).get_frame_count(filepath)

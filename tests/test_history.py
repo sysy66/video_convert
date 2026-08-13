@@ -30,6 +30,34 @@ class TestHistoryInit:
         make_history()
         assert (tmp_path / "history.db").exists()
 
+    def test_legacy_db_migrates_output_frames_column(self, tmp_path, make_history):
+        # 老库（无 output_frames 列）打开后自动 ALTER 补列，旧数据不丢。
+        # A legacy DB without output_frames must gain the column on open
+        # without losing existing rows.
+        conn = sqlite3.connect(str(tmp_path / "legacy.db"))
+        conn.execute(
+            "CREATE TABLE files ("
+            "filepath TEXT PRIMARY KEY, status TEXT NOT NULL, started_at REAL, "
+            "completed_at REAL, output_path TEXT, vmaf_score REAL, error TEXT, "
+            "retry_count INTEGER, codec TEXT, skipped_at REAL)"
+        )
+        conn.execute(
+            "INSERT INTO files (filepath, status) VALUES ('/old.mp4', 'await_postprocess')"
+        )
+        conn.commit()
+        conn.close()
+
+        h = make_history("legacy.db")
+        cols = {r["name"] for r in h._conn.execute("PRAGMA table_info(files)").fetchall()}
+        assert "output_frames" in cols
+        assert h.get_entry("/old.mp4")["status"] == "await_postprocess"
+
+        # 新方法写帧数可持久化，iter 返回三元组
+        h.mark_pending_vmaf("/old.mp4", "/old.mkv", 12345)
+        h.close()
+        h2 = make_history("legacy.db")
+        assert h2.iter_pending_vmaf() == [("/old.mp4", "/old.mkv", 12345)]
+
 
 class TestHistoryQueries:
     def test_is_success_unknown(self, make_history):
@@ -126,6 +154,15 @@ class TestHistoryIter:
         h.mark_started("/b.mp4")
         h.mark_done("/c.mp4", "/c.mkv")
         assert set(h.iter_started()) == {"/a.mp4", "/b.mp4"}
+
+    def test_iter_pending_vmaf_yields_output_frames(self, make_history):
+        h = make_history()
+        h.mark_pending_vmaf("/p.mp4", "/p.mkv", 216315)
+        h.mark_pending_vmaf("/q.mp4", "/q.mkv", None)
+        assert h.iter_pending_vmaf() == [
+            ("/p.mp4", "/p.mkv", 216315),
+            ("/q.mp4", "/q.mkv", None),
+        ]
 
     def test_iter_final_states(self, make_history):
         h = make_history()

@@ -24,7 +24,6 @@ def _build_ffmpeg_cmd(
     output_path,
     sw_scale_fallback=False,
     sw_decode_fallback=False,
-    cfr_rate=None,
 ):
     """
     构建 FFmpeg 命令行参数列表。
@@ -43,10 +42,6 @@ def _build_ffmpeg_cmd(
     :param sw_scale_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
                         Whether to use software-scale fallback (bypass vpp_qsv filter
                         compatibility issues during hwaccel reconfiguration)
-    :param cfr_rate: 伪 VFR 源（classify_fps 档2）的 CFR 化目标帧率分数；
-                     作为输出选项加 -r 把产物规整为真 CFR，供后续 VMAF 逐帧对齐打分。
-                     (Tier-2 pseudo-VFR target fraction; emitted as the -r output option
-                     so the output is true CFR for aligned VMAF scoring)
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
              (cmd_list, total_duration) where duration is in seconds, or None if unknown
     :raises RuntimeError: 当流探测失败时抛出 (Raised when stream probing fails)
@@ -133,11 +128,6 @@ def _build_ffmpeg_cmd(
     else:
         cmd.extend(["-vf", "vpp_qsv=format=p010le"])
 
-    if cfr_rate:
-        # 伪 VFR → 真 CFR：输出选项 -r 让编码器按目标帧率规整帧序。
-        # Project the pseudo-VFR source onto a true CFR grid via the -r output option.
-        cmd.extend(["-r", str(cfr_rate)])
-
     cmd.extend(
         [
             # --- 音频流 / Audio stream ---
@@ -211,6 +201,33 @@ def _parse_progress_fps(line):
     if m:
         return float(m.group(1))
     return None
+
+
+_FRAME_RE = re.compile(r"frame=\s*(\d+)")
+
+
+def parse_frame_count_from_stderr(stderr):
+    """
+    从 FFmpeg 完整 stderr 提取最终输出帧数（取最后一个 frame=N 进度值）。
+    转码结束时 ffmpeg 输出的最后一条进度行 frame=N 即编码输出帧数（与
+    -count_frames 的解码输出计数一致，无 fps 滤镜时两者相等）；进度行
+    每秒刷新多次，重复解析取末值。无任何 frame= 行（如命令早退）返回 None。
+
+    Extract the final output frame count from FFmpeg's full stderr output
+    (the last frame=N progress value). The final progress line carries the
+    encoder's output frame count, matching -count_frames' decoded count when
+    no fps filter is applied; progress lines repeat, so the last value wins.
+    Returns None when no frame= line exists (e.g. an early exit).
+
+    :param stderr: FFmpeg 完整 stderr 文本 (Full stderr text of the run)
+    :return: 帧数整数，不可得时返回 None (int frame count, or None)
+    """
+    count = None
+    for line in stderr.splitlines():
+        m = _FRAME_RE.search(line)
+        if m:
+            count = int(m.group(1))
+    return count
 
 
 def _run_ffmpeg_with_progress(cmd, total_duration, file_stem, timeout=None):

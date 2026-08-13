@@ -161,6 +161,34 @@ class TestParseProgressFps:
         assert transcoder._parse_progress_fps("time=00:00:01") is None
 
 
+class TestParseFrameCountFromStderr:
+    def test_takes_last_frame_line(self):
+        stderr = "\n".join(
+            [
+                "Stream mapping:",
+                "frame=  100 fps=150.0",
+                "frame=  5000 fps=149.2",
+                "frame=216315 fps=148.0 q=34.0 size=2487040",
+                "video:216315kB audio:123kB",
+            ]
+        )
+        assert transcoder.parse_frame_count_from_stderr(stderr) == 216315
+
+    def test_spaces_after_equals(self):
+        assert transcoder.parse_frame_count_from_stderr("frame= 12345 fps=30.0\n") == 12345
+
+    def test_frame_na_ignored(self):
+        # "frame=N/A"（avformat 统计）行不匹配数字，也不影响后续解析
+        stderr = "frame=N/A\nframe=123\n"
+        assert transcoder.parse_frame_count_from_stderr(stderr) == 123
+
+    def test_no_frame_line_returns_none(self):
+        assert transcoder.parse_frame_count_from_stderr("nothing here\n") is None
+
+    def test_empty_stderr_returns_none(self):
+        assert transcoder.parse_frame_count_from_stderr("") is None
+
+
 class TestRmtreeRobust:
     def test_removes_normal_dir(self, tmp_path):
         d = tmp_path / "work"

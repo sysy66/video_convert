@@ -67,10 +67,20 @@ class History:
                     error        TEXT,
                     retry_count  INTEGER,
                     codec        TEXT,
-                    skipped_at   REAL
+                    skipped_at   REAL,
+                    output_frames INTEGER             -- 转码时从 stderr 解析的产物帧数
                 )
                 """
             )
+            # 老库迁移：补 output_frames 列（CREATE TABLE IF NOT EXISTS 不会为
+            # 已存在的表加列）。产物帧数是 recover 恢复打分时启用帧序对齐的关键，
+            # 缺失时打分侧回退 fps 网格投影。
+            # Migration for older DBs: add the output_frames column (CREATE TABLE
+            # IF NOT EXISTS does not alter existing tables). It lets recovered
+            # VMAF tasks enable frame-index alignment instead of grid projection.
+            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)").fetchall()}
+            if "output_frames" not in cols:
+                self._conn.execute("ALTER TABLE files ADD COLUMN output_frames INTEGER")
 
     def close(self):
         """
@@ -228,12 +238,17 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def mark_pending_vmaf(self, filepath, output_path):
+    def mark_pending_vmaf(self, filepath, output_path, output_frames=None):
         """
         转码完成、产物就绪，进入后处理（移动到目标 + 可选 VMAF 打分）队列：
-        status = "await_postprocess"。
+        status = "await_postprocess"。output_frames 为转码时从 stderr 解析的
+        产物帧数，持久化供启动恢复（recover）重新打分时直接使用，免去对
+        mkv 产物再做昂贵的全量解码计数；None 表示不可得，打分侧回退投影。
         Transcode finished and output is ready; queue for post-processing
         (move to target + optional VMAF scoring): status = "await_postprocess".
+        output_frames is the frame count parsed from the transcode stderr,
+        persisted so a startup recover can reuse it instead of re-counting the
+        mkv output by full decode; None falls back to grid projection.
         """
         with self._lock:
             row = self._conn.execute(
@@ -242,9 +257,10 @@ class History:
             started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, vmaf_score, error) "
-                "VALUES (?, 'await_postprocess', ?, ?, ?, NULL, NULL)",
-                (filepath, started_at, time.time(), output_path),
+                "(filepath, status, started_at, completed_at, output_path, "
+                "vmaf_score, error, output_frames) "
+                "VALUES (?, 'await_postprocess', ?, ?, ?, NULL, NULL, ?)",
+                (filepath, started_at, time.time(), output_path, output_frames),
             )
 
     def is_pending_vmaf(self, filepath):
@@ -253,16 +269,18 @@ class History:
 
     def iter_pending_vmaf(self):
         """
-        遍历 status == "await_postprocess" 的文件路径与产物路径（用于启动时
-        recover 重新入队）。产物已存在才返回。
-        Yield (filepath, output_path) for status == "await_postprocess"
-        entries (re-enqueued on startup by recover). The output must exist.
+        遍历 status == "await_postprocess" 的文件路径、产物路径与产物帧数
+        （用于启动时 recover 重新入队）。产物已存在才返回。
+        Yield (filepath, output_path, output_frames) for status ==
+        "await_postprocess" entries (re-enqueued on startup by recover).
+        The output must exist.
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT filepath, output_path FROM files WHERE status='await_postprocess'"
+                "SELECT filepath, output_path, output_frames "
+                "FROM files WHERE status='await_postprocess'"
             ).fetchall()
-        return [(r["filepath"], r["output_path"]) for r in rows]
+        return [(r["filepath"], r["output_path"], r["output_frames"]) for r in rows]
 
     def mark_failed(self, filepath, error):
         with self._lock:
