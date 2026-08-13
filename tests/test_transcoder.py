@@ -94,7 +94,7 @@ class TestBuildFfmpegCmd:
         assert cmd[-1] == "/o.mkv"
 
     def test_no_frame_rate_regularization(self):
-        # 2026-08-13 chn-127 全片实验：-r 导致帧序错位 VMAF 46 虚低、
+        # 2026-08-13 全片实验：-r 导致帧序错位 VMAF 46 虚低、
         # -fps_mode cfr 产物双倍帧；转码命令不得插入任何帧率规整参数，
         # 对齐只发生在打分侧（帧序对齐）。
         with patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC):

@@ -82,7 +82,7 @@ def _frame_index_align_string():
     构建帧序对齐 setpts 字符串：把每路的帧时间戳按帧序号线性化
     （setpts=N/30/TB，参考帧率 30 仅用于归一化、数值任意），使得两路第 n 帧
     时间戳相等、逐帧配对对比，与源/产物的容器 tbr 声明、真实帧率完全无关。
-    2026-08-13 chn-127 全片实验：v1 产物（帧序保留）用该方式打分 92.09，
+    2026-08-13 全片实验：v1 产物（帧序保留）用该方式打分 92.09，
     而旧的 fps=30/1 网格投影打分只有 62.37（VFR 帧不落网格导致的假低分）。
     仅在 VMAF_ALIGN_FPS 开启时使用。
 
@@ -90,8 +90,8 @@ def _frame_index_align_string():
     frame timestamps by frame index (setpts=N/30/TB; the 30fps reference is only
     for normalization and its value is arbitrary), so frame n of both inputs
     gets identical timestamps and is compared pairwise, independent of the
-    container tbr declaration and true frame rates. From the 2026-08-13 full
-    chn-127 experiment the v1 output (frame order preserved) scores 92.09 with
+    container tbr declaration and true frame rates. From the 2026-08-13
+    full-movie experiment the v1 output (frame order preserved) scores 92.09 with
     this alignment while the old fps=30/1 grid projection scored only 62.37
     (VFR frames not on the grid were falsely downgraded). Used only when
     VMAF_ALIGN_FPS is enabled.
@@ -103,22 +103,22 @@ def _frame_index_align_string():
 
 def _frame_counts_equal(ref_frame_count, dist_frame_count):
     """
-    比较两路已知帧数是否相等。相等是帧序对齐逐帧对比的前提（帧数不等时
-    逐帧错位、分数无意义，需要回退 fps 网格投影）。任一路帧数不可得
-    （None）按不相等处理。
+    比较两路已知帧数是否可视为相等（相对差 ≤1%）。帧序对齐按帧序号
+    逐帧配对，产物是源逐帧重编码时只要帧序一致，前 min(ref,dist) 帧
+    永远逐帧对应，尾部多出帧被截断（fqm 同款语义），因此小差异放行
+    帧序对齐无损；阈值与 probe 侧"索引虚高 >1% 判损坏"一致，差异
+    过大（如流式未 finalize 的 20% 虚高）按不相等处理，回退 fps 网格
+    投影作为源异常预警。任一路帧数不可得（None）按不相等处理。
 
-    Compare the two known frame counts for equality. Equal counts are the
-    precondition for frame-index-aligned per-frame comparison (mismatched
-    counts misalign every frame pair and would produce a meaningless score, so
-    the fps-grid projection fallback is used instead). A missing count (None)
-    on either side is treated as unequal.
-
-    :param ref_frame_count: 参考（源）帧数，不可得时 None (Reference frame
-                            count, or None when unavailable)
-    :param dist_frame_count: 失真（产物）帧数，不可得时 None (Distorted frame
-                             count, or None when unavailable)
-    :return: 两路帧数均可得且相等时 True，否则 False (True only when both
-             counts are available and equal, else False)
+    Compare whether the two known frame counts are close enough for
+    frame-index alignment (relative difference <=1%). Since the distorted
+    clip is a per-frame re-encode of the reference, pairing frames by index
+    stays correct for the first min(ref,dist) frames regardless of a small
+    tail difference (the tail is truncated, same semantics as fqm);
+    the 1% threshold matches the "index bloated >1%" corruption check on the
+    probe side, and a large gap (e.g. a 20% bloated index from an unfinalized
+    stream) is treated as unequal, falling back to fps-grid projection as an
+    anomaly warning. Missing counts (None) are treated as unequal.
     """
     if ref_frame_count is None or dist_frame_count is None:
         log.warning(
@@ -127,14 +127,19 @@ def _frame_counts_equal(ref_frame_count, dist_frame_count):
             dist_frame_count,
         )
         return False
-    if ref_frame_count != dist_frame_count:
+    larger = max(ref_frame_count, dist_frame_count)
+    if larger and abs(ref_frame_count - dist_frame_count) / larger > 0.01:
         log.warning(
             "VMAF frame count mismatch ref=%d dist=%d, falling back to fps grid projection",
             ref_frame_count,
             dist_frame_count,
         )
         return False
-    log.info("VMAF frame counts equal (%d), using frame-index alignment", ref_frame_count)
+    log.info(
+        "VMAF frame counts equal (ref=%d dist=%d), using frame-index alignment",
+        ref_frame_count,
+        dist_frame_count,
+    )
     return True
 
 
@@ -154,7 +159,7 @@ def _run_vmaf(
     对齐策略（VMAF_ALIGN_FPS 开启时）：
       1) 优先帧序对齐：两路帧数相等（_frame_counts_equal）时用 setpts=N/30/TB
          把帧时间戳按帧序号线性化，第 n 帧与第 n 帧逐帧配对——不依赖任何
-         tbr 声明/帧率网格，VFR 源不再产生假低分（chn-127 实测 62.37→92.09）。
+         tbr 声明/帧率网格，VFR 源不再产生假低分（实测 62.37→92.09）。
       2) 帧数不等或不可得（None）时回退 fps 网格投影（旧行为，fps_rate 参数）。
     HW 模式下 hwdownload 按每路各自探测到的真实原生位深取帧（8bit → nv12，
     10bit → p010le），全程不经过 vpp_qsv 等有损转换，分数与纯软件路径逐位一致。
@@ -215,6 +220,12 @@ def _run_vmaf(
         opts.append(f"model='path={config.VMAF_MODEL_PATH}'")
     opts.append(f"n_subsample={config.VMAF_SUBSAMPLE}")
     opts.append(f"n_threads={config.VMAF_N_THREADS or max(1, ((os.cpu_count() or 1) + 1) // 2)}")
+    # framesync 语义与 fqm 对齐：shortest=1 以短流为准截断尾部、repeatlast=0
+    # 尾部帧不足时不重复最后一帧（帧序对齐放行 ≤1% 差异时即依赖此截断配对）。
+    # framesync semantics aligned with fqm: shortest=1 truncates at the shorter
+    # stream, repeatlast=0 does not pad with the last frame (the frame-index
+    # path relies on this when it permits a <=1% tail difference).
+    opts.append("shortest=1:repeatlast=0")
 
     if log_path is not None:
         try:

@@ -224,7 +224,7 @@ VMAF_N_THREADS = 0
 # detect_vmaf_align_rate 的返回值（帧间隔投票帧率 → 规范化 avg_frame_rate →
 # r_frame_rate），全缺失时用 VMAF_ALIGN_FPS_RATE 兜底。转码侧不产生任何帧率
 # 规整参数（实验证明 -r/-fps_mode cfr 分别致 VMAF 虚低/产物双倍帧），对齐只在
-# 打分侧进行。实测（2026-08-13 chn-127 全片）：帧序对齐 92.09 vs fps=30/1
+# 打分侧进行。实测（2026-08-13 全片）：帧序对齐 92.09 vs fps=30/1
 # 投影 62.37。
 # With VMAF_ALIGN_FPS=True scoring prefers frame-index alignment (when both
 # inputs have equal frame counts frames are paired by index, independent of the
@@ -235,7 +235,7 @@ VMAF_N_THREADS = 0
 # to VMAF_ALIGN_FPS_RATE when nothing is available. Transcoding adds no
 # frame-rate regularization (experiments showed -r deflates scores and
 # -fps_mode cfr doubles output frames); alignment happens on the scoring side
-# only. Measured (2026-08-13 chn-127 full movie): frame-index 92.09 vs
+# only. Measured (2026-08-13 full movie): frame-index 92.09 vs
 # fps=30/1 projection 62.37.
 VMAF_ALIGN_FPS = True
 VMAF_ALIGN_FPS_RATE = "30000/1001"

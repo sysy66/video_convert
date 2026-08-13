@@ -13,6 +13,7 @@ import pytest
 
 from src import config
 from src.quality import (
+    _frame_counts_equal,
     _hw_download_format,
     _read_vmaf_from_json,
     _run_vmaf,
@@ -166,6 +167,32 @@ class TestReadVmafFromJson:
         mean, minimum = _read_vmaf_from_json(log)
         assert mean is None
         assert minimum is None
+
+
+class TestFrameCountsEqual:
+    def test_equal_counts(self):
+        assert _frame_counts_equal(1826, 1826) is True
+
+    def test_one_percent_tolerance_permits_small_tail_difference(self):
+        """相对差 ≤1% 放行帧序对齐：产物是源逐帧重编码，前 min() 帧
+        恒逐帧对应，尾部差异由 libvmaf shortest=1 截断（fqm 语义）。"""
+        assert _frame_counts_equal(1000, 1010) is True
+        assert _frame_counts_equal(1010, 1000) is True
+        assert _frame_counts_equal(10000, 10099) is True
+
+    def test_over_one_percent_rejected(self):
+        """相对差 >1%（对应 probe 侧"索引虚高 >1% 判损坏"）拒绝帧序对齐，
+        回退 fps 网格投影作为异常预警。"""
+        assert _frame_counts_equal(1000, 1011) is False
+        assert _frame_counts_equal(10000, 10200) is False
+
+    def test_zero_counts_equal(self):
+        assert _frame_counts_equal(0, 0) is True
+
+    def test_none_either_side_rejected(self):
+        assert _frame_counts_equal(None, 1826) is False
+        assert _frame_counts_equal(1826, None) is False
+        assert _frame_counts_equal(None, None) is False
 
 
 class TestCleanupVmafLogs:
@@ -428,6 +455,55 @@ class TestRunVmaf:
         fc = call_args[call_args.index("-filter_complex") + 1]
         assert "fps=" not in fc
         assert "setpts=N/30/TB" not in fc
+
+    def test_frame_index_align_permits_one_percent_tail_difference(self, tmp_path):
+        """相对差 ≤1%（如 100 vs 99）仍走帧序对齐：帧序链路不因小尾部
+        差异回退投影，短流截断由 libvmaf shortest=1/repeatlast=0 完成。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality.config.VMAF_ALIGN_FPS", True):
+                result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+                with patch("subprocess.run", return_value=result) as mock_run:
+                    with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                        _run_vmaf(
+                            ref,
+                            dist,
+                            "/ffmpeg",
+                            None,
+                            hwaccel=False,
+                            ffprobe_path="/ffprobe",
+                            fps_rate="24000/1001",
+                            ref_frame_count=100,
+                            dist_frame_count=99,
+                        )
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert fc.count("setpts=N/30/TB") == 2
+        assert "fps=" not in fc
+
+    def test_libvmaf_opts_pin_fqm_framesync_semantics(self, tmp_path):
+        """libvmaf opts 恒带 shortest=1:repeatlast=0（与 ffmpeg-quality-metrics
+        一致）：帧数不足时以短流为准截断、不重复最后一帧。"""
+        ref = tmp_path / "ref.mkv"
+        dist = tmp_path / "dist.mkv"
+        ref.write_text("x")
+        dist.write_text("x")
+
+        with patch("src.quality.config.VMAF_MODEL_PATH", None):
+            with patch("src.quality.config.VMAF_ALIGN_FPS", True):
+                result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+                with patch("subprocess.run", return_value=result) as mock_run:
+                    with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
+                        _run_vmaf(ref, dist, "/ffmpeg", None, hwaccel=False)
+
+        call_args = mock_run.call_args[0][0]
+        fc = call_args[call_args.index("-filter_complex") + 1]
+        assert "shortest=1:repeatlast=0" in fc
 
     def test_vmaf_timeout_is_passed(self, tmp_path):
         ref = tmp_path / "ref.mkv"

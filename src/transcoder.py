@@ -188,14 +188,14 @@ def transcode(
         # 对齐（不需要它），仅当帧数不相等回退 fps 网格投影时使用（三级链：投票帧率
         # → 规范化 avg_frame_rate → r_frame_rate，全缺失为 None，打分侧兜底
         # VMAF_ALIGN_FPS_RATE）。转码侧不产生任何帧率规整参数（实验证明 -r 致
-        # VMAF 虚低、-fps_mode cfr 致产物双倍帧，2026-08-13 chn-127）。
+        # VMAF 虚低、-fps_mode cfr 致产物双倍帧，2026-08-13）。
         # Probe the fallback alignment rate (only when VMAF is on): frame-index
         # alignment is used when the two inputs have equal frame counts; this rate
         # feeds only the fps-grid projection used when the counts differ (three-level
         # chain: voted rate -> normalized avg_frame_rate -> r_frame_rate, None when
         # all are missing and VMAF_ALIGN_FPS_RATE backs up scoring). Transcoding adds
         # no frame-rate options (experiments showed -r deflates scores and -fps_mode
-        # cfr doubles output frames, chn-127 2026-08-13).
+        # cfr doubles output frames, 2026-08-13).
         fps_align_rate = None
         if config.VMAF_ASYNC or config.VMAF_REQUIRED:
             fps_align_rate = detect_vmaf_align_rate(filepath, ffprobe_path)
