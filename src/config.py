@@ -240,12 +240,15 @@ VMAF_N_THREADS = 0
 VMAF_ALIGN_FPS = True
 VMAF_ALIGN_FPS_RATE = "30000/1001"
 
-# 打分前帧数探测（get_frame_count / -count_frames）超时秒数：全量解码计数，
-# 超长影片（3+ 小时）也可能需要数分钟，探测失败会回退 fps 网格投影。
+# 打分前帧数探测（get_frame_count / -count_packets）超时秒数：读包计数不解码，
+# 实测 2.6 GB mkv 走 NFS 约 12 秒，600 秒为最慢网络场景的余量；卡死文件
+# 10 分钟后放弃回退 fps 网格投影，避免后台 worker 长期挂起。
 # Timeout (seconds) for the pre-scoring frame count probe (get_frame_count /
-# -count_frames), which decodes the whole input; very long movies (3+ hours)
-# may take minutes, and a probe failure falls back to fps-grid projection.
-FRAME_COUNT_TIMEOUT = 3600
+# -count_packets), which counts demux packets without decoding (~12 s for a
+# 2.6 GB mkv over NFS); 600 s leaves headroom for the slowest network case.
+# A stalled file is given up after 10 minutes to fall back to fps-grid
+# projection instead of hanging the background worker.
+FRAME_COUNT_TIMEOUT = 600
 
 # VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
 # Directory for per-run VMAF json logs; kept even when the result is rejected, for auditing.

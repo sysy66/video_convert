@@ -221,8 +221,8 @@ class TestGetFrameCount:
         assert n == 361548
         assert mock_run.call_count == 2
 
-    def test_mkv_no_nb_frames_falls_back_to_count_frames(self):
-        # mkv/webm 无 nb_frames 字段 → 全量解码计数兜底
+    def test_mkv_no_nb_frames_falls_back_to_count_packets(self):
+        # mkv/webm 无 nb_frames 字段 → 读包计数兜底（不解码，1 包=1 帧）
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.side_effect = [
@@ -242,7 +242,7 @@ class TestGetFrameCount:
         assert n == 12345
 
     def test_returns_frame_count(self):
-        # mkv 源：nb_frames 不可得 → count_frames 全量解码计数兜底
+        # mkv 源：nb_frames 不可得 → -count_packets 读包计数兜底
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.side_effect = [
@@ -252,7 +252,8 @@ class TestGetFrameCount:
             n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
         assert n == 361548
 
-    def test_count_frames_flag_and_select_streams(self):
+    def test_count_packets_flag_and_select_streams(self):
+        # 兜底命令必须是 -count_packets（读包不解码），不能退回全量软解
         with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.side_effect = [
@@ -261,10 +262,11 @@ class TestGetFrameCount:
             ]
             get_frame_count("/test.mp4", "/usr/bin/ffprobe")
         cmd = mock_run.call_args[0][0]
-        assert "-count_frames" in cmd
+        assert "-count_packets" in cmd
+        assert "-count_frames" not in cmd
         assert "-select_streams" in cmd
         assert "v:0" in cmd
-        assert any("nb_read_frames" in c for c in cmd)
+        assert any("nb_read_packets" in c for c in cmd)
         assert cmd[-1] == "/test.mp4"
 
     def test_na_returns_none(self):

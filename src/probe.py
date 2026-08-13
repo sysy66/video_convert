@@ -269,17 +269,20 @@ class VideoProbe:
         """
         视频流帧数：优先读容器 moov 索引的 nb_frames（秒级，mp4/mov 类），
         并用 duration×avg_frame_rate 交叉校验（偏差 >1% 视为索引虚高，如
-        文件尾损坏/流式未 finalize，自动降级全量计数）；mkv/webm 无
-        nb_frames 字段或校验失败时回退 ffprobe -count_frames 全量解码计数
-        （无硬件加速，3 小时影片约需数分钟）。计数失败返回 None。
+        文件尾损坏/流式未 finalize，自动降级兜底计数）；mkv/webm 无
+        nb_frames 字段或校验失败时回退 ffprobe -count_packets 读包计数
+        （不解码只数 demux 包，mkv 帧级容器 1 包=1 帧，NFS 实测 2.6 GB
+        约 12 秒；mp4/mkv/webm 均适用，TS 等切片流不适用）。计数失败返回 None。
 
         Video-stream frame count: prefer the container moov index nb_frames
         (instant on mp4/mov), cross-checked against duration×avg_frame_rate
         (deviation >1% means a bloated index, e.g. truncated tail or an
-        unfinalized stream, and falls back to full counting); mkv/webm have no
+        unfinalized stream, and falls back to counting); mkv/webm have no
         nb_frames field, and any check failure falls back to ffprobe
-        -count_frames full decode (no hwaccel; a 3-hour movie takes minutes).
-        Returns None on failure.
+        -count_packets (demux-level packet counting without decode; on
+        frame-based containers like mkv/mp4 one packet is one video frame,
+        measured ~12 s for a 2.6 GB file on NFS; not applicable to sliced
+        streams like MPEG-TS). Returns None on failure.
 
         :param filepath: 视频文件路径 (Path to the video file)
         :return: 帧数整数，失败时返回 None (int frame count, or None on failure)
@@ -291,11 +294,11 @@ class VideoProbe:
             self.ffprobe_path,
             "-v",
             "error",
-            "-count_frames",
+            "-count_packets",
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=nb_read_frames",
+            "stream=nb_read_packets",
             "-of",
             "csv=p=0",
             str(filepath),
@@ -309,7 +312,7 @@ class VideoProbe:
         try:
             return int(text)
         except ValueError:
-            log.error("count_frames parse error for %s: %s", filepath, text)
+            log.error("count_packets parse error for %s: %s", filepath, text)
             return None
 
     def _nb_frames_checked(self, filepath):
