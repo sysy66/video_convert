@@ -242,8 +242,13 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result):
                 with patch("src.quality._read_vmaf_from_json", return_value=(94.0, 90.0)):
                     score = _run_vmaf(
-                        ref, dist, "/ffmpeg", log_path, hwaccel=False,
-                        ref_frame_count=1, dist_frame_count=1,
+                        ref,
+                        dist,
+                        "/ffmpeg",
+                        log_path,
+                        hwaccel=False,
+                        ref_frame_count=1,
+                        dist_frame_count=1,
                     )
         assert score == 94.0
 
@@ -264,8 +269,13 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result):
                 with patch("src.quality._read_vmaf_from_json", return_value=(95.6, 90.0)):
                     score = _run_vmaf(
-                        ref, dist, "/ffmpeg", log_path, hwaccel=False,
-                        ref_frame_count=1, dist_frame_count=1,
+                        ref,
+                        dist,
+                        "/ffmpeg",
+                        log_path,
+                        hwaccel=False,
+                        ref_frame_count=1,
+                        dist_frame_count=1,
                     )
         assert score == 95.6
 
@@ -284,8 +294,13 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result):
                 with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
                     score = _run_vmaf(
-                        ref, dist, "/ffmpeg", None, hwaccel=False,
-                        ref_frame_count=1, dist_frame_count=1,
+                        ref,
+                        dist,
+                        "/ffmpeg",
+                        None,
+                        hwaccel=False,
+                        ref_frame_count=1,
+                        dist_frame_count=1,
                     )
         assert score is None
 
@@ -299,8 +314,13 @@ class TestRunVmaf:
         result.returncode = 1
         with patch("subprocess.run", return_value=result):
             score = _run_vmaf(
-                ref, dist, "/ffmpeg", None, hwaccel=False,
-                ref_frame_count=1, dist_frame_count=1,
+                ref,
+                dist,
+                "/ffmpeg",
+                None,
+                hwaccel=False,
+                ref_frame_count=1,
+                dist_frame_count=1,
             )
         assert score is None
 
@@ -320,8 +340,14 @@ class TestRunVmaf:
                 with patch("subprocess.run", return_value=result) as mock_run:
                     with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
                         _run_vmaf(
-                            ref, dist, "/ffmpeg", log_path, hwaccel=True,
-                            ffprobe_path="/ffprobe", ref_frame_count=1, dist_frame_count=1,
+                            ref,
+                            dist,
+                            "/ffmpeg",
+                            log_path,
+                            hwaccel=True,
+                            ffprobe_path="/ffprobe",
+                            ref_frame_count=1,
+                            dist_frame_count=1,
                         )
 
         call_args = mock_run.call_args[0][0]
@@ -390,8 +416,13 @@ class TestRunVmaf:
         with patch("src.quality.config.VMAF_MODEL_PATH", None):
             with patch("subprocess.run") as mock_run:
                 _run_vmaf(
-                    ref, dist, "/ffmpeg", None, hwaccel=False,
-                    ref_frame_count=None, dist_frame_count=1826,
+                    ref,
+                    dist,
+                    "/ffmpeg",
+                    None,
+                    hwaccel=False,
+                    ref_frame_count=None,
+                    dist_frame_count=1826,
                 )
         mock_run.assert_called()
 
@@ -465,8 +496,13 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result) as mock_run:
                 with patch("src.quality._read_vmaf_from_json", return_value=(None, None)):
                     _run_vmaf(
-                        ref, dist, "/ffmpeg", None, hwaccel=False,
-                        ref_frame_count=1, dist_frame_count=1,
+                        ref,
+                        dist,
+                        "/ffmpeg",
+                        None,
+                        hwaccel=False,
+                        ref_frame_count=1,
+                        dist_frame_count=1,
                     )
 
         call_args = mock_run.call_args[0][0]
@@ -484,8 +520,13 @@ class TestRunVmaf:
             with patch("subprocess.run", return_value=result) as mock_run:
                 with patch("src.quality._read_vmaf_from_json", return_value=(94.0, 90.0)):
                     _run_vmaf(
-                        ref, dist, "/ffmpeg", tmp_path / "out.json", hwaccel=False,
-                        ref_frame_count=1, dist_frame_count=1,
+                        ref,
+                        dist,
+                        "/ffmpeg",
+                        tmp_path / "out.json",
+                        hwaccel=False,
+                        ref_frame_count=1,
+                        dist_frame_count=1,
                     )
 
         assert mock_run.call_args[1]["timeout"] == config.VMAF_TIMEOUT

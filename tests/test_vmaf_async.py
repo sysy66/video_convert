@@ -121,7 +121,7 @@ class TestTranscodeAsync:
         history = MagicMock()
 
         p1, p2, p3, p4 = self._base_patches()
-        with (p1, p2, p3, p4 as mock_vmaf, patch("src.transcoder.config.VMAF_REQUIRED", True)):
+        with p1, p2, p3, p4 as mock_vmaf, patch("src.transcoder.config.VMAF_REQUIRED", True):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
             mock_vmaf.assert_not_called()  # ratio 超标必拒，不打分
 
