@@ -243,12 +243,12 @@ class History:
         转码完成、产物就绪，进入后处理（移动到目标 + 可选 VMAF 打分）队列：
         status = "await_postprocess"。output_frames 为转码时从 stderr 解析的
         产物帧数，持久化供启动恢复（recover）重新打分时直接使用，免去对
-        mkv 产物再做昂贵的全量解码计数；None 表示不可得，打分侧回退投影。
+        mkv 产物再做昂贵的全量解码计数；None 表示不可得，仅帧数诊断日志缺省。
         Transcode finished and output is ready; queue for post-processing
         (move to target + optional VMAF scoring): status = "await_postprocess".
         output_frames is the frame count parsed from the transcode stderr,
         persisted so a startup recover can reuse it instead of re-counting the
-        mkv output by full decode; None falls back to grid projection.
+        mkv output by full decode; None only omits it from diagnostics.
         """
         with self._lock:
             row = self._conn.execute(

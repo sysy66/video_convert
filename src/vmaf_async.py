@@ -63,7 +63,7 @@ def _handle_vmaf_task(task):
     vmaf_start = _time.monotonic()
     # 源帧数走 nb_frames 容器索引快路径（mp4 秒级；mkv 回退全量计数，后台
     # 线程内执行不阻塞主流程）；产物帧数由转码 stderr 解析随任务传入，
-    # recover 恢复的任务无该值（None）→ 帧数不可得不下分。
+    # 仅用于帧数诊断日志，不影响打分。
     ref_frame_count = get_frame_count(str(source), ffprobe_path) if ffprobe_path else None
     vmaf_score = compute_vmaf(
         source,

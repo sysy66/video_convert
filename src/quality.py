@@ -79,46 +79,35 @@ def _frame_index_align_string():
     return "setpts=N/30/TB"
 
 
-def _frame_counts_equal(ref_frame_count, dist_frame_count):
+def _frame_counts_check(ref_frame_count, dist_frame_count):
     """
-    比较两路已知帧数是否可视为相等（相对差 ≤1%）。帧序对齐按帧序号
-    逐帧配对，产物是源逐帧重编码时只要帧序一致，前 min(ref,dist) 帧
-    永远逐帧对应，尾部多出帧被截断（fqm 同款语义），因此小差异放行
-    帧序对齐无损；阈值与 probe 侧"索引虚高 >1% 判损坏"一致，差异
-    过大（如流式未 finalize 的 20% 虚高）按不相等处理，回退 fps 网格
-    投影作为源异常预警。任一路帧数不可得（None）按不相等处理。
-
-    Compare whether the two known frame counts are close enough for
-    frame-index alignment (relative difference <=1%). Since the distorted
-    clip is a per-frame re-encode of the reference, pairing frames by index
-    stays correct for the first min(ref,dist) frames regardless of a small
-    tail difference (the tail is truncated, same semantics as fqm);
-    the 1% threshold matches the "index bloated >1%" corruption check on the
-    probe side, and a large gap (e.g. a 20% bloated index from an unfinalized
-    stream) is treated as unequal, falling back to fps-grid projection as an
-    anomaly warning. Missing counts (None) are treated as unequal.
+    仅诊断：记录两路帧数是否可得、是否相对差 >1%。纯日志，不返回判据，
+    也不影响打分——VMAF 始终用帧序对齐打分，帧数差只反映在日志里。
+    Diagnostic only: logs whether the two frame counts are available and
+    whether they differ by >1%. Purely a logger; it returns no verdict and
+    never gates scoring.
     """
     if ref_frame_count is None or dist_frame_count is None:
-        log.warning(
-            "VMAF frame count unavailable (ref=%s dist=%s), falling back to fps grid projection",
+        log.info(
+            "VMAF frame count unavailable (ref=%s dist=%s); scoring continues",
             ref_frame_count,
             dist_frame_count,
         )
-        return False
+        return
     larger = max(ref_frame_count, dist_frame_count)
     if larger and abs(ref_frame_count - dist_frame_count) / larger > 0.01:
-        log.warning(
-            "VMAF frame count mismatch ref=%d dist=%d, falling back to fps grid projection",
+        log.info(
+            "VMAF frame count mismatch ref=%d dist=%d; scoring continues",
             ref_frame_count,
             dist_frame_count,
         )
-        return False
+        return
     log.info(
-        "VMAF frame counts equal (ref=%d dist=%d), using frame-index alignment",
+        "VMAF frame counts ref=%d dist=%d",
         ref_frame_count,
         dist_frame_count,
     )
-    return True
+    return
 
 
 def _run_vmaf(
@@ -133,32 +122,27 @@ def _run_vmaf(
 ):
     """
     内部：构建并执行单次 ffmpeg VMAF 命令。
-    对齐策略：两路帧数相对差 ≤1%（_frame_counts_equal）时用 setpts=N/30/TB
-    把帧时间戳按帧序号线性化，第 n 帧与第 n 帧逐帧配对——不依赖任何 tbr
-    声明/帧率网格，VFR 源不再产生假低分（实测 62.37→92.09）。
-    帧数不可得或差异过大时视为内容不可信，直接返回 None 不下分（不再做
-    fps 网格投影兜底——投影重采样改帧，异常源的分数无意义）。
+    对齐策略：始终用 setpts=N/30/TB 把两路帧时间戳按帧序号线性化，
+    第 n 帧与第 n 帧逐帧配对——不依赖任何 tbr 声明/帧率网格，VFR 源不再
+    产生假低分（实测 62.37→92.09）。尾部帧数不一致由 framesync 的
+    shortest=1:repeatlast=0 以短流为准截断配对，不再以帧数差设门（1% 阈值
+    无依据，帧数差异应反映在分数里而非阻断打分）。
     HW 模式下 hwdownload 按每路各自探测到的真实原生位深取帧（8bit → nv12，
     10bit → p010le），全程不经过 vpp_qsv 等有损转换，分数与纯软件路径逐位一致。
     若某路源编码 QSV 无法硬解（如老番 avi 的 mpeg4），hwdownload 会直接失败
     （不会静默降级成软解再上传），从而安全回退到软件路径。
 
     :param hwaccel: True 时启用 QSV 硬件解码（hwdownload 后接软件 libvmaf）
-    :param ref_frame_count: 参考帧数（调用方探测，None 视为不可得不下分）
-    :param dist_frame_count: 失真帧数（转码 stderr 解析/探测，None 不下分）
+    :param ref_frame_count: 参考帧数（仅日志诊断，不影响打分）
+    :param dist_frame_count: 失真帧数（仅日志诊断，不影响打分）
     """
-    # 对齐链：帧数相对差 ≤1% → 帧序对齐（setpts=N/30/TB，与 tbr 无关）；
-    # 否则内容不可信，不下分。
-    # Alignment: frame counts within 1% -> frame-index alignment
-    # (setpts=N/30/TB, independent of tbr); otherwise the content is
-    # untrustworthy and no score is produced.
+    # 对齐链：始终帧序对齐（setpts=N/30/TB，与 tbr 无关）；帧数仅作日志
+    # 诊断（_frame_counts_check），不设任何打分门。
+    # Alignment: always frame-index (setpts=N/30/TB, independent of tbr);
+    # frame counts are logged by _frame_counts_check for diagnostics only
+    # and never gate scoring.
     _align = _frame_index_align_string()
-    if not _frame_counts_equal(ref_frame_count, dist_frame_count):
-        log.warning(
-            "VMAF SKIPPED: frame alignment unavailable for %s, no score produced",
-            os.path.basename(str(transcoded_path)),
-        )
-        return None
+    _frame_counts_check(ref_frame_count, dist_frame_count)
 
     if hwaccel:
         ffprobe_path = ffprobe_path or config.FFPROBE_PATH
@@ -274,7 +258,8 @@ def compute_vmaf(
     json 日志尽量落盘：未传 log_path 时自动写入 VMAF_LOG_DIR（供事后审计与取分）；
     日志目录不可写时跳过落盘（仅警告）。
     VMAF_HWACCEL=True 时优先使用 QSV 硬解加速；失败后按 VMAF_HW_FALLBACK 决定是否回退到软解。
-    帧数不可得或差异过大（相对差 >1%，内容不可信）时不下分，返回 None。
+    打分始终使用帧序对齐（setpts=N/30/TB + shortest=1:repeatlast=0）；帧数仅作日志
+    诊断（_frame_counts_check），不可得或相对差 >1% 都不阻断打分。
 
     Compute the VMAF score between original and transcoded video.
     Uses scale2ref for resolution alignment to avoid mismatched-resolution
@@ -285,8 +270,8 @@ def compute_vmaf(
     if the log directory is not writable.
     When VMAF_HWACCEL is enabled, tries QSV hardware decode first; falls back
     to software decode on failure based on VMAF_HW_FALLBACK.
-    No score (None) is produced when the frame counts are missing or diverge
-    by more than 1% (untrustworthy content).
+    Scoring always uses frame-index alignment (setpts=N/30/TB + shortest=1:repeatlast=0);
+    frame counts are logged for diagnostics only and never gate the score.
 
     :param original_path: 原始视频路径（参考）(Path to the original video, reference)
     :param transcoded_path: 转码后视频路径（失真）(Path to the transcoded video, distorted)
@@ -294,10 +279,10 @@ def compute_vmaf(
                         (Path to ffmpeg with libvmaf, defaults to config)
     :param log_path: json 日志输出路径，None 时自动生成到 VMAF_LOG_DIR
                      (Path for json log output, defaults to VMAF_LOG_DIR when None)
-    :param ref_frame_count: 参考帧数（帧序对齐前提，None 时不下分）
-                            (Reference frame count; None disables scoring)
-    :param dist_frame_count: 失真帧数（帧序对齐前提，None 时不下分）
-                             (Distorted frame count; None disables scoring)
+    :param ref_frame_count: 参考帧数（仅日志诊断，不影响打分）
+                            (Reference frame count; diagnostics only)
+    :param dist_frame_count: 失真帧数（仅日志诊断，不影响打分）
+                             (Distorted frame count; diagnostics only)
     :return: VMAF 分数 (0-100)，失败或不可用时返回 None
              (VMAF score 0-100, or None on failure/unavailability)
     """

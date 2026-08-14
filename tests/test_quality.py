@@ -6,6 +6,7 @@ mapping, JSON score parsing, log cleanup, VMAF run and compute_vmaf wrapper.
 """
 
 import json
+import logging
 import time
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +14,7 @@ import pytest
 
 from src import config
 from src.quality import (
-    _frame_counts_equal,
+    _frame_counts_check,
     _hw_download_format,
     _read_vmaf_from_json,
     _run_vmaf,
@@ -169,30 +170,28 @@ class TestReadVmafFromJson:
         assert minimum is None
 
 
-class TestFrameCountsEqual:
-    def test_equal_counts(self):
-        assert _frame_counts_equal(1826, 1826) is True
+class TestFrameCountsCheck:
+    def test_returns_none_always(self):
+        """纯日志函数：任何输入都返回 None，不阻断打分。"""
+        assert _frame_counts_check(1826, 1826) is None
+        assert _frame_counts_check(1000, 1011) is None
+        assert _frame_counts_check(None, 1826) is None
+        assert _frame_counts_check(None, None) is None
 
-    def test_one_percent_tolerance_permits_small_tail_difference(self):
-        """相对差 ≤1% 放行帧序对齐：产物是源逐帧重编码，前 min() 帧
-        恒逐帧对应，尾部差异由 libvmaf shortest=1 截断（fqm 语义）。"""
-        assert _frame_counts_equal(1000, 1010) is True
-        assert _frame_counts_equal(1010, 1000) is True
-        assert _frame_counts_equal(10000, 10099) is True
+    def test_logs_unavailable(self, caplog):
+        with caplog.at_level(logging.INFO):
+            _frame_counts_check(None, 1826)
+        assert "unavailable" in caplog.text
 
-    def test_over_one_percent_rejected(self):
-        """相对差 >1%（对应 probe 侧"索引虚高 >1% 判损坏"）拒绝帧序对齐，
-        回退 fps 网格投影作为异常预警。"""
-        assert _frame_counts_equal(1000, 1011) is False
-        assert _frame_counts_equal(10000, 10200) is False
+    def test_logs_mismatch(self, caplog):
+        with caplog.at_level(logging.INFO):
+            _frame_counts_check(10000, 10200)
+        assert "mismatch" in caplog.text
 
-    def test_zero_counts_equal(self):
-        assert _frame_counts_equal(0, 0) is True
-
-    def test_none_either_side_rejected(self):
-        assert _frame_counts_equal(None, 1826) is False
-        assert _frame_counts_equal(1826, None) is False
-        assert _frame_counts_equal(None, None) is False
+    def test_logs_counts(self, caplog):
+        with caplog.at_level(logging.INFO):
+            _frame_counts_check(1826, 1826)
+        assert "1826" in caplog.text
 
 
 class TestCleanupVmafLogs:
@@ -360,9 +359,8 @@ class TestRunVmaf:
         assert "fps=" not in fc
         assert "[d0][r0]scale2ref" in fc
 
-    def test_frame_index_align_skipped_on_count_mismatch(self, tmp_path):
-        """两路帧数相对差 >1%（内容不可信）时不下分：直接返回 None，
-        不构建任何 filter_complex / libvmaf 调用。"""
+    def test_scores_despite_count_mismatch(self, tmp_path):
+        """两路帧数相对差 >1% 不再阻断打分：仍调用 ffmpeg 帧序对齐打分。"""
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"
         ref.write_text("x")
@@ -370,7 +368,7 @@ class TestRunVmaf:
 
         with patch("src.quality.config.VMAF_MODEL_PATH", None):
             with patch("subprocess.run") as mock_run:
-                score = _run_vmaf(
+                _run_vmaf(
                     ref,
                     dist,
                     "/ffmpeg",
@@ -380,11 +378,10 @@ class TestRunVmaf:
                     ref_frame_count=10000,
                     dist_frame_count=10200,
                 )
-        assert score is None
-        mock_run.assert_not_called()
+        mock_run.assert_called()
 
-    def test_frame_index_align_skipped_when_counts_unavailable(self, tmp_path):
-        """任一帧数不可得（None）时不下分。"""
+    def test_scores_when_counts_unavailable(self, tmp_path):
+        """任一帧数不可得（None）不再阻断打分：仍调用 ffmpeg。"""
         ref = tmp_path / "ref.mkv"
         dist = tmp_path / "dist.mkv"
         ref.write_text("x")
@@ -392,12 +389,11 @@ class TestRunVmaf:
 
         with patch("src.quality.config.VMAF_MODEL_PATH", None):
             with patch("subprocess.run") as mock_run:
-                score = _run_vmaf(
+                _run_vmaf(
                     ref, dist, "/ffmpeg", None, hwaccel=False,
                     ref_frame_count=None, dist_frame_count=1826,
                 )
-        assert score is None
-        mock_run.assert_not_called()
+        mock_run.assert_called()
 
     def test_frame_index_align_in_hw_filter_complex(self, tmp_path):
         """HW 路径：帧数相等时两个输入同样用 setpts=N/30/TB 帧序对齐。"""
