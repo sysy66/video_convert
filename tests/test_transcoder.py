@@ -10,6 +10,7 @@ import pytest
 
 from src import config
 from src.transcoder import _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs, transcode
+from src.vmaf_async import vmaf_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -431,6 +432,29 @@ class TestTranscode:
         assert history.mark_failed.call_args[0][1] == "VMAF scoring failed"
         history.mark_done.assert_not_called()
         assert not list(tmp_path.glob(".work_*"))
+
+    def test_vmaf_scoring_failed_during_shutdown_defers(self, tmp_path):
+        # 关停中 sync 打分失败（None）：转 pending 保留产物待下次启动重打分，不标 failed。
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_REQUIRED", True),
+            patch("src.transcoder.compute_vmaf", return_value=None),
+            patch("src.transcoder.is_shutting_down", return_value=True),
+        ):
+            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+
+        assert result is True
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_not_called()
+        history.mark_pending_vmaf.assert_called_once()
+        vmaf_tasks.get_nowait()
+        assert vmaf_tasks.empty()
 
     def test_vmaf_extreme_low_marks_failed_for_retry(self, tmp_path):
         # sync 模式极端低分（< VMAF_EXTREME_LOW）：与 async 一致记 failed 永久排除

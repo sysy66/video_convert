@@ -244,6 +244,34 @@ class TestHandleVmafTask:
         history.mark_done.assert_not_called()
         history.mark_failed.assert_called_once_with(str(source), "VMAF scoring failed")
 
+    def test_score_none_during_shutdown_defers(self, tmp_path):
+        # 关停中打分失败（None）：保持 pending 待下次启动重打分，不标 failed、不删产物。
+        source, output, history, task = self._setup_files(tmp_path)
+        with (
+            patch("src.vmaf_async.compute_vmaf", return_value=None),
+            patch("src.vmaf_async._shutting_down", True),
+        ):
+            _handle_vmaf_task(task)
+        assert source.exists()
+        assert output.exists()
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_not_called()
+
+    def test_extreme_low_during_shutdown_still_fails(self, tmp_path):
+        # 极端低分是真实质量异常，即便关停也照常标 failed（仅 None 中断才延后）。
+        source, output, history, task = self._setup_files(tmp_path)
+        with (
+            patch("src.vmaf_async.compute_vmaf", return_value=45.0),
+            patch("src.vmaf_async._shutting_down", True),
+        ):
+            _handle_vmaf_task(task)
+        assert source.exists()
+        assert not output.exists()
+        history.mark_failed.assert_called_once_with(
+            str(source), "VMAF 45.00 below 60, input may be incomplete"
+        )
+        history.mark_done.assert_not_called()
+
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         output.unlink()

@@ -16,7 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from src import config
+from src import config, vmaf_async
 from src.filter import should_process, should_submit
 from src.history import History
 from src.quality import cleanup_vmaf_logs
@@ -65,6 +65,7 @@ def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
+    vmaf_async.signal_shutdown()
 
 
 def _setup_logging():

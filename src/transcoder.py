@@ -48,6 +48,7 @@ from src.vmaf_async import (
     _vmaf_workers_lock,
     _vmaf_workers_started,
     drain_vmaf_tasks,
+    is_shutting_down,
     recover_pending_vmaf,
     start_vmaf_workers,
     vmaf_tasks,
@@ -441,6 +442,45 @@ def transcode(
             verdict = "accept"
 
         if verdict == "retry":
+            if vmaf_score is None and is_shutting_down():
+                # 关停中被中断/失败的打分：非真实质量问题，转 await_postprocess
+                # 保留产物供下次启动 recover 重新打分，不误标 failed。
+                # Scoring interrupted by shutdown: keep the output as pending and
+                # rescore it on next startup instead of marking it failed.
+                final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
+                if final_path.name != output_filename:
+                    log.info(
+                        "DEST EXISTS: using %s instead of %s", final_path.name, output_filename
+                    )
+                try:
+                    shutil.copyfile(str(output_path), str(final_path))
+                    output_path.unlink()
+                    _cleanup_temp(temp_dir)
+                except OSError as e:
+                    log.error("FILE MOVE FAILED (async): %s — %s", final_path.name, e)
+                    _cleanup_temp(temp_dir)
+                    history.mark_failed(str(filepath), f"File move failed: {e}")
+                    return False
+                history.mark_pending_vmaf(str(filepath), str(final_path), dist_frame_count)
+                safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+                vmaf_tasks.put(
+                    (
+                        str(filepath),
+                        str(final_path),
+                        ratio,
+                        safe_stem,
+                        history,
+                        elapsed,
+                        keep_source,
+                        dist_frame_count,
+                        ffprobe_path,
+                    )
+                )
+                log.info(
+                    "VMAF DEFERRED (sync, shutting down): %s kept pending for rescore",
+                    final_path.name,
+                )
+                return True
             _cleanup_temp(temp_dir)
             if vmaf_score is None:
                 history.mark_failed(str(filepath), "VMAF scoring failed")

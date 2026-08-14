@@ -33,6 +33,24 @@ _vmaf_worker_threads = []
 _vmaf_workers_lock = threading.Lock()
 _vmaf_workers_started = False
 
+# 进程是否进入优雅关闭。置位后，打分失败(None)的任务不再误标 failed，
+# 而是保持 await_postprocess 待下次启动 recover 重新打分。
+# Whether the process is shutting down. When set, tasks whose scoring failed
+# (returned None) are kept pending for a rescore on next startup instead of
+# being wrongly marked as permanently failed.
+_shutting_down = False
+
+
+def signal_shutdown():
+    """标记进程进入优雅关闭：此后打分失败(None)的任务保持 pending 待重打分。"""
+    global _shutting_down
+    _shutting_down = True
+
+
+def is_shutting_down():
+    """是否处于优雅关闭中。"""
+    return _shutting_down
+
 
 def _handle_vmaf_task(task):
     """
@@ -82,6 +100,18 @@ def _handle_vmaf_task(task):
         # 均记 failed 永久排除，仅 --retry-failed 启动时手动重试。
         # Scoring failures (None) and extreme-low scores both mark failed (permanently
         # excluded; retried only via --retry-failed).
+        if vmaf_score is None and _shutting_down:
+            # 关停中被中断/失败的打分：非真实质量问题，保持 await_postprocess
+            # 待下次启动 recover 重新打分，不删产物、不标 failed（误标会让
+            # 唯一副本被永久排除）。
+            # Scoring interrupted by shutdown: not a real quality issue, so the
+            # task stays pending for a rescore on next startup — the output is
+            # kept and nothing is marked failed.
+            log.info(
+                "VMAF DEFERRED (async, shutting down): %s stays pending for rescore",
+                output.name,
+            )
+            return
         try:
             output.unlink()
         except OSError as e:
@@ -203,8 +233,7 @@ def drain_vmaf_tasks():
         thread.join()
     with _vmaf_workers_lock:
         _vmaf_worker_threads.clear()
-        _vmaf_workers_started = False
-    log.info("Drained %d async VMAF worker thread(s)", len(workers))
+    _vmaf_workers_started = False
 
 
 def recover_pending_vmaf(history, ffprobe_path=None):

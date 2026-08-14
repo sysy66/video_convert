@@ -78,8 +78,10 @@ class TestSignalHandler:
         import signal
 
         main._running = True
-        main.signal_handler(signal.SIGINT, None)
+        with patch("main.vmaf_async.signal_shutdown") as mock_shutdown:
+            main.signal_handler(signal.SIGINT, None)
         assert main._running is False
+        mock_shutdown.assert_called_once()
 
 
 class TestCliOverrides:
