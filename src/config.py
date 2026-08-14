@@ -218,31 +218,28 @@ VMAF_SUBSAMPLE = 30
 # diminish beyond ~4 threads.
 VMAF_N_THREADS = 0
 
-# VMAF 打分帧率对齐总开关。打分侧对齐：优先"帧序对齐"（两路帧数相等则按帧序号
-# 逐帧配对，与容器 tbr/帧率网格无关，VFR 源不再假低分）；仅当两路帧数不相等
-# （或帧数探测失败）时才回退到 fps 网格投影，目标帧率按三级链取
-# detect_vmaf_align_rate 的返回值（帧间隔投票帧率 → 规范化 avg_frame_rate →
-# r_frame_rate），全缺失时用 VMAF_ALIGN_FPS_RATE 兜底。转码侧不产生任何帧率
-# 规整参数（实验证明 -r/-fps_mode cfr 分别致 VMAF 虚低/产物双倍帧），对齐只在
-# 打分侧进行。实测（2026-08-13 全片）：帧序对齐 92.09 vs fps=30/1
-# 投影 62.37。
-# With VMAF_ALIGN_FPS=True scoring prefers frame-index alignment (when both
-# inputs have equal frame counts frames are paired by index, independent of the
-# container tbr/frame-rate grid, so VFR sources are no longer falsely deflated);
-# fps-grid projection is used only when the counts differ or probing fails, its
-# target rate comes from detect_vmaf_align_rate's three-level chain (voted
-# PTS-interval rate -> normalized avg_frame_rate -> r_frame_rate), falling back
-# to VMAF_ALIGN_FPS_RATE when nothing is available. Transcoding adds no
-# frame-rate regularization (experiments showed -r deflates scores and
+# VMAF 打分帧序对齐。打分侧按帧序号逐帧配对（两路帧数相对差 ≤1% 时放行，
+# 与容器 tbr/帧率网格无关，VFR 源不再假低分）；帧数不可得或差异过大（如
+# 流式未 finalize 的索引虚高）视为内容不可信，不下分（返回 None 记 failed），
+# 不再做 fps 网格投影兜底——投影会重采样改帧，异常源得到的分数无意义。
+# 转码侧不产生任何帧率规整参数（实验证明 -r/-fps_mode cfr 分别致 VMAF 虚低/
+# 产物双倍帧），对齐只在打分侧进行。实测（2026-08-13 全片）：帧序
+# 对齐 92.09 vs fps=30/1 投影 62.37。
+# Scoring uses frame-index alignment: frames are paired by index when the two
+# frame counts agree within 1%, independent of the container tbr/frame-rate
+# grid, so VFR sources are no longer falsely deflated; when counts are missing
+# or diverge too much (e.g. a bloated index from an unfinalized stream) the
+# content is considered untrustworthy and no score is produced (None marks the
+# entry failed) — the legacy fps-grid projection is gone because it resamples
+# frames and yields meaningless scores on anomalous sources. Transcoding adds
+# no frame-rate regularization (experiments showed -r deflates scores and
 # -fps_mode cfr doubles output frames); alignment happens on the scoring side
 # only. Measured (2026-08-13 full movie): frame-index 92.09 vs
 # fps=30/1 projection 62.37.
-VMAF_ALIGN_FPS = True
-VMAF_ALIGN_FPS_RATE = "30000/1001"
 
 # 打分前帧数探测（get_frame_count / -count_packets）超时秒数：读包计数不解码，
 # 实测 2.6 GB mkv 走 NFS 约 12 秒，600 秒为最慢网络场景的余量；卡死文件
-# 10 分钟后放弃回退 fps 网格投影，避免后台 worker 长期挂起。
+# 10 分钟后放弃（探测失败 → 不下分），避免后台 worker 长期挂起。
 # Timeout (seconds) for the pre-scoring frame count probe (get_frame_count /
 # -count_packets), which counts demux packets without decoding (~12 s for a
 # 2.6 GB mkv over NFS); 600 s leaves headroom for the slowest network case.

@@ -14,17 +14,19 @@ import time as _time
 from pathlib import Path
 
 from src import config
-from src.probe import detect_vmaf_align_rate, get_frame_count
+from src.probe import get_frame_count
 from src.quality import compute_vmaf, vmaf_verdict
 
 log = __import__("logging").getLogger(__name__)
 
 # 异步 VMAF 打分任务队列：任务元组
-# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate)。
+# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, dist_frame_count,
+# ffprobe_path)。
 # 无界队列，任务仅含路径元组不占内存；打分并发由 worker 数控制。
 # Async VMAF scoring task queue; tasks are
-# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, fps_align_rate)
-# tuples. Unbounded: entries are lightweight path tuples, concurrency is bounded by workers.
+# (source, output, ratio, safe_stem, history, codec_elapsed, keep_source, dist_frame_count,
+# ffprobe_path) tuples. Unbounded: entries are lightweight path tuples, concurrency is
+# bounded by workers.
 vmaf_tasks = queue.Queue()
 _VMAF_STOP = object()
 _vmaf_worker_threads = []
@@ -40,8 +42,8 @@ def _handle_vmaf_task(task):
     Handle one async VMAF scoring task: score the output, then decide its fate
     based on vmaf_verdict's verdict (retry/accept/reject) and update history.
     """
-    # 兼容缺少 codec_elapsed/keep_source/fps_align_rate/dist_frame_count/
-    # ffprobe_path 的短任务元组，缺失时补 None。
+    # 兼容缺少 keep_source/dist_frame_count/ffprobe_path 的短任务元组，
+    # 缺失时补 None。
     # Tolerate short task tuples that omit the trailing fields (padded with None).
     (
         source,
@@ -51,10 +53,9 @@ def _handle_vmaf_task(task):
         history,
         codec_elapsed,
         keep_source,
-        fps_align_rate,
         dist_frame_count,
         ffprobe_path,
-    ) = (task + (None,) * 10)[:10]
+    ) = (task + (None,) * 10)[:9]
     source = Path(source)
     output = Path(output)
 
@@ -62,13 +63,12 @@ def _handle_vmaf_task(task):
     vmaf_start = _time.monotonic()
     # 源帧数走 nb_frames 容器索引快路径（mp4 秒级；mkv 回退全量计数，后台
     # 线程内执行不阻塞主流程）；产物帧数由转码 stderr 解析随任务传入，
-    # recover 恢复的任务无该值（None）→ 打分回退 fps 网格投影。
+    # recover 恢复的任务无该值（None）→ 帧数不可得不下分。
     ref_frame_count = get_frame_count(str(source), ffprobe_path) if ffprobe_path else None
     vmaf_score = compute_vmaf(
         source,
         output,
         log_path=vmaf_log,
-        fps_rate=fps_align_rate,
         ref_frame_count=ref_frame_count,
         dist_frame_count=dist_frame_count,
     )
@@ -210,18 +210,14 @@ def drain_vmaf_tasks():
 def recover_pending_vmaf(history, ffprobe_path=None):
     """
     启动恢复：把历史中残留的 await_postprocess 记录重新入队异步打分，处理 kill -9
-    后遗留的双份（源与产物同时存在）情况。入队前探测打分回退投影帧率
-    （detect_vmaf_align_rate，三级链，失败为 None 时打分侧兜底）。
+    后遗留的双份（源与产物同时存在）情况。
 
     Startup recovery: re-enqueue await_postprocess records left in history for
-    async scoring, handling the duplicate-file case left behind by kill -9. The
-    fallback alignment rate is probed before enqueue (detect_vmaf_align_rate's
-    three-level chain; None leaves scoring to its own VMAF_ALIGN_FPS_RATE fallback).
+    async scoring, handling the duplicate-file case left behind by kill -9.
 
     :param history: 历史记录对象 (History tracking object)
-    :param ffprobe_path: ffprobe 路径，用于重新探测帧率；None 时不再探测，直接按旧路径入队
-                         (ffprobe path for re-probing the rate; when None, entries
-                         are re-enqueued as-is)
+    :param ffprobe_path: ffprobe 路径，用于重新探测帧数；None 时不探测
+                         (ffprobe path for re-probing the frame count; None skips it)
     """
     count = 0
     for filepath, output_path, dist_frame_count in history.iter_pending_vmaf():
@@ -237,9 +233,6 @@ def recover_pending_vmaf(history, ffprobe_path=None):
                 pass
             history.mark_done(filepath, None, rejected=True)
             continue
-        fps_align_rate = None
-        if ffprobe_path:
-            fps_align_rate = detect_vmaf_align_rate(filepath, ffprobe_path)
         stem = Path(filepath).stem
         safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
         try:
@@ -255,7 +248,6 @@ def recover_pending_vmaf(history, ffprobe_path=None):
                 history,
                 None,
                 config.KEEP_SOURCE,
-                fps_align_rate,
                 dist_frame_count,
                 ffprobe_path,
             )

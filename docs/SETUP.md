@@ -195,8 +195,6 @@ video_convert/
 | `SW_DECODE_FALLBACK_CODECS` | `{"vc1"}` | Codecs that fall back to software decode + hwupload when QSV decode crashes |
 | `VMAF_SUBSAMPLE` | 30 | Evaluate 1 frame every N frames |
 | `VMAF_N_THREADS` | 0 | libvmaf threads: 0 = auto (leave 1 core for transcoding), >0 explicit. CLI: `--vmaf-threads` |
-| `VMAF_ALIGN_FPS` | `True` | Rate-align source & output with an fps filter before scoring (fixes VFR→CFR drift) |
-| `VMAF_ALIGN_FPS_RATE` | `"30000/1001"` | Fallback target rate when source probing fails |
 | `VMAF_FFMPEG_PATH` | `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg` | ffmpeg binary used for VMAF scoring (must include libvmaf) |
 | `VMAF_MODEL_PATH` | `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` | VMAF model (negative-float features). CLI: `--vmaf-model` |
 | `VMAF_TIMEOUT` | 36000 | VMAF scoring timeout per file (seconds, 10 h) |
@@ -240,7 +238,7 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 ### Behaviour / 行为
 
 - VMAF 默认关闭，需显式启用：`--vmaf sync`（同步打分）或 `--vmaf async`（异步打分，见下）。
-- 打分前对源与产物做帧率对齐（`VMAF_ALIGN_FPS`），消除 VFR→CFR 帧序漂移造成的分数虚低。
+- 打分前对源与产物做帧序对齐（`setpts=N/30/TB` 按帧号线性化），消除 VFR→CFR 帧序漂移造成的分数虚低；两路帧数相对差 >1% 或不可得时不下分（判为异常）。
 - If VMAF is unavailable (binary missing, timeout, or error) and `VMAF_REQUIRED=True`, the result is **REJECTED** — no score means no accept.
 - The score is stored in `data/history.db` under the `vmaf_score` column.
 - ACCEPT/REJECT log lines include VMAF when available:

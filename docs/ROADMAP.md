@@ -64,7 +64,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 - [x] **媒体库配置外置 `libraries.conf`** — 从代码迁移到项目根目录配置文件（每行一个库：`名称 = 输入[, 输出[, 缓存]]`），首次运行自动生成带注释模板，开箱即用；`--library` CLI 优先于配置文件
 - [x] **VMAF CLI 三态重构（`--vmaf off|sync|async`）** — 默认关闭（`VMAF_REQUIRED=False`），需显式启用；VMAF hwaccel 解码默认开启，失败自动回退软件（`--no-vmaf-hwaccel` / `--no-vmaf-hw-fallback` 可关）
-- [x] **VMAF 打分帧率对齐（`VMAF_ALIGN_FPS`）** — 打分前对源与产物统一应用 fps 滤镜规整到同一时间网格，消除 VFR→CFR 帧序漂移导致的逐帧错位；实测（Arc A310 + av1_qsv）同源分数 63.19 → 94.83 且三次一致
+- [x] **VMAF 打分帧序对齐** — 打分前对源与产物按帧号线性化（`setpts=N/30/TB`），消除 VFR→CFR 帧序漂移导致的逐帧错位；实测（Arc A310 + av1_qsv）同源分数 63.19 → 94.83 且三次一致；删去 fps 网格投影兜底，帧数不可得或 >1% 时不下分
 - [x] **VMAF 取分可靠性** — 优先解析 stderr（规避 libvmaf 2.3.0 json pooled 聚合 bug）、仅使用 json `pooled_metrics` 取分、`log_path` 补默认值
 - [x] **VMAF 模型移入 `/opt/ffmpeg-qsv-vmaf/models/`** — 随自编译统一版安装，默认模型 `vmaf_v0.6.1neg.json`；清理过时的 johnvansickle 与旧模型上下文
 - [x] **sync/async 打分决策统一** — 两条路径共用同一决策逻辑；打分失败（None）与极端低分（`VMAF_EXTREME_LOW`）统一按 failed 退避重试，不再永久 rejected

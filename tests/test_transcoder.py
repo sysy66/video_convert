@@ -376,7 +376,6 @@ class TestTranscode:
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
             patch("src.transcoder.config.ACCEPT_RATIO_MAX", 0.5),
-            patch("src.transcoder.detect_vmaf_align_rate", return_value=None),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -424,7 +423,6 @@ class TestTranscode:
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
             patch("src.transcoder.compute_vmaf", return_value=None),
-            patch("src.transcoder.detect_vmaf_align_rate", return_value=None),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -447,7 +445,6 @@ class TestTranscode:
             patch("src.transcoder.config.VMAF_REQUIRED", True),
             patch("src.transcoder.config.VMAF_EXTREME_LOW", 60),
             patch("src.transcoder.compute_vmaf", return_value=55.0),
-            patch("src.transcoder.detect_vmaf_align_rate", return_value=None),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -476,74 +473,6 @@ class TestTranscode:
         mock_vmaf.assert_not_called()
         history.mark_done.assert_called_once()
         assert history.mark_done.call_args[1]["rejected"] is False
-
-    def test_align_rate_unavailable_still_transcodes_and_scores(self, tmp_path):
-        # 帧率探测全缺失（detect → None）时不短路：混合 VFR/不可探测源照常
-        # 转码与打分，帧序对齐主路径不依赖回退帧率，fps 投影兜底交给打分侧
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        def _fake_build(ffmpeg_path, ffprobe_path, input_path, output_path, **kwargs):
-            return ([str(ffmpeg_path), str(output_path)], 30.0)
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._build_ffmpeg_cmd", side_effect=_fake_build),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.detect_vmaf_align_rate", return_value=None),
-            patch("src.transcoder.compute_vmaf", return_value=95.0) as mock_vmaf,
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        assert mock_vmaf.call_args.kwargs["fps_rate"] is None
-
-    def test_vmaf_off_mode_never_probes_rate(self, tmp_path):
-        # off 模式（VMAF_REQUIRED=False）：不探测回退帧率、不调打分，直接接受
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", False),
-            patch("src.transcoder.detect_vmaf_align_rate") as mock_detect,
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        mock_detect.assert_not_called()
-        history.mark_done.assert_called_once()
-
-    def test_forwards_detected_align_rate_for_scoring(self, tmp_path):
-        # 探测出的回退投影帧率：转码命令不带任何帧率规整参数（实验证明
-        # -r/-fps_mode cfr 有害），打分传 fps_rate 作为帧数不等时的回退投影帧率
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video" * 10)
-
-        def _fake_build(ffmpeg_path, ffprobe_path, input_path, output_path, **kwargs):
-            assert "cfr_rate" not in kwargs
-            return ([str(ffmpeg_path), str(output_path)], 120.0)
-
-        history = MagicMock()
-
-        with (
-            patch("src.transcoder.detect_vmaf_align_rate", return_value="25/1"),
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._build_ffmpeg_cmd", side_effect=_fake_build),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.compute_vmaf", return_value=95.0) as mock_vmaf,
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        assert mock_vmaf.call_args.kwargs["fps_rate"] == "25/1"
 
     def test_fallback_codec_forced_softdecode_first(self, tmp_path):
         """源编码在 SW_DECODE_FALLBACK_CODECS 内时，首轮即应传

@@ -23,7 +23,7 @@ from src.ffmpeg_runner import (
     parse_frame_count_from_stderr,
 )
 from src.path_utils import _format_size, _random_suffix, _unique_path
-from src.probe import detect_vmaf_align_rate, get_frame_count, get_video_codec
+from src.probe import get_frame_count, get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
     _active_ffmpeg_pids,
@@ -184,21 +184,11 @@ def transcode(
     history.mark_started(str(filepath))
 
     try:
-        # 探测打分回退投影帧率（仅开启 VMAF 时需要）：两路帧数相等时打分走帧序
-        # 对齐（不需要它），仅当帧数不相等回退 fps 网格投影时使用（三级链：投票帧率
-        # → 规范化 avg_frame_rate → r_frame_rate，全缺失为 None，打分侧兜底
-        # VMAF_ALIGN_FPS_RATE）。转码侧不产生任何帧率规整参数（实验证明 -r 致
-        # VMAF 虚低、-fps_mode cfr 致产物双倍帧，2026-08-13）。
-        # Probe the fallback alignment rate (only when VMAF is on): frame-index
-        # alignment is used when the two inputs have equal frame counts; this rate
-        # feeds only the fps-grid projection used when the counts differ (three-level
-        # chain: voted rate -> normalized avg_frame_rate -> r_frame_rate, None when
-        # all are missing and VMAF_ALIGN_FPS_RATE backs up scoring). Transcoding adds
-        # no frame-rate options (experiments showed -r deflates scores and -fps_mode
-        # cfr doubles output frames, 2026-08-13).
-        fps_align_rate = None
-        if config.VMAF_ASYNC or config.VMAF_REQUIRED:
-            fps_align_rate = detect_vmaf_align_rate(filepath, ffprobe_path)
+        # 转码侧不产生任何帧率规整参数（实验证明 -r 致 VMAF 虚低、-fps_mode
+        # cfr 致产物双倍帧，2026-08-13）；对齐只在打分侧按帧序号进行。
+        # Transcoding adds no frame-rate options (experiments showed -r deflates
+        # scores and -fps_mode cfr doubles output frames, 2026-08-13);
+        # alignment happens on the scoring side by frame index only.
 
         # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
         sw_scale_fallback_attempted = False
@@ -396,7 +386,6 @@ def transcode(
                     history,
                     elapsed,
                     keep_source,
-                    fps_align_rate,
                     dist_frame_count,
                     ffprobe_path,
                 )
@@ -438,7 +427,6 @@ def transcode(
                 filepath,
                 output_path,
                 log_path=vmaf_log,
-                fps_rate=fps_align_rate,
                 ref_frame_count=ref_frame_count,
                 dist_frame_count=dist_frame_count,
             )

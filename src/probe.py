@@ -9,7 +9,6 @@ VFR sources.
 
 import json
 import subprocess
-from collections import Counter
 
 from src import config
 
@@ -136,96 +135,6 @@ class VideoProbe:
         if result is None:
             return None
         return result.stdout.strip().lower()
-
-    def _probe_frame_rate_strings(self, filepath):
-        """
-        探测 v:0 流的 avg_frame_rate / r_frame_rate 元数据，返回校验后的
-        (avg, r) 帧率字符串对；缺失或非法时对应为 None。
-        Probe avg_frame_rate / r_frame_rate of stream v:0, returning the validated
-        (avg, r) rate-string pair; None for missing or invalid entries.
-        """
-        cmd = [
-            self.ffprobe_path,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=avg_frame_rate:stream=r_frame_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=0",
-            str(filepath),
-        ]
-        result = self._run(cmd)
-        if result is None:
-            return None, None
-
-        def _valid(fr):
-            if not fr:
-                return None
-            fr = fr.strip()
-            if "/" in fr:
-                num, _, den = fr.partition("/")
-                try:
-                    n, d = int(num), int(den)
-                except ValueError:
-                    return None
-                return fr if n > 0 and d > 0 else None
-            try:
-                return fr if float(fr) > 0 else None
-            except ValueError:
-                return None
-
-        entries = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        avg = _valid(entries.get("avg_frame_rate", ""))
-        r = _valid(entries.get("r_frame_rate", ""))
-        return avg, r
-
-    def detect_vmaf_align_rate(self, filepath):
-        """
-        探测 VMAF 打分回退投影帧率（三级链）：帧间隔投票帧率 → 规范化
-        avg_frame_rate → r_frame_rate；全部不可用时返回 None（打分侧兜底
-        VMAF_ALIGN_FPS_RATE）。仅当 avg_frame_rate 与 r_frame_rate 相对差超过
-        0.05%（VFR 嫌疑）时才做帧时间戳投票（CFR 源零额外探测）；投票不可靠时
-        回退元数据。返回分数可直接用于 fps 滤镜，如 "30000/1001"。
-
-        Probe the fallback alignment rate for VMAF scoring (three-level chain):
-        voted PTS-interval rate -> normalized avg_frame_rate -> r_frame_rate;
-        None when all are unavailable (scoring then falls back to
-        VMAF_ALIGN_FPS_RATE). PTS sampling is done only when avg_frame_rate
-        differs from r_frame_rate by more than 0.05% (CFR sources cost no extra
-        probing); an unreliable vote falls back to the metadata rates. The
-        returned fraction is directly usable by the fps filter, e.g. "30000/1001".
-        """
-        avg, r = self._probe_frame_rate_strings(filepath)
-        if avg and r:
-            avg_f = self.fps_fraction_to_float(avg)
-            r_f = self.fps_fraction_to_float(r)
-            # 相对差 ≤ 0.05% 视为一致（吸收 avg 计算噪声，如 73743750/2460583
-            # vs 30000/1001 同属 29.97fps）；30/1 与 30000/1001 差 0.1%、恰在
-            # 容差外，判 VFR 嫌疑交给投票裁决，绝不吞真实帧率差异。
-            if not (avg_f and r_f and abs(avg_f - r_f) / avg_f <= _RATE_AGREE_TOLERANCE):
-                diffs_us = self._probe_pts_intervals(filepath)
-                if diffs_us is not None:
-                    voted = self._vote_common_rate(diffs_us)
-                    if voted:
-                        log.info(
-                            "疑似 VFR %s: avg=%s r=%s 帧间隔投票 %s (%.1f%%) → 回退投影帧率 %s",
-                            filepath,
-                            avg,
-                            r,
-                            voted[0],
-                            100.0 * voted[1],
-                            voted[0],
-                        )
-                        return voted[0]
-                log.warning(
-                    "疑似 VFR %s: 帧间隔投票不可靠，回退元数据 (avg=%s r=%s)",
-                    filepath,
-                    avg,
-                    r,
-                )
-        return self._normalize_common_rate(avg) if avg else r
 
     def get_streams_info(self, filepath):
         """探测文件所有流与容器格式信息，返回 {streams, duration} 结构（duration 可能为 None）。
@@ -424,140 +333,6 @@ class VideoProbe:
         except ValueError:
             return None
 
-    def _probe_pts_intervals(self, filepath):
-        """
-        抽样读取 v:0 流的帧时间戳（前/中/尾各取 _PTS_SAMPLE_SECONDS 秒），
-        返回相邻帧的时间间隔列表（微秒）。分段抽样覆盖帧率中途切换的源；
-        无效间隔（≤0 或 >1 秒，含段间空隙）会被过滤，有效间隔不足则返回 None。
-
-        Sample frame PTS of stream v:0 (at the beginning/middle/end, each for
-        _PTS_SAMPLE_SECONDS seconds) and return the list of inter-frame intervals in
-        microseconds. Segmented sampling covers sources that change rate mid-stream;
-        invalid intervals (<=0 or >1s, including inter-segment gaps) are dropped, and
-        None is returned if too few valid intervals remain.
-
-        :param filepath: 视频文件路径 (Path to the video file)
-        :return: 帧间隔微秒列表；探测失败或有效间隔不足时返回 None
-                 (List of inter-frame intervals in us, or None on failure)
-        """
-        intervals = ",".join(f"{p}+{_PTS_SAMPLE_SECONDS}" for p in _PTS_SAMPLE_FRACTIONS)
-        cmd = [
-            self.ffprobe_path,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "frame=pts_time",
-            "-of",
-            "csv=p=0",
-            "-read_intervals",
-            intervals,
-            str(filepath),
-        ]
-        result = self._run(cmd, timeout=60)
-        if result is None:
-            return None
-
-        pts = []
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                pts.append(float(line))
-            except ValueError:
-                continue
-        if len(pts) < _PTS_MIN_INTERVALS + 1:
-            log.warning("pts probe for %s got too few frames (%d)", filepath, len(pts))
-            return None
-
-        diffs_us = []
-        for i in range(1, len(pts)):
-            d = (pts[i] - pts[i - 1]) * 1e6
-            if 0 < d <= 1_000_000:
-                diffs_us.append(round(d))
-        if len(diffs_us) < _PTS_MIN_INTERVALS:
-            log.warning("pts probe for %s: too few valid intervals (%d)", filepath, len(diffs_us))
-            return None
-        return diffs_us
-
-    def _vote_common_rates(self, diffs_us):
-        """
-        对常见帧率表加权投票：每个帧间隔给偏差 ≤0.5% 的表项加分，
-        权重 = 1 - 偏差/容差（越接近得分越高）。
-        时间戳量化会把同一帧率网格拆成多个接近的间隔（如 90kHz tick 下的
-        33317/33333/33350us），逐桶取众数占比可能虚低；加权投票按"接近度"
-        聚合，天然免疫拆桶，且接近 29.97 与 30 之间的间隔（33350us 这类中点）
-        不会因平局误判。返回按份额降序的 (帧率分数, 得分占比) 列表。
-        与 _vote_common_rate 的区别：返回全部名次，供调用方查看份额明细。
-
-        Weighted vote over the common frame-rate table: each interval adds score to
-        table entries within 0.5% deviation, weighted by 1 - dev/tolerance (closer
-        scores higher). Timestamp quantization splits one nominal rate into several
-        close intervals (e.g. 33317/33333/33350us on a 90kHz tick), so a per-bucket
-        mode would under-report share; the weighted vote aggregates by proximity and
-        is robust to such splitting, and midpoints like 33350us between 29.97 and 30
-        are not misjudged by a tie. Returns (rate_fraction, score share) entries sorted
-        by share descending. Unlike _vote_common_rate all ranks are returned so
-        callers can inspect the share detail.
-        """
-        votes = Counter()
-        for d in diffs_us:
-            for frac, table_rate in _COMMON_FRAME_RATES:
-                dev = abs(d - 1e6 / table_rate) / (1e6 / table_rate)
-                if dev <= _PTS_MAX_DEVIATION:
-                    votes[frac] += 1 - dev / _PTS_MAX_DEVIATION
-        if not votes:
-            return []
-        total = len(diffs_us)
-        return [(frac, score / total) for frac, score in votes.most_common()]
-
-    def _vote_common_rate(self, diffs_us):
-        """
-        取 _vote_common_rates 的最高名次；占比低于 _PTS_VOTE_MIN_RATIO 视为
-        帧序不可靠，放弃投票结果。返回 (帧率分数, 得分占比)，否则 None。
-        Return the top entry of _vote_common_rates; None when the top share is below
-        _PTS_VOTE_MIN_RATIO (unreliable frame order).
-        """
-        ranked = self._vote_common_rates(diffs_us)
-        if not ranked:
-            return None
-        frac, ratio = ranked[0]
-        if ratio < _PTS_VOTE_MIN_RATIO:
-            log.warning("帧间隔投票不可靠：最高得票 %s 仅占 %.1f%%", frac, 100.0 * ratio)
-            return None
-        return frac, ratio
-
-    def _normalize_common_rate(self, fps_str):
-        """
-        把与常见帧率表最接近且偏差 ≤0.05% 的帧率归一化为表值
-        （如 "73743750/2460583"≈29.97 → "30000/1001"），其余原样返回。
-        容差 0.05% 小于 30 与 29.97 的间距（0.1%），不会互相污染。
-
-        Normalize a frame-rate string to the nearest common table value when the
-        relative deviation is <=0.05% (e.g. "73743750/2460583"≈29.97 →
-        "30000/1001"), otherwise return the original string unchanged. The 0.05%
-        tolerance is smaller than the 0.1% gap between 30 and 29.97, so the two
-        never contaminate each other.
-
-        :param fps_str: ffprobe 返回的帧率字符串 (Frame-rate string from ffprobe)
-        :return: 归一化后的常见帧率分数，或原字符串
-                 (Normalized common fraction, or the original string)
-        """
-        f = self.fps_fraction_to_float(fps_str)
-        if f is None:
-            return fps_str
-        best, best_dev = None, None
-        for frac, table_rate in _COMMON_FRAME_RATES:
-            dev = abs(f - table_rate) / table_rate
-            if best_dev is None or dev < best_dev:
-                best, best_dev = frac, dev
-        if best_dev is not None and best_dev <= _RATE_AGREE_TOLERANCE:
-            return best
-        return fps_str
-
-
 # ---------------------------------------------------------------------------
 # 兼容层：模块级函数薄包装，签名与旧版一致，测试与既有调用方无需改动。
 # fps_fraction_to_float 仅测试使用，已删除，测试改为直接调用
@@ -577,11 +352,6 @@ def get_video_codec(filepath, ffprobe_path):
 def get_video_pix_fmt(filepath, ffprobe_path):
     """探测视频流的像素格式（如 yuv420p / yuv420p10le）。见 VideoProbe.get_pix_fmt。"""
     return VideoProbe(ffprobe_path).get_pix_fmt(filepath)
-
-
-def detect_vmaf_align_rate(filepath, ffprobe_path):
-    """探测 VMAF 打分回退投影帧率（三级链）。见 VideoProbe.detect_vmaf_align_rate。"""
-    return VideoProbe(ffprobe_path).detect_vmaf_align_rate(filepath)
 
 
 def get_streams_info(filepath, ffprobe_path):
