@@ -180,7 +180,7 @@ def _run_vmaf(
     if config.VMAF_MODEL_PATH and os.path.exists(config.VMAF_MODEL_PATH):
         opts.append(f"model='path={config.VMAF_MODEL_PATH}'")
     opts.append(f"n_subsample={config.VMAF_SUBSAMPLE}")
-    opts.append(f"n_threads={config.VMAF_N_THREADS or max(1, ((os.cpu_count() or 1) + 1) // 2)}")
+    opts.append(f"n_threads={config.VMAF_N_THREADS}")
     # framesync 语义与 fqm 对齐：shortest=1 以短流为准截断尾部、repeatlast=0
     # 尾部帧不足时不重复最后一帧（帧序对齐放行 ≤1% 差异时即依赖此截断配对）。
     # framesync semantics aligned with fqm: shortest=1 truncates at the shorter

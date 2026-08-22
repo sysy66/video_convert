@@ -216,7 +216,7 @@ VMAF_SUBSAMPLE = 30
 # Threads for libvmaf: 0 = auto (default, leave 1 core for transcoding), >0 = explicit.
 # libvmaf v2+ defaults to single-threaded; threading gives several-fold speedup but gains
 # diminish beyond ~4 threads.
-VMAF_N_THREADS = 0
+VMAF_N_THREADS = ((os.cpu_count() or 1) + 1) // 2
 
 # VMAF 打分帧序对齐。打分侧按帧序号逐帧配对（两路帧数相对差 ≤1% 时放行，
 # 与容器 tbr/帧率网格无关，VFR 源不再假低分）；帧数不可得或差异过大（如
