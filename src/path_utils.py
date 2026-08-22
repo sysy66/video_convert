@@ -1,13 +1,15 @@
 """
-路径工具模块。提供路径唯一化（避免覆盖）、文件大小格式化与随机后缀生成等
-通用工具函数。
+路径工具模块。提供路径唯一化（避免覆盖）、文件大小格式化、随机后缀生成与
+输出目标路径计算等通用工具函数。
 
 Path utility module. Provides generic helpers for making paths unique (avoiding
-overwrites), formatting file sizes, and generating random suffixes.
+overwrites), formatting file sizes, generating random suffixes, and computing
+output destination paths.
 """
 
 import random
 import string
+from pathlib import Path
 
 
 def _unique_path(path):
@@ -57,3 +59,27 @@ def _random_suffix(length=6):
     """
     chars = string.ascii_lowercase + string.digits
     return "".join(random.choices(chars, k=length))
+
+
+def _final_dest_path(filepath, output_filename, input_dir, output_dir):
+    """
+    计算输出区目标路径：按需保持 input_dir 下的相对目录结构，目标重名时自动编号。
+    Compute the destination path in the output area: mirror the relative structure
+    under input_dir when applicable, and auto-number if the name collides.
+    """
+    if output_dir:
+        output_dir = Path(output_dir)
+        if input_dir:
+            input_dir = Path(input_dir)
+            try:
+                rel = filepath.parent.relative_to(input_dir)
+            except ValueError:
+                rel = Path()
+            dest_dir = output_dir / rel
+        else:
+            dest_dir = output_dir
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        final_path = _unique_path(dest_dir / output_filename)
+    else:
+        final_path = _unique_path(filepath.parent / output_filename)
+    return final_path

@@ -299,3 +299,22 @@ class History:
         with self._lock:
             rows = self._conn.execute("SELECT filepath FROM files WHERE status='failed'").fetchall()
         return [r["filepath"] for r in rows]
+
+    def purge_orphan_records(self):
+        """清理源文件已不存在的终态记录。
+
+        success 记录的源缺失是 ACCEPT 删源后的正常状态（用于同名去重），永不清理；
+        pending_transcode/await_postprocess 由转码线程/启动 recover 收尾。仅处理源文件
+        已消失的 rejected/failed/not required 记录——记录失去意义（无文件要重试或保护）。
+
+        Purge terminal records whose source file no longer exists. A missing source on a
+        success record is the normal post-ACCEPT state (used for same-name dedup) and is
+        never removed; pending_transcode/await_postprocess records are finalized by the
+        transcode threads
+        or startup recovery. Only rejected/failed/not-required records whose source is gone
+        are removed, since they no longer serve a purpose (nothing to retry or protect).
+        """
+        for filepath in self.iter_final_states():
+            if not os.path.exists(filepath):
+                log.debug("PURGE (orphan record, file missing): %s", filepath)
+                self.delete(filepath)

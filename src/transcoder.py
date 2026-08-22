@@ -22,7 +22,7 @@ from src.ffmpeg_runner import (
     _summarize_error_stderr,
     parse_frame_count_from_stderr,
 )
-from src.path_utils import _format_size, _random_suffix, _unique_path
+from src.path_utils import _final_dest_path, _format_size, _random_suffix, _unique_path
 from src.probe import get_frame_count, get_video_codec
 from src.process_guard import (
     _active_ffmpeg_lock,
@@ -100,30 +100,6 @@ __all__ = [
     "unregister_ffmpeg_pid",
     "vmaf_tasks",
 ]
-
-
-def _final_dest_path(filepath, output_filename, input_dir, output_dir):
-    """
-    计算输出区目标路径：按需保持 input_dir 下的相对目录结构，目标重名时自动编号。
-    Compute the destination path in the output area: mirror the relative structure
-    under input_dir when applicable, and auto-number if the name collides.
-    """
-    if output_dir:
-        output_dir = Path(output_dir)
-        if input_dir:
-            input_dir = Path(input_dir)
-            try:
-                rel = filepath.parent.relative_to(input_dir)
-            except ValueError:
-                rel = Path()
-            dest_dir = output_dir / rel
-        else:
-            dest_dir = output_dir
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        final_path = _unique_path(dest_dir / output_filename)
-    else:
-        final_path = _unique_path(filepath.parent / output_filename)
-    return final_path
 
 
 def transcode(

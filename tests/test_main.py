@@ -17,6 +17,7 @@ import pytest
 
 import main
 from src import config
+from src.history import History
 
 pytestmark = pytest.mark.unit
 
@@ -306,29 +307,58 @@ class TestCliOverridesLibraries:
 
 
 class TestPurgeOrphanRecords:
-    """验证 purge_orphan_records 仅删除磁盘上已不存在的终态记录。"""
+    """验证 History.purge_orphan_records 仅删除磁盘上已不存在的终态记录。"""
+
+    def _seed(self, tmp_path, status, filepath):
+        """写入一条指定状态的记录并落库。
+
+        Insert one record of the given status and persist it.
+        """
+        h = History(str(tmp_path / "history.db"))
+        if status == "failed":
+            h.mark_failed(filepath, "boom")
+        elif status == "rejected":
+            h.mark_done(filepath, None, rejected=True)
+        else:  # success
+            h.mark_done(filepath, str(filepath) + ".out", rejected=False)
+        return h
 
     def test_deletes_missing_file_records_only(self, tmp_path):
         existing = tmp_path / "still-here.mp4"
         existing.write_bytes(b"x")
-        gone = tmp_path / "gone.mp4"
-        h = MagicMock()
-        h.iter_final_states.return_value = [str(existing), str(gone)]
+        gone_rejected = str(tmp_path / "gone-rejected.mp4")
+        gone_failed = str(tmp_path / "gone-failed.mp4")
 
-        main.purge_orphan_records(h)
+        h = self._seed(tmp_path, "success", str(existing))
+        h.mark_started(gone_rejected)
+        h._conn.execute("UPDATE files SET status='rejected' WHERE filepath=?", (gone_rejected,))
+        h.mark_failed(gone_failed, "boom")
+        # rejected/failed 记录的源已消失 → 可清理
+        for p in (gone_rejected, gone_failed):
+            assert Path(p).exists() is False
 
-        h.delete.assert_called_once_with(str(gone))
+        h.purge_orphan_records()
+
+        rows = {
+            r["filepath"]: r["status"]
+            for r in h._conn.execute("SELECT filepath, status FROM files").fetchall()
+        }
+        assert gone_rejected not in rows
+        assert gone_failed not in rows
+        assert rows[str(existing)] == "success"
+        h.close()
 
     def test_no_op_when_nothing_missing(self, tmp_path):
-        """所有终态记录对应文件仍存在时，不应调用 delete。"""
+        """所有终态记录对应文件仍存在时，不应删除任何记录。"""
         existing = tmp_path / "still-here.mp4"
         existing.write_bytes(b"x")
-        h = MagicMock()
-        h.iter_final_states.return_value = [str(existing)]
 
-        main.purge_orphan_records(h)
+        h = self._seed(tmp_path, "rejected", str(existing))
+        h.purge_orphan_records()
 
-        h.delete.assert_not_called()
+        rows = h._conn.execute("SELECT filepath FROM files").fetchall()
+        assert [r["filepath"] for r in rows] == [str(existing)]
+        h.close()
 
 
 class TestMainLoop:

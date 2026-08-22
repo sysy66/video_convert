@@ -38,26 +38,6 @@ log = logging.getLogger(__name__)
 _running = True
 
 
-def purge_orphan_records(history):
-    """清理源文件已不存在的终态记录。
-
-    success 记录的源缺失是 ACCEPT 删源后的正常状态（用于同名去重），永不清理；
-    pending_transcode/await_postprocess 由转码线程/启动 recover 收尾。仅处理源文件
-    已消失的 rejected/failed/not required 记录——记录失去意义（无文件要重试或保护）。
-
-    Purge terminal records whose source file no longer exists. A missing source on a
-    success record is the normal post-ACCEPT state (used for same-name dedup) and is
-    never removed; pending_transcode/await_postprocess records are finalized by the
-    transcode threads
-    or startup recovery. Only rejected/failed/not-required records whose source is gone
-    are removed, since they no longer serve a purpose (nothing to retry or protect).
-    """
-    for filepath in history.iter_final_states():
-        if not os.path.exists(filepath):
-            log.debug("PURGE (orphan record, file missing): %s", filepath)
-            history.delete(filepath)
-
-
 def signal_handler(signum, frame):
     """将全局运行标志置为 False，触发主循环优雅退出。
 
@@ -293,20 +273,6 @@ def main_loop():
     executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
     _pending = set()
 
-    def _find_lib_for(path):
-        """返回包含该文件路径的库配置，找不到返回 None。
-
-        Return the library config whose input dir contains `path`, or None.
-        """
-        path = Path(path)
-        for lib in config.LIBRARIES.values():
-            try:
-                path.relative_to(lib["input"])
-                return lib
-            except ValueError:
-                continue
-        return None
-
     def process_one(path, lib_info, force=False):
         if not _running:
             return
@@ -331,31 +297,47 @@ def main_loop():
         finally:
             _pending.discard(str(path))
 
-    def requeue_entry(entries) -> None:
-        """启动时把残留记录按 force=True 重新提交转码。
-
-        供 iter_started()（无条件）与 iter_failed()（--retry-failed）使用：
-        文件不属于任何库则跳过；否则入队去重集后提交，避免与扫描同名重复。
-        依赖均在下方 process_one/_find_lib_for 定义处之后才调用，故定义于此。
-
-        Requeue leftover history entries for transcoding with force=True. Used by
-        iter_started() (unconditional) and iter_failed() (with --retry-failed):
-        entries not owned by any library are skipped; others are added to the
-        dedup set before submission to avoid clashing with the scan loop.
-        """
-        for entry in entries:
-            path = Path(entry)
-            lib_info = _find_lib_for(path)
-            if lib_info is None:
-                log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
-                continue
-            if str(path) in _pending:
-                continue
-            _pending.add(str(path))
-            executor.submit(process_one, path, lib_info, force=True)
-            log.info("REQUEUE ENTRY (queued): %s", path)
-
     try:
+
+        def requeue_entry(entries) -> None:
+            """启动时把残留记录按 force=True 重新提交转码。
+
+            供 iter_started()（无条件）与 iter_failed()（--retry-failed）使用：
+            文件不属于任何库则跳过；否则入队去重集后提交，避免与扫描同名重复。
+            依赖均在下方 process_one/_find_lib_for 定义处之后才调用，故定义于此。
+
+            Requeue leftover history entries for transcoding with force=True. Used by
+            iter_started() (unconditional) and iter_failed() (with --retry-failed):
+            entries not owned by any library are skipped; others are added to the
+            dedup set before submission to avoid clashing with the scan loop.
+            """
+
+            def _find_lib_for(path):
+                """返回包含该文件路径的库配置，找不到返回 None。
+
+                Return the library config whose input dir contains `path`, or None.
+                """
+                path = Path(path)
+                for lib in config.LIBRARIES.values():
+                    try:
+                        path.relative_to(lib["input"])
+                        return lib
+                    except ValueError:
+                        continue
+                return None
+
+            for entry in entries:
+                path = Path(entry)
+                lib_info = _find_lib_for(path)
+                if lib_info is None:
+                    log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
+                    continue
+                if str(path) in _pending:
+                    continue
+                _pending.add(str(path))
+                executor.submit(process_one, path, lib_info, force=True)
+                log.info("REQUEUE ENTRY (queued): %s", path)
+
         requeue_entry(history.iter_started())
         if config.RETRY_FAILED:
             requeue_entry(history.iter_failed())
@@ -370,7 +352,7 @@ def main_loop():
                         lib_info["input"], config.TEMP_PREFIX, active_temp_dirs_snapshot()
                     )
 
-            purge_orphan_records(history)
+            history.purge_orphan_records()
             cleanup_vmaf_logs()
 
             log.info("SCAN: checking all libraries")
