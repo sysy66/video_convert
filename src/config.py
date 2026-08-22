@@ -209,7 +209,7 @@ HISTORY_FILE = "data/history.db"
 
 # VMAF 采样间隔：每 N 帧只评估 1 帧。全片解码但大幅减少计算量。
 # VMAF subsample: evaluate 1 frame every N frames. Covers the whole video with reduced cost.
-VMAF_SUBSAMPLE = 30
+VMAF_N_SUBSAMPLE = 30
 
 # libvmaf 多线程数：0 = auto（默认，留 1 核给转码），>0 = 显式指定。
 # libvmaf v2+ 默认单线程（n_threads=0），多线程可数倍提速但收益随线程数递减（>4 后递减明显）。

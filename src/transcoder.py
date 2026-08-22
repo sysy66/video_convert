@@ -31,7 +31,7 @@ from src.process_guard import (
     register_ffmpeg_pid,
     unregister_ffmpeg_pid,
 )
-from src.quality import compute_vmaf, vmaf_verdict
+from src.quality import vmaf_verdict
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -135,6 +135,7 @@ def transcode(
     output_dir=None,
     cache_dir=None,
     keep_source=False,
+    compute_vmaf=None,
 ):
     """
     对单个视频文件执行转码的完整流程：

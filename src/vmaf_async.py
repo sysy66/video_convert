@@ -15,7 +15,7 @@ from pathlib import Path
 
 from src import config
 from src.probe import get_frame_count
-from src.quality import compute_vmaf, vmaf_verdict
+from src.quality import vmaf_verdict
 
 log = __import__("logging").getLogger(__name__)
 
@@ -52,7 +52,7 @@ def is_shutting_down():
     return _shutting_down
 
 
-def _handle_vmaf_task(task):
+def _handle_vmaf_task(task, compute_vmaf=None):
     """
     处理单个异步 VMAF 打分任务：打分后按 vmaf_verdict 返回的 verdict
     （retry/accept/reject）决策产物去留，并更新历史记录。
@@ -179,7 +179,7 @@ def _handle_vmaf_task(task):
     )
 
 
-def _vmaf_worker():
+def _vmaf_worker(compute_vmaf=None):
     """
     后台 VMAF 打分 worker 循环：不断消费队列任务，直到收到停止哨兵。
 
@@ -191,12 +191,12 @@ def _vmaf_worker():
         if task is _VMAF_STOP:
             return
         try:
-            _handle_vmaf_task(task)
+            _handle_vmaf_task(task, compute_vmaf=compute_vmaf)
         except Exception as e:
             log.error("VMAF WORKER ERROR: %s — %s", task[0], e, exc_info=True)
 
 
-def start_vmaf_workers():
+def start_vmaf_workers(compute_vmaf=None):
     """
     启动后台 VMAF 打分 worker（幂等：重复调用不会重复创建线程）。
 
@@ -208,7 +208,12 @@ def start_vmaf_workers():
         if _vmaf_workers_started:
             return
         for _ in range(max(1, config.VMAF_WORKERS)):
-            thread = threading.Thread(target=_vmaf_worker, name="vmaf-worker", daemon=True)
+            thread = threading.Thread(
+                target=_vmaf_worker,
+                kwargs={"compute_vmaf": compute_vmaf},
+                name="vmaf-worker",
+                daemon=True,
+            )
             thread.start()
             _vmaf_worker_threads.append(thread)
         _vmaf_workers_started = True

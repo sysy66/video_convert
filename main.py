@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from src import config, vmaf_async
+from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.filter import should_process, should_submit
 from src.history import History
 from src.quality import cleanup_vmaf_logs
@@ -246,6 +247,18 @@ def main_loop():
     global _running
 
     history = History(config.HISTORY_FILE)
+    ffscorer = FfmpegVMAFScorer(
+        ffprobe_path=config.FFPROBE_PATH,
+        vmaf_ffmpeg_path=config.VMAF_FFMPEG_PATH,
+        vmaf_model_path=config.VMAF_MODEL_PATH,
+        vmaf_log_dir=config.VMAF_LOG_DIR,
+        n_threads=config.VMAF_N_THREADS,
+        n_subsample=config.VMAF_N_SUBSAMPLE,
+        vmaf_timeout=config.VMAF_TIMEOUT,
+        vmaf_hwaccel=config.VMAF_HWACCEL,
+        vmaf_hw_fallback=config.VMAF_HW_FALLBACK,
+    )
+    compute_vmaf = ffscorer.compute_vmaf
 
     errors, warnings = validate_config()
     for w in warnings:
@@ -269,7 +282,7 @@ def main_loop():
     log.info("Max workers: %d", config.MAX_WORKERS)
     if config.VMAF_ASYNC:
         log.info("VMAF scoring: async (%d worker(s))", config.VMAF_WORKERS)
-        start_vmaf_workers()
+        start_vmaf_workers(compute_vmaf=compute_vmaf)
         recover_pending_vmaf(history, ffprobe_path=config.FFPROBE_PATH)
     log.info("=" * 50)
 
@@ -311,6 +324,7 @@ def main_loop():
                 lib_info.get("output"),
                 lib_info.get("cache"),
                 keep_source=config.KEEP_SOURCE,
+                compute_vmaf=compute_vmaf,
             )
         except Exception:
             log.exception("UNHANDLED ERROR: %s", path)

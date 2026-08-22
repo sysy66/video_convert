@@ -258,7 +258,6 @@ class TestTranscode:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -342,7 +341,6 @@ class TestTranscode:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -406,7 +404,6 @@ class TestTranscode:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")) as mock_run,
-            patch("src.transcoder.compute_vmaf", return_value=95.0),
         ):
             transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
 
@@ -423,9 +420,14 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.compute_vmaf", return_value=None),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                compute_vmaf=MagicMock(return_value=None),
+            )
 
         assert result is False
         history.mark_failed.assert_called_once()
@@ -444,10 +446,15 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.compute_vmaf", return_value=None),
             patch("src.transcoder.is_shutting_down", return_value=True),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                compute_vmaf=MagicMock(return_value=None),
+            )
 
         assert result is True
         history.mark_failed.assert_not_called()
@@ -468,9 +475,14 @@ class TestTranscode:
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", True),
             patch("src.transcoder.config.VMAF_EXTREME_LOW", 60),
-            patch("src.transcoder.compute_vmaf", return_value=55.0),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                compute_vmaf=MagicMock(return_value=55.0),
+            )
 
         assert result is False
         history.mark_failed.assert_called_once()
@@ -489,9 +501,11 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
             patch("src.transcoder.config.VMAF_REQUIRED", False),
-            patch("src.transcoder.compute_vmaf") as mock_vmaf,
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            mock_vmaf = MagicMock()
+            result = transcode(
+                str(input_file), history, "/ffmpeg", "/ffprobe", compute_vmaf=mock_vmaf
+            )
 
         assert result is True
         mock_vmaf.assert_not_called()
