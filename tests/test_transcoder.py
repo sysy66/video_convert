@@ -10,7 +10,6 @@ import pytest
 
 from src import config
 from src.transcoder import _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs, transcode
-from src.vmaf_async import vmaf_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -243,13 +242,20 @@ class TestBuildFfmpegCmd:
 
 
 class TestTranscode:
+    def _cache(self, tmp_path):
+        return str(tmp_path / "cache")
+
     def _fake_progress(self, cmd, total_duration, file_stem, **kwargs):
         output_path = Path(cmd[-1])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("transcoded")
         return (0, "")
 
-    def test_success_replaces_original(self, tmp_path):
+    def _work_dirs(self, tmp_path):
+        return [d for d in (tmp_path / "cache").iterdir() if d.name.startswith(".work_")]
+
+    def test_success_keeps_output_in_cache(self, tmp_path):
+        # 编码阶段成功后：产物保留在 cache 临时目录，源文件不动，返回三元组。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
 
@@ -259,14 +265,27 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        assert result is True
-        assert not input_file.exists()
-        assert (tmp_path / "test.mkv").exists()
-        assert (tmp_path / "test.mkv").read_text() == "transcoded"
+        success, frame_count, elapsed = result
+        assert success is True
+        assert frame_count is None
+        assert elapsed is not None
+        assert input_file.exists()
+        work_dirs = self._work_dirs(tmp_path)
+        assert len(work_dirs) == 1
+        assert (work_dirs[0] / "test.mkv").read_text() == "transcoded"
 
-    def test_success_calls_mark_done(self, tmp_path):
+    def test_success_calls_mark_pending_transcode(self, tmp_path):
+        # 编码阶段只写 pending_transcode（含产物路径），不写 done，也不删源。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
 
@@ -276,11 +295,52 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        history.mark_started.assert_called_once()
-        history.mark_done.assert_called_once()
+        history.mark_pending_transcode.assert_called_once()
+        out_path = history.mark_pending_transcode.call_args[0][1]
+        assert Path(out_path).parent.parent == Path(self._cache(tmp_path))
+        assert Path(out_path).name == "test.mkv"
+        history.mark_done.assert_not_called()
         assert not history.mark_failed.called
+
+    def test_success_parses_frame_count_from_stderr(self, tmp_path):
+        # 产物帧数取自 ffmpeg 最终进度行 frame=N。
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+
+        history = MagicMock()
+
+        def _progress_with_frames(cmd, total_duration, file_stem, **kwargs):
+            output_path = Path(cmd[-1])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text("transcoded")
+            return (0, "frame=  5000 fps=150.0\nframe=  5000 fps=149.2\n")
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_progress_with_frames),
+        ):
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
+
+        assert result[0] is True
+        assert result[1] == 5000
 
     def test_ffmpeg_failure_cleans_up(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -292,13 +352,20 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(1, "encode error")),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        assert result is False
+        assert result == (False, None, None)
         assert input_file.exists()
         history.mark_failed.assert_called_once()
-        work_dirs = [d for d in tmp_path.iterdir() if d.name.startswith(".work_")]
-        assert len(work_dirs) == 0
+        assert len(self._work_dirs(tmp_path)) == 0
 
     def test_output_file_not_found(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -310,45 +377,18 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        assert result is False
+        assert result == (False, None, None)
         history.mark_failed.assert_called_once()
-
-    def test_temp_dir_cleaned_after_success(self, tmp_path):
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-        ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        work_dirs = [d for d in tmp_path.iterdir() if d.name.startswith(".work_")]
-        assert len(work_dirs) == 0
-
-    def test_input_in_subdirectory(self, tmp_path):
-        sub = tmp_path / "subdir"
-        sub.mkdir()
-        input_file = sub / "video.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        assert not input_file.exists()
-        assert (sub / "video.mkv").exists()
-        work_dirs = [d for d in sub.iterdir() if d.name.startswith(".work_")]
-        assert len(work_dirs) == 0
 
     def test_probe_failure_marks_failed(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -357,43 +397,19 @@ class TestTranscode:
         history = MagicMock()
 
         with patch("src.ffmpeg_runner.get_streams_info", return_value=None):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        assert result is False
+        assert result == (False, None, None)
         history.mark_failed.assert_called_once()
         history.mark_done.assert_not_called()
-
-    def test_vmaf_required_reject_when_ratio_exceeds_max(self, tmp_path):
-        # _fake_progress writes 10-byte output; tiny input makes ratio >> max
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("x" * 19)
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.config.ACCEPT_RATIO_MAX", 0.5),
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-
-    def test_vmaf_not_required_accepts_on_ratio_only(self, tmp_path):
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video" * 10)
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", False),
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
 
     def test_codec_timeout_is_passed(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -405,112 +421,17 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")) as mock_run,
         ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
         assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
-
-    def test_vmaf_scoring_failed_marks_failed_for_retry(self, tmp_path):
-        # sync 模式打分失败（compute_vmaf → None）：与 async 一致记 failed 永久排除
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-        ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                compute_vmaf=MagicMock(return_value=None),
-            )
-
-        assert result is False
-        history.mark_failed.assert_called_once()
-        assert history.mark_failed.call_args[0][1] == "VMAF scoring failed"
-        history.mark_done.assert_not_called()
-        assert not list(tmp_path.glob(".work_*"))
-
-    def test_vmaf_scoring_failed_during_shutdown_defers(self, tmp_path):
-        # 关停中 sync 打分失败（None）：转 pending 保留产物待下次启动重打分，不标 failed。
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.is_shutting_down", return_value=True),
-        ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                compute_vmaf=MagicMock(return_value=None),
-            )
-
-        assert result is True
-        history.mark_failed.assert_not_called()
-        history.mark_done.assert_not_called()
-        history.mark_pending_vmaf.assert_called_once()
-        vmaf_tasks.get_nowait()
-        assert vmaf_tasks.empty()
-
-    def test_vmaf_extreme_low_marks_failed_for_retry(self, tmp_path):
-        # sync 模式极端低分（< VMAF_EXTREME_LOW）：与 async 一致记 failed 永久排除
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", True),
-            patch("src.transcoder.config.VMAF_EXTREME_LOW", 60),
-        ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                compute_vmaf=MagicMock(return_value=55.0),
-            )
-
-        assert result is False
-        history.mark_failed.assert_called_once()
-        assert "below 60" in history.mark_failed.call_args[0][1]
-        history.mark_done.assert_not_called()
-        assert not list(tmp_path.glob(".work_*"))
-
-    def test_vmaf_off_mode_never_scores(self, tmp_path):
-        # off 模式（VMAF_REQUIRED=False）：不调打分、不做质量判定，直接接受
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video")
-
-        history = MagicMock()
-
-        with (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_REQUIRED", False),
-        ):
-            mock_vmaf = MagicMock()
-            result = transcode(
-                str(input_file), history, "/ffmpeg", "/ffprobe", compute_vmaf=mock_vmaf
-            )
-
-        assert result is True
-        mock_vmaf.assert_not_called()
-        history.mark_done.assert_called_once()
-        assert history.mark_done.call_args[1]["rejected"] is False
 
     def test_fallback_codec_forced_softdecode_first(self, tmp_path):
         """源编码在 SW_DECODE_FALLBACK_CODECS 内时，首轮即应传
@@ -531,7 +452,15 @@ class TestTranscode:
             ) as mock_build,
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
         _, kwargs = mock_build.call_args
         assert kwargs.get("sw_decode_fallback") is True
@@ -560,7 +489,15 @@ class TestTranscode:
                 side_effect=[(1, "Error initializing filters"), (1, "still failing"), (1, "nope")],
             ),
         ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
         build_flags = [
             c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")
@@ -591,7 +528,15 @@ class TestTranscode:
                 side_effect=[(1, "some encode error"), (1, "still failing")],
             ),
         ):
-            transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+            transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
         build_flags = [
             c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")

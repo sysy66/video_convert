@@ -7,8 +7,6 @@ build the FFmpeg command, run it with live progress logging, replace the source
 on success, and clean up / mark history on failure.
 """
 
-import re
-import shutil
 import subprocess
 import time as _time
 from pathlib import Path
@@ -96,9 +94,13 @@ __all__ = [
     "_vmaf_worker_threads",
     "_vmaf_workers_lock",
     "_vmaf_workers_started",
+    "get_frame_count",
+    "get_video_codec",
+    "is_shutting_down",
     "register_ffmpeg_pid",
     "unregister_ffmpeg_pid",
     "vmaf_tasks",
+    "vmaf_verdict",
 ]
 
 
@@ -107,66 +109,88 @@ def transcode(
     history,
     ffmpeg_path,
     ffprobe_path,
-    input_dir=None,
-    output_dir=None,
-    cache_dir=None,
+    input_dir,
+    output_dir,
+    cache_dir,
     keep_source=False,
     compute_vmaf=None,
 ):
     """
-    对单个视频文件执行转码的完整流程：
-      0. 开启 VMAF 时先档位化源帧率：档3/4 混合 VFR 直接 mark_failed，档2 记 CFR 目标
-      1. 创建临时工作目录
-      2. 构建 FFmpeg 命令并执行（含实时进度日志）
-      3. 成功时用输出文件替换原文件
-      4. 失败/异常时清理临时目录并标记历史
+    对单个视频执行转码（仅编码阶段）：创建临时工作目录、构建并运行 FFmpeg
+    命令（含 QSV 软件缩放/软解码各一次的降级重试），成功时产物保留在
+    cache 临时目录中，质量判定与落盘由 post_transcode 接手。
+      - 失败/超时/异常：清理临时目录并 mark_failed，返回 (False, None, None)
+      - 成功：返回 (True, dist_frame_count, elapsed)，其中帧数取自 ffmpeg
+        最终进度行的 frame=N（与 -count_frames 同源），免去打分侧再对 mkv
+        全量解码计数；elapsed 为 monotonic 耗时秒数，仅供日志使用
 
-    Complete transcoding workflow for a single video file:
-      0. With VMAF on, classify the source frame rate first: mixed VFR (tiers 3/4)
-         is marked failed outright; tier 2 records a CFR target
-      1. Create a temporary working directory
-      2. Build and run the FFmpeg command (with real-time progress logging)
-      3. On success, replace the original file with the output
-      4. On failure/exception, clean up the temp directory and mark history
+    注意：转码侧刻意不产生任何帧率规整参数——实验证明 -r 会导致 VMAF 虚低、
+    -fps_mode cfr 会导致产物帧率翻倍（2026-08-13）；源/产物帧率对齐只在打分侧
+    按帧序号进行。
+
+    Transcodes a single video (encoding stage only): creates the temp working
+    dir, builds and runs the FFmpeg command (with at most one software-scale
+    fallback and one software-decode fallback on QSV failures). On success the
+    output stays in the cache temp dir; verdict/scoring/move-to-dest are handled
+    by post_transcode.
+      - Failure/timeout/exception: temp dir cleaned up, record marked failed,
+        returns (False, None, None)
+      - Success: returns (True, dist_frame_count, elapsed); the frame count comes
+        from ffmpeg's final progress line frame=N (same source as -count_frames),
+        sparing a full decode count of the mkv on the scoring side; elapsed is a
+        monotonic duration in seconds, for logging only.
+
+    Deliberately no frame-rate options here: experiments showed -r deflates VMAF
+    scores and -fps_mode cfr doubles output fps (2026-08-13); alignment happens
+    on the scoring side by frame index only.
 
     :param filepath: 源文件路径 (Path to the source video file)
-    :param history: 历史记录对象 (History tracking object)
-    :param ffmpeg_path: FFmpeg 可执行文件路径 (Path to the FFmpeg executable)
-    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
-    :param input_dir: 源目录，用于在输出目录中保持相对目录结构
-                      (Source directory, used to mirror the relative structure under output_dir)
-    :param output_dir: 输出目录，不设置则同源目录 (Output directory, defaults to source parent)
-    :param cache_dir: 缓存（临时）目录，不设置则同源目录
-                      (Cache/temp directory, defaults to source parent)
-    :param keep_source: True=成功后保留源文件，不删除
-                        (True=keep the source file after success, do not delete it)
-    :return: True 表示成功 (True on success), False 表示失败 (False on failure)
+    :param history: 历史记录对象，转码前写入 pending_transcode 与产物路径
+                    (History tracker; writes pending_transcode + output path)
+    :param ffmpeg_path: FFmpeg 可执行文件路径 (Path to the FFmpeg binary)
+    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe binary)
+    :param input_dir: 源库根目录 (Source library root directory)
+    :param output_dir: 输出根目录，产物最终落盘位置由 post_transcode 决定
+                       (Output root; final destination resolved by post_transcode)
+    :param cache_dir: 缓存（临时）目录，必填，临时工作目录创建于此
+                      (Cache/temp directory, required; temp workdir lives here)
+    :param keep_source: 透传给后处理：True=接受后不删源文件
+                        (Forwarded to post-processing: True=keep source after accept)
+    :param compute_vmaf: 打分回调 callable(filepath, output_path, log_path=...,
+                         ref_frame_count=..., dist_frame_count=...) -> score|None，
+                         仅由后处理使用，此处透传保存
+                         (Scoring callback used by post-processing; passed through)
+    :return: (是否成功, 产物帧数或 None, 转码耗时秒)
+             (Tuple of (success, output frame count or None, elapsed seconds))
+    :rtype: Tuple[bool, Optional[int], Optional[float]]
     """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
     filepath = Path(filepath)
     stem = filepath.stem
-    suffix = _random_suffix()
-    if cache_dir:
-        cache_dir = Path(cache_dir)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        temp_dir = cache_dir / f"{config.TEMP_PREFIX}{suffix}"
-    else:
-        temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+
+    output_filename = f"{stem}.mkv"
+
     start_time = _time.monotonic()
     input_size = filepath.stat().st_size
 
-    output_filename = f"{stem}.mkv"
-    output_path = temp_dir / output_filename
-
+    suffix = _random_suffix()
+    temp_dir = cache_dir / f"{config.TEMP_PREFIX}{suffix}"
     with _active_temp_dirs_lock:
         _active_temp_dirs.add(str(temp_dir))
-    history.mark_started(str(filepath))
+    try:
+        temp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        with _active_temp_dirs_lock:
+            _active_temp_dirs.discard(str(temp_dir))
+        log.error("Failed to create temp dir: %s", e)
+        return (False, None, None)
+    output_path = temp_dir / output_filename
+    history.mark_pending_transcode(str(filepath), str(output_path))
 
     try:
-        # 转码侧不产生任何帧率规整参数（实验证明 -r 致 VMAF 虚低、-fps_mode
-        # cfr 致产物双倍帧，2026-08-13）；对齐只在打分侧按帧序号进行。
-        # Transcoding adds no frame-rate options (experiments showed -r deflates
-        # scores and -fps_mode cfr doubles output frames, 2026-08-13);
-        # alignment happens on the scoring side by frame index only.
+        # 转码侧不产生任何帧率规整参数；对齐只在打分侧按帧序号进行。
 
         # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
         sw_scale_fallback_attempted = False
@@ -177,18 +201,19 @@ def transcode(
                 return
             sw_scale_fallback_attempted = True
             log.warning("QSV SW SCALE FALLBACK: %s - re-trying with software scale", filepath.name)
+
             old_temp_dir = output_path.parent
             _cleanup_temp(temp_dir)
+
             suffix = _random_suffix()
-            if cache_dir:
-                temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
-            else:
-                temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+            temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
             with _active_temp_dirs_lock:
                 _active_temp_dirs.discard(str(old_temp_dir))
                 _active_temp_dirs.add(str(temp_dir))
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
+            history.mark_pending_transcode(str(filepath), str(output_path))
+
             cmd, _ = _build_ffmpeg_cmd(
                 ffmpeg_path,
                 ffprobe_path,
@@ -218,18 +243,19 @@ def transcode(
                 return
             sw_decode_fallback_attempted = True
             log.warning("QSV SW DECODE FALLBACK: %s - re-trying with software scale", filepath.name)
+
             old_temp_dir = output_path.parent
             _cleanup_temp(temp_dir)
+
             suffix = _random_suffix()
-            if cache_dir:
-                temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
-            else:
-                temp_dir = filepath.parent / f"{config.TEMP_PREFIX}{suffix}"
+            temp_dir = Path(cache_dir) / f"{config.TEMP_PREFIX}{suffix}"
             with _active_temp_dirs_lock:
                 _active_temp_dirs.discard(str(old_temp_dir))
                 _active_temp_dirs.add(str(temp_dir))
             temp_dir.mkdir(parents=True, exist_ok=True)
             output_path = temp_dir / output_filename
+            history.mark_pending_transcode(str(filepath), str(output_path))
+
             cmd, _ = _build_ffmpeg_cmd(
                 ffmpeg_path,
                 ffprobe_path,
@@ -254,7 +280,6 @@ def transcode(
         if codec in config.SW_DECODE_FALLBACK_CODECS:
             sw_decode_fallback_attempted = True
 
-        temp_dir.mkdir(parents=True, exist_ok=True)
         log.info(
             "TRANSCODE: %s (%s) -> %s (temp: %s)",
             filepath.name,
@@ -304,262 +329,33 @@ def transcode(
             log.error("TRANSCODE FAILED: %s (%.1fs) - %s", filepath.name, elapsed, error_msg)
             _cleanup_temp(temp_dir)
             history.mark_failed(str(filepath), error_msg)
-            return False
+            return (False, None, None)
 
         if not output_path.exists():
             elapsed = _time.monotonic() - start_time
             log.error("TRANSCODE FAILED: output not found for %s (%.1fs)", filepath.name, elapsed)
             _cleanup_temp(temp_dir)
             history.mark_failed(str(filepath), "Output file not found after transcode")
-            return False
+            return (False, None, None)
 
-        output_size = output_path.stat().st_size
-        ratio = output_size / input_size if input_size else 0
-        elapsed = _time.monotonic() - start_time
         # 产物帧数直接取自 ffmpeg 最终进度行的 frame=N（与 -count_frames 计数
         # 同源），免去打分前对 mkv 产物再做一次昂贵的全量解码计数。
         dist_frame_count = parse_frame_count_from_stderr(stderr)
-
-        # 异步 VMAF：文件先移入输出区但不删源，后台 worker 打分后决定去留。
-        # 与内联打分完全互斥（内联 VMAF 耗时数分钟到数小时，阻塞转码线程）。
-        # Async VMAF: move the output into place but keep the source; a background
-        # worker scores it later and keeps exactly one of the two files.
-        if config.VMAF_ASYNC:
-            if ratio > config.ACCEPT_RATIO_MAX:
-                # ratio 超标必拒（VMAF ≥ 93 也要求 ratio ≤ ACCEPT_RATIO_MAX），
-                # 直接拒绝不入队，省去昂贵的采样打分。
-                _cleanup_temp(temp_dir)
-                history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
-                log.warning(
-                    "REJECT (async): %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
-                    filepath.name,
-                    ratio * 100,
-                    config.ACCEPT_RATIO_MAX * 100,
-                )
-                return True
-            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-            if final_path.name != output_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            try:
-                shutil.copyfile(str(output_path), str(final_path))
-                output_path.unlink()
-                _cleanup_temp(temp_dir)
-            except OSError as e:
-                log.error(
-                    "FILE MOVE FAILED (async): %s — %s",
-                    final_path.name,
-                    e,
-                )
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
-                return False
-            history.mark_pending_vmaf(str(filepath), str(final_path), dist_frame_count)
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put(
-                (
-                    str(filepath),
-                    str(final_path),
-                    ratio,
-                    safe_stem,
-                    history,
-                    elapsed,
-                    keep_source,
-                    dist_frame_count,
-                    ffprobe_path,
-                )
-            )
-            log.info(
-                "VMAF PENDING (async): %s (%s, ratio %.1f%%, codec %.1fs, queued for scoring)",
-                final_path.name,
-                _format_size(output_size),
-                ratio * 100,
-                elapsed,
-            )
-            return True
-
-        # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分），
-        # 与 async 路径一致：不入队、不做任何质量判定。
-        if ratio > config.ACCEPT_RATIO_MAX:
-            _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
-            log.warning(
-                "REJECT: %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
-                filepath.name,
-                ratio * 100,
-                config.ACCEPT_RATIO_MAX * 100,
-            )
-            return True
-
-        vmaf_score = None
-        vmaf_elapsed = None
-        if config.VMAF_REQUIRED:
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_log = (
-                Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
-            )
-            vmaf_start = _time.monotonic()
-            # 源帧数走 nb_frames 容器索引快路径（mp4 秒级，mkv 回退全量计数），
-            # 产物帧数已由转码 stderr 解析，两路都不再需要打分侧全量探测
-            ref_frame_count = get_frame_count(filepath, ffprobe_path)
-            vmaf_score = compute_vmaf(
-                filepath,
-                output_path,
-                log_path=vmaf_log,
-                ref_frame_count=ref_frame_count,
-                dist_frame_count=dist_frame_count,
-            )
-            vmaf_elapsed = _time.monotonic() - vmaf_start
-
-        # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
-        # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
-        # 记 failed 永久排除，仅 --retry-failed 启动时手动重试。
-        if config.VMAF_REQUIRED:
-            verdict = vmaf_verdict(vmaf_score, ratio)
-        else:
-            verdict = "accept"
-
-        if verdict == "retry":
-            if vmaf_score is None and is_shutting_down():
-                # 关停中被中断/失败的打分：非真实质量问题，转 await_postprocess
-                # 保留产物供下次启动 recover 重新打分，不误标 failed。
-                # Scoring interrupted by shutdown: keep the output as pending and
-                # rescore it on next startup instead of marking it failed.
-                final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-                if final_path.name != output_filename:
-                    log.info(
-                        "DEST EXISTS: using %s instead of %s", final_path.name, output_filename
-                    )
-                try:
-                    shutil.copyfile(str(output_path), str(final_path))
-                    output_path.unlink()
-                    _cleanup_temp(temp_dir)
-                except OSError as e:
-                    log.error("FILE MOVE FAILED (async): %s — %s", final_path.name, e)
-                    _cleanup_temp(temp_dir)
-                    history.mark_failed(str(filepath), f"File move failed: {e}")
-                    return False
-                history.mark_pending_vmaf(str(filepath), str(final_path), dist_frame_count)
-                safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-                vmaf_tasks.put(
-                    (
-                        str(filepath),
-                        str(final_path),
-                        ratio,
-                        safe_stem,
-                        history,
-                        elapsed,
-                        keep_source,
-                        dist_frame_count,
-                        ffprobe_path,
-                    )
-                )
-                log.info(
-                    "VMAF DEFERRED (sync, shutting down): %s kept pending for rescore",
-                    final_path.name,
-                )
-                return True
-            _cleanup_temp(temp_dir)
-            if vmaf_score is None:
-                history.mark_failed(str(filepath), "VMAF scoring failed")
-                log.warning(
-                    "VMAF SCORING FAILED (sync): %s (ratio %.1f%%, marking failed)",
-                    filepath.name,
-                    ratio * 100,
-                )
-            else:
-                history.mark_failed(
-                    str(filepath),
-                    f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, "
-                    f"input may be incomplete",
-                )
-                log.warning(
-                    "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, marking failed)",
-                    filepath.name,
-                    vmaf_score,
-                    ratio * 100,
-                )
-            return False
-
-        if verdict == "accept":
-            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-            if final_path.name != output_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            # 先移动文件，成功后再记录 history；失败不影响 VMAF 日志
-            # Copy output before logging acceptance — file I/O may fail on NFS
-            try:
-                # 跨文件系统时 os.rename 不可用，且 copy2/chmod 在 NFS 上 EPERM
-                # os.rename fails across filesystems; copy2/copymode raises EPERM on NFS
-                shutil.copyfile(str(output_path), str(final_path))
-                output_path.unlink()
-                _cleanup_temp(temp_dir)
-                if not keep_source:
-                    filepath.unlink()
-            except OSError as e:
-                log.error(
-                    "FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
-                    final_path.name,
-                    vmaf_score or 0,
-                    ratio * 100,
-                    e,
-                )
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
-                return False
-            history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
-            if vmaf_elapsed is not None:
-                log.info(
-                    "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
-                    final_path.name,
-                    _format_size(output_size),
-                    "smaller" if ratio < 1 else "larger",
-                    ratio * 100,
-                    vmaf_score,
-                    elapsed,
-                    vmaf_elapsed,
-                )
-            else:
-                log.info(
-                    "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
-                    final_path.name,
-                    _format_size(output_size),
-                    "smaller" if ratio < 1 else "larger",
-                    ratio * 100,
-                    elapsed,
-                )
-        else:
-            _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
-            if vmaf_elapsed is not None:
-                log.warning(
-                    "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
-                    filepath.name,
-                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
-                    ratio * 100,
-                    elapsed,
-                    vmaf_elapsed,
-                )
-            else:
-                log.warning(
-                    "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
-                    filepath.name,
-                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
-                    ratio * 100,
-                    elapsed,
-                )
-        return True
+        elapsed = _time.monotonic() - start_time
+        return True, dist_frame_count, elapsed
 
     except subprocess.TimeoutExpired:
         elapsed = _time.monotonic() - start_time
         log.error("TRANSCODE TIMEOUT: %s (%.1fs)", filepath.name, elapsed)
         _cleanup_temp(temp_dir)
         history.mark_failed(str(filepath), "Transcode timed out")
-        return False
+        return (False, None, None)
     except Exception as e:
         elapsed = _time.monotonic() - start_time
         log.error("TRANSCODE ERROR: %s (%.1fs) - %s", filepath.name, elapsed, e)
         _cleanup_temp(temp_dir)
         history.mark_failed(str(filepath), str(e))
-        return False
+        return (False, None, None)
     finally:
         with _active_temp_dirs_lock:
             _active_temp_dirs.discard(str(temp_dir))

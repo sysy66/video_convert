@@ -20,6 +20,7 @@ from src import config, vmaf_async
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.filter import should_process, should_submit
 from src.history import History
+from src.post_transcode import post_transcode
 from src.quality import cleanup_vmaf_logs
 from src.transcoder import (
     active_temp_dirs_snapshot,
@@ -270,8 +271,31 @@ def main_loop():
     # 新入库文件最多等待一个扫描间隔即可入队，不再排队等待批次转码完成。
     # Transcode pool lives for the whole process; scan cadence is decoupled from
     # transcode progress so newly added files queue up within one scan interval.
-    executor = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
-    _pending = set()
+    transcode_pool = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
+    _pending_transcode = set()
+    post_pool = ThreadPoolExecutor(max_workers=config.VMAF_WORKERS)
+    _pending_post = set()
+
+    def post_process(transcode_info, path, lib_info):
+        if not _running:
+            return
+        try:
+            post_transcode(
+                transcode_info,
+                path,
+                history,
+                config.FFMPEG_PATH,
+                config.FFPROBE_PATH,
+                lib_info["input"],
+                lib_info["output"],
+                lib_info["cache"],
+                keep_source=config.KEEP_SOURCE,
+                compute_vmaf=compute_vmaf,
+            )
+        except Exception:
+            log.exception("UNHANDLED ERROR: %s", path)
+        finally:
+            _pending_post.discard(str(path))
 
     def process_one(path, lib_info, force=False):
         if not _running:
@@ -281,7 +305,7 @@ def main_loop():
                 path, history, config.SKIP_CODECS, config.FFPROBE_PATH
             ):
                 return
-            transcode(
+            result = transcode(
                 path,
                 history,
                 config.FFMPEG_PATH,
@@ -292,10 +316,14 @@ def main_loop():
                 keep_source=config.KEEP_SOURCE,
                 compute_vmaf=compute_vmaf,
             )
+            if result[0]:
+                _pending_post.add(str(path))
+                info = {"dist_frame_count": result[1], "elapsed": result[2]}
+                post_pool.submit(post_process, info, path, lib_info)
         except Exception:
             log.exception("UNHANDLED ERROR: %s", path)
         finally:
-            _pending.discard(str(path))
+            _pending_transcode.discard(str(path))
 
     try:
 
@@ -332,10 +360,10 @@ def main_loop():
                 if lib_info is None:
                     log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
                     continue
-                if str(path) in _pending:
+                if str(path) in _pending_transcode or str(path) in _pending_post:
                     continue
-                _pending.add(str(path))
-                executor.submit(process_one, path, lib_info, force=True)
+                _pending_transcode.add(str(path))
+                transcode_pool.submit(process_one, path, lib_info, force=True)
                 log.info("REQUEUE ENTRY (queued): %s", path)
 
         requeue_entry(history.iter_started())
@@ -366,12 +394,12 @@ def main_loop():
                         break
                     found += 1
                     key = str(path)
-                    if key in _pending:
+                    if key in _pending_transcode or key in _pending_post:
                         continue
                     if not should_submit(path, history):
                         continue
-                    _pending.add(key)
-                    executor.submit(process_one, path, lib_info)
+                    _pending_transcode.add(key)
+                    transcode_pool.submit(process_one, path, lib_info)
                     submitted += 1
                 if found:
                     log.info("  [%s] found %d, submitted %d file(s)", lib_name, found, submitted)
@@ -393,7 +421,8 @@ def main_loop():
         # 优雅关闭：等待运行中的转码完成，取消排队未启动的任务（下次启动重新扫描）。
         # Graceful shutdown: let running transcodes finish, cancel queued ones
         # (they are re-discovered on next startup).
-        executor.shutdown(wait=True, cancel_futures=True)
+        transcode_pool.shutdown(wait=True, cancel_futures=True)
+        post_pool.shutdown(wait=True, cancel_futures=True)
 
     if config.VMAF_ASYNC:
         drain_vmaf_tasks()

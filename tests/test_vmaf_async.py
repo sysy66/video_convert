@@ -45,48 +45,52 @@ def _cleanup_vmaf_workers():
 
 
 class TestTranscodeAsync:
+    def _cache(self, tmp_path):
+        return str(tmp_path / "cache")
+
     def _fake_progress(self, cmd, total_duration, file_stem, **kwargs):
         output_path = Path(cmd[-1])
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("transcoded")
         return (0, "")
 
-    def _base_patches(self):
-        return (
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_ASYNC", True),
-        )
+    def _work_dirs(self, tmp_path):
+        return [d for d in Path(self._cache(tmp_path)).iterdir() if d.name.startswith(".work_")]
 
-    def test_keeps_source_moves_output_and_queues(self, tmp_path):
+    def test_async_transcode_only_encodes(self, tmp_path):
+        # 两段式流水线：即使 VMAF_ASYNC=True，transcode 也只编码、保留产物在
+        # cache 临时目录、不移动不删源不入队；落盘与打分由 post_transcode 接手。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video" * 10)
 
         history = MagicMock()
 
-        p1, p2, p3 = self._base_patches()
-        with p1, p2, p3:
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
+            patch("src.transcoder.config.VMAF_ASYNC", True),
+        ):
+            result = transcode(
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
+            )
 
-        assert result is True
+        assert result[0] is True
         assert input_file.exists()
-        assert (tmp_path / "test.mkv").exists()
-        history.mark_pending_vmaf.assert_called_once()
+        assert not (tmp_path / "test.mkv").exists()
+        history.mark_pending_transcode.assert_called_once()
         history.mark_done.assert_not_called()
-        work_dirs = [d for d in tmp_path.iterdir() if d.name.startswith(".work_")]
-        assert len(work_dirs) == 0
+        history.mark_await_postprocess.assert_not_called()
+        assert vmaf_tasks.empty()
+        assert len(self._work_dirs(tmp_path)) == 1
 
-        task = vmaf_tasks.get_nowait()
-        assert task[0] == str(input_file)
-        assert task[1] == str(tmp_path / "test.mkv")
-        assert task[2] == pytest.approx(0.1)
-        assert task[3] == "test"
-        assert task[4] is history
-        assert task[8] == "/ffprobe"  # worker 内源帧数快路径探测的 ffprobe 路径
-
-    def test_dist_frame_count_parsed_from_stderr_and_queued(self, tmp_path):
-        # 转码进度 stderr 末尾 frame=N 即产物帧数，随任务入队，
-        # worker 打分直接使用，不再对 k9 产物做全量解码计数
+    def test_dist_frame_count_returned_not_queued(self, tmp_path):
+        # 产物帧数随 transcode 返回元组给后处理，而非入队。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video" * 10)
 
@@ -98,79 +102,24 @@ class TestTranscodeAsync:
             output_path.write_text("transcoded")
             return (0, "frame=  5000 fps=150.0\nframe=  5000 fps=149.2 size=2048KiB\n")
 
-        p1, p2, p3 = self._base_patches()
         with (
-            p1,
-            p2,
-            p3,
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_progress_with_frames),
+            patch("src.transcoder.config.VMAF_ASYNC", True),
         ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        task = vmaf_tasks.get_nowait()
-        assert task[7] == 5000  # dist_frame_count 移至新 tuple 索引
-
-    def test_ratio_over_max_rejects_without_queue(self, tmp_path):
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("x" * 5)
-
-        history = MagicMock()
-
-        p1, p2, p3 = self._base_patches()
-        with p1, p2, p3, patch("src.transcoder.config.VMAF_REQUIRED", True):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is True
-        assert input_file.exists()
-        assert not (tmp_path / "test.mkv").exists()
-        history.mark_done.assert_called_once_with(
-            str(input_file), None, vmaf_score=None, rejected=True
-        )
-        history.mark_pending_vmaf.assert_not_called()
-        assert vmaf_tasks.empty()
-        work_dirs = [d for d in tmp_path.iterdir() if d.name.startswith(".work_")]
-        assert len(work_dirs) == 0
-
-    def test_output_moved_into_output_dir_preserving_subdir(self, tmp_path):
-        input_file = tmp_path / "input" / "sub" / "test.mp4"
-        input_file.parent.mkdir(parents=True)
-        input_file.write_text("fake video" * 10)
-        output_dir = tmp_path / "output"
-
-        history = MagicMock()
-
-        p1, p2, p3 = self._base_patches()
-        with p1, p2, p3:
             result = transcode(
-                str(input_file), history, "/ffmpeg", "/ffprobe", tmp_path / "input", output_dir
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                self._cache(tmp_path),
             )
 
-        assert result is True
-        assert (output_dir / "sub" / "test.mkv").exists()
-        assert input_file.exists()
-        history.mark_pending_vmaf.assert_called_once_with(
-            str(input_file), str(output_dir / "sub" / "test.mkv"), None
-        )
-
-    def test_move_failure_marks_failed(self, tmp_path):
-        input_file = tmp_path / "test.mp4"
-        input_file.write_text("fake video" * 10)
-
-        history = MagicMock()
-
-        p1, p2, p3 = self._base_patches()
-        with (
-            p1,
-            p2,
-            p3,
-            patch("shutil.copyfile", side_effect=OSError("nfs down")),
-        ):
-            result = transcode(str(input_file), history, "/ffmpeg", "/ffprobe")
-
-        assert result is False
-        history.mark_failed.assert_called_once()
-        history.mark_pending_vmaf.assert_not_called()
+        assert result[0] is True
+        assert result[1] == 5000
+        assert vmaf_tasks.empty()
 
 
 class TestHandleVmafTask:
