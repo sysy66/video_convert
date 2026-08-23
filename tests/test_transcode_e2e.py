@@ -1,7 +1,8 @@
-"""transcode() 端到端集成测试：真实 QSV 硬件编码（需 --run-slow 且本机有 QSV）。
+"""transcode() + post_transcode() 端到端集成测试：真实 QSV 硬件编码
+（需 --run-slow 且本机有 QSV）。
 
-End-to-end integration tests for transcode(): real QSV hardware encoding
-(requires --run-slow and local QSV).
+End-to-end integration tests for the two-stage pipeline (transcode then
+post_transcode): real QSV hardware encoding (requires --run-slow and local QSV).
 """
 
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from src import config
+from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
+from src.post_transcode import post_transcode
 from src.transcoder import (
     _handle_vmaf_task,
     drain_vmaf_tasks,
@@ -33,15 +36,65 @@ def transcode_env(tmp_path, monkeypatch, make_history):
     src_file.write_bytes((FIXTURE_DIR / "synth_320x240_1s_h264.mp4").read_bytes())
     return {
         "src": src_file,
+        "input_dir": src_dir,
         "output_dir": tmp_path / "output",
         "cache_dir": tmp_path / "cache",
         "history": make_history(),
     }
 
 
+@pytest.fixture
+def compute_vmaf(tmp_path, monkeypatch, vmaf_ffmpeg):
+    """真实 FfmpegVMAFScorer 打分回调（async worker / _handle_vmaf_task 使用）。"""
+    monkeypatch.setattr(config, "VMAF_FFMPEG_PATH", vmaf_ffmpeg)
+    ffscorer = FfmpegVMAFScorer(
+        ffprobe_path=config.FFPROBE_PATH,
+        vmaf_ffmpeg_path=vmaf_ffmpeg,
+        vmaf_model_path=config.VMAF_MODEL_PATH,
+        vmaf_log_dir=config.VMAF_LOG_DIR,
+        n_threads=config.VMAF_N_THREADS,
+        n_subsample=config.VMAF_N_SUBSAMPLE,
+        vmaf_timeout=config.VMAF_TIMEOUT,
+        vmaf_hwaccel=config.VMAF_HWACCEL,
+        vmaf_hw_fallback=config.VMAF_HW_FALLBACK,
+    )
+    return ffscorer.compute_vmaf
+
+
 def _skip_if_no_qsv(qsv_available):
     if not qsv_available:
         pytest.skip("QSV 不可用（无 /dev/dri 或驱动缺失），跳过真实硬件转码测试")
+
+
+def _run_pipeline(env, ffmpeg, ffprobe, compute_vmaf=None):
+    """两段式流水线：transcode 编码 → post_transcode 质量门/落盘/终态。
+
+    Run the two-stage pipeline: transcode (encoding only) then post_transcode
+    (quality gate, placement, final state).
+    """
+    ok, dist_frame_count, elapsed = transcode(
+        str(env["src"]),
+        env["history"],
+        ffmpeg,
+        ffprobe,
+        str(env["input_dir"]),
+        str(env["output_dir"]),
+        str(env["cache_dir"]),
+    )
+    assert ok, "transcode 编码阶段失败"
+    done = post_transcode(
+        {"dist_frame_count": dist_frame_count, "elapsed": elapsed},
+        str(env["src"]),
+        env["history"],
+        ffmpeg,
+        ffprobe,
+        str(env["input_dir"]),
+        str(env["output_dir"]),
+        str(env["cache_dir"]),
+        compute_vmaf=compute_vmaf,
+    )
+    assert done, "post_transcode 后处理阶段失败"
+    return dist_frame_count
 
 
 class TestTranscodeQsv:
@@ -52,16 +105,8 @@ class TestTranscodeQsv:
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         env = transcode_env
 
-        ok = transcode(
-            str(env["src"]),
-            env["history"],
-            transcode_ffmpeg,
-            transcode_ffprobe,
-            output_dir=str(env["output_dir"]),
-            cache_dir=str(env["cache_dir"]),
-        )
+        _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
 
-        assert ok
         assert env["history"].is_success(str(env["src"]))
         outputs = list(env["output_dir"].glob("*.mkv"))
         assert len(outputs) == 1
@@ -75,24 +120,17 @@ class TestTranscodeQsv:
         monkeypatch.setattr(config, "VIDEO_ENCODER", "av1")
         env = transcode_env
 
-        ok = transcode(
-            str(env["src"]),
-            env["history"],
-            transcode_ffmpeg,
-            transcode_ffprobe,
-            output_dir=str(env["output_dir"]),
-            cache_dir=str(env["cache_dir"]),
-        )
+        try:
+            _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
+        except AssertionError:
+            entry = env["history"].get_entry(str(env["src"]))
+            error = (entry or {}).get("error", "")
+            if "unsupported" in error.lower():
+                pytest.skip(f"GPU 不支持 av1_qsv 硬件编码: {error[:200]}")
+            raise
 
-        if ok:
-            assert env["history"].is_success(str(env["src"]))
-            assert not env["src"].exists()
-            return
-        entry = env["history"].get_entry(str(env["src"]))
-        error = (entry or {}).get("error", "")
-        if "unsupported" in error.lower():
-            pytest.skip(f"GPU 不支持 av1_qsv 硬件编码: {error[:200]}")
-        raise AssertionError(f"av1_qsv 转码意外失败: {error}")
+        assert env["history"].is_success(str(env["src"]))
+        assert not env["src"].exists()
 
     def test_transcode_keeps_output_duration(
         self, transcode_env, transcode_ffmpeg, transcode_ffprobe, qsv_available, monkeypatch
@@ -101,15 +139,7 @@ class TestTranscodeQsv:
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         env = transcode_env
 
-        ok = transcode(
-            str(env["src"]),
-            env["history"],
-            transcode_ffmpeg,
-            transcode_ffprobe,
-            output_dir=str(env["output_dir"]),
-            cache_dir=str(env["cache_dir"]),
-        )
-        assert ok
+        _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
 
         from src.probe import get_streams_info
 
@@ -121,7 +151,7 @@ class TestTranscodeQsv:
 
 
 class TestTranscodeVmafAsync:
-    """异步 VMAF 打分全流程：转码立即返回（源保留 + await_postprocess），worker 打分后终态化。"""
+    """异步 VMAF 打分全流程：转码返回（源保留 + await_postprocess），worker 打分后终态化。"""
 
     def test_async_worker_full_flow(
         self,
@@ -129,28 +159,19 @@ class TestTranscodeVmafAsync:
         transcode_ffmpeg,
         transcode_ffprobe,
         qsv_available,
-        vmaf_ffmpeg,
+        compute_vmaf,
         monkeypatch,
     ):
-        """真实 QSV 转码 → 真实后台 worker + 真实 libvmaf 打分 → accept 删源终态化"""
+        """真实 QSV 转码 → post_transcode 排队 → 真实后台 worker + libvmaf 打分 → accept 删源"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
-        monkeypatch.setattr(config, "VMAF_FFMPEG_PATH", vmaf_ffmpeg)
         env = transcode_env
 
-        start_vmaf_workers()
+        start_vmaf_workers(compute_vmaf=compute_vmaf)
         try:
-            ok = transcode(
-                str(env["src"]),
-                env["history"],
-                transcode_ffmpeg,
-                transcode_ffprobe,
-                output_dir=str(env["output_dir"]),
-                cache_dir=str(env["cache_dir"]),
-            )
-            assert ok
-            # 转码返回时打分尚未进行：源保留、输出已在 output 区、状态 await_postprocess
+            _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
+            # post_transcode 异步排队：源保留、输出已在 output 区、状态 await_postprocess
             assert env["src"].exists()
             outputs = list(env["output_dir"].glob("*.mkv"))
             assert len(outputs) == 1
@@ -159,7 +180,7 @@ class TestTranscodeVmafAsync:
 
             drain_vmaf_tasks()
 
-            # worker 打分完成：accept（hevc 转码输出远小于 2.0 上限）→ 源删除、输出保留
+            # worker 打分完成：accept（hevc 输出远小于 2.0 上限）→ 源删除、输出保留
             assert env["history"].is_success(str(env["src"]))
             assert not env["src"].exists()
             assert outputs[0].exists()
@@ -176,25 +197,16 @@ class TestTranscodeVmafAsync:
         transcode_ffmpeg,
         transcode_ffprobe,
         qsv_available,
-        vmaf_ffmpeg,
+        compute_vmaf,
         monkeypatch,
     ):
         """直接消费队列任务做真实打分（不经线程，验证 _handle_vmaf_task 真实路径）"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
-        monkeypatch.setattr(config, "VMAF_FFMPEG_PATH", vmaf_ffmpeg)
         env = transcode_env
 
-        ok = transcode(
-            str(env["src"]),
-            env["history"],
-            transcode_ffmpeg,
-            transcode_ffprobe,
-            output_dir=str(env["output_dir"]),
-            cache_dir=str(env["cache_dir"]),
-        )
-        assert ok
+        _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
 
         task = vmaf_tasks.get_nowait()
         assert task[0] == str(env["src"])
@@ -203,7 +215,7 @@ class TestTranscodeVmafAsync:
         assert task[4] is env["history"]
         assert task[5] >= 0
 
-        _handle_vmaf_task(task)
+        _handle_vmaf_task(task, compute_vmaf=compute_vmaf)
 
         assert env["history"].is_success(str(env["src"]))
         assert not env["src"].exists()
