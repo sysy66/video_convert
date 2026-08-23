@@ -194,7 +194,7 @@ class History:
             ).fetchone()
         return row is not None
 
-    def mark_started(self, filepath):
+    def mark_pending_transcode(self, filepath, output_path):
         """
         标记文件进入转码就绪队头：status = "pending_transcode"，
         记录转码开始时间戳。产物尚在 work 文件夹，未移动/打分。
@@ -206,8 +206,8 @@ class History:
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
                 "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'pending_transcode', ?, NULL, NULL, NULL)",
-                (filepath, time.time()),
+                "VALUES (?, 'pending_transcode', ?, NULL, ?, NULL)",
+                (filepath, time.time(), output_path),
             )
 
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
@@ -238,7 +238,7 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def mark_pending_vmaf(self, filepath, output_path, output_frames=None):
+    def mark_await_postprocess(self, filepath, output_path, output_frames=None):
         """
         转码完成、产物就绪，进入后处理（移动到目标 + 可选 VMAF 打分）队列：
         status = "await_postprocess"。output_frames 为转码时从 stderr 解析的
@@ -318,3 +318,22 @@ class History:
             if not os.path.exists(filepath):
                 log.debug("PURGE (orphan record, file missing): %s", filepath)
                 self.delete(filepath)
+
+    def get_output_path(self, filepath):
+        """
+        Retrieves the output path corresponding to the given file path from the database.
+
+        This method queries the database using the provided file path to fetch the
+        associated output path. If no matching record is found, it returns None.
+
+        :param filepath: The file path used to query the database for the associated
+            output path.
+        :type filepath: str
+        :return: The output path associated with the given file path if it exists, or
+            None if no match is found.
+        :rtype: str or None
+        """
+        row = self._conn.execute(
+            "SELECT output_path FROM files WHERE filepath=?", (filepath,)
+        ).fetchone()
+        return row["output_path"] if row else None

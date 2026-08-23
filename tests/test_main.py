@@ -330,7 +330,7 @@ class TestPurgeOrphanRecords:
         gone_failed = str(tmp_path / "gone-failed.mp4")
 
         h = self._seed(tmp_path, "success", str(existing))
-        h.mark_started(gone_rejected)
+        h.mark_pending_transcode(gone_rejected, str(tmp_path / "gone-rejected.mkv"))
         h._conn.execute("UPDATE files SET status='rejected' WHERE filepath=?", (gone_rejected,))
         h.mark_failed(gone_failed, "boom")
         # rejected/failed 记录的源已消失 → 可清理
