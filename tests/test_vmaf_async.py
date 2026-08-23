@@ -58,7 +58,7 @@ class TestTranscodeAsync:
         return [d for d in Path(self._cache(tmp_path)).iterdir() if d.name.startswith(".work_")]
 
     def test_async_transcode_only_encodes(self, tmp_path):
-        # 两段式流水线：即使 VMAF_ASYNC=True，transcode 也只编码、保留产物在
+        # 两段式流水线：即使 async 模式，transcode 也只编码、保留产物在
         # cache 临时目录、不移动不删源不入队；落盘与打分由 post_transcode 接手。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video" * 10)
@@ -68,7 +68,7 @@ class TestTranscodeAsync:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_ASYNC", True),
+            patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
         ):
             result = transcode(
                 str(input_file),
@@ -105,7 +105,7 @@ class TestTranscodeAsync:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_progress_with_frames),
-            patch("src.transcoder.config.VMAF_ASYNC", True),
+            patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
         ):
             result = transcode(
                 str(input_file),
@@ -172,9 +172,9 @@ class TestHandleVmafTask:
     def test_score_none_marks_failed_for_retry(self, tmp_path):
         # VMAF scoring failed (e.g. interrupted by shutdown / decode error) → retry,
         # NOT a permanent rejection which would block the file forever.
-        # VMAF_REQUIRED=True forces the reject branch so the score-None path runs.
+        # VMAF_MODE_SYNC forces the reject branch so the score-None path runs.
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.transcoder.config.VMAF_REQUIRED", True):
+        with patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=None))
         assert source.exists()
         assert not output.exists()

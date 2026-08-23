@@ -258,17 +258,22 @@ VMAF_TIMEOUT = 36000
 # Enable QSV hardware-accelerated decoding for VMAF (falls back to software on failure)
 VMAF_HWACCEL = True
 VMAF_HW_FALLBACK = True
-# VMAF 是否为转码的硬性要求：True=不可用时拒绝，False=不可用时仍接受（仅按大小比判断）。
+# VMAF 打分模式（--vmaf off|sync|async）：
+#   off   关闭（默认），仅按大小比接受
+#   sync  同步：转码线程内联打分，耗时阻塞转码池
+#   async 异步：产物先移入输出区保留源，后台 worker 打分后决定去留
 # 默认关闭（VMAF 需通过 --vmaf sync|async 显式启用）。
-# Whether VMAF is required: True=reject if unavailable, False=accept anyway (ratio check only).
-# Disabled by default; enable via --vmaf sync|async.
-VMAF_REQUIRED = False
+# VMAF scoring mode (--vmaf off|sync|async):
+#   off   disabled (default), accept on ratio check only
+#   sync  inline scoring in the transcode thread (blocks the transcode pool)
+#   async move output into place keeping the source; a background worker scores it
+VMAF_MODE_OFF = "off"
+VMAF_MODE_SYNC = "sync"
+VMAF_MODE_ASYNC = "async"
+VMAF_MODE = VMAF_MODE_OFF
 
-# 异步 VMAF 打分：True=转码成功后先保留源文件并移到输出区，后台线程打分后决定去留。
-# 打分 worker 线程数（VMAF 极耗解码器资源，默认 1 即可）。
-# Async VMAF scoring: True=move output into place without deleting the source; a background
-# worker scores VMAF later and keeps exactly one of the two files.
-VMAF_ASYNC = False
+# 异步打分 worker 线程数（VMAF 极耗解码器资源，默认 1 即可）。
+# Async scoring worker threads (VMAF is decode-heavy; 1 is enough by default).
 VMAF_WORKERS = 1
 
 # 转换成功后保留源文件：True=不删除原文件，仅移入输出（常用于验证或临时批量转码）。

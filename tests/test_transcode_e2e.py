@@ -24,7 +24,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
 def transcode_env(tmp_path, monkeypatch, make_history):
-    monkeypatch.setattr(config, "VMAF_REQUIRED", False)
+    monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_OFF)
     monkeypatch.setattr(config, "VMAF_LOG_DIR", str(tmp_path / "vmaf_logs"))
     monkeypatch.setattr(config, "ACCEPT_RATIO_MAX", 2.0)
     src_dir = tmp_path / "input"
@@ -135,7 +135,7 @@ class TestTranscodeVmafAsync:
         """真实 QSV 转码 → 真实后台 worker + 真实 libvmaf 打分 → accept 删源终态化"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
-        monkeypatch.setattr(config, "VMAF_ASYNC", True)
+        monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
         monkeypatch.setattr(config, "VMAF_FFMPEG_PATH", vmaf_ffmpeg)
         env = transcode_env
 
@@ -182,7 +182,7 @@ class TestTranscodeVmafAsync:
         """直接消费队列任务做真实打分（不经线程，验证 _handle_vmaf_task 真实路径）"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
-        monkeypatch.setattr(config, "VMAF_ASYNC", True)
+        monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
         monkeypatch.setattr(config, "VMAF_FFMPEG_PATH", vmaf_ffmpeg)
         env = transcode_env
 

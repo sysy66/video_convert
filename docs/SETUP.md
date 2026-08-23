@@ -199,8 +199,7 @@ video_convert/
 | `VMAF_MODEL_PATH` | `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` | VMAF model (negative-float features). CLI: `--vmaf-model` |
 | `VMAF_TIMEOUT` | 36000 | VMAF scoring timeout per file (seconds, 10 h) |
 | `VMAF_HWACCEL` | `True` | QSV hardware-accelerated decode for VMAF; falls back to software on failure (`VMAF_HW_FALLBACK`) |
-| `VMAF_REQUIRED` | `False` | True=reject if VMAF unavailable; False=accept on ratio check only. VMAF enabled via `--vmaf sync|async` |
-| `VMAF_ASYNC` | `False` | Async scoring: keep source, score in background worker, keep one file. CLI: `--vmaf async` |
+| `VMAF_MODE` | `"off"` | VMAF scoring mode: `off` (ratio check only) / `sync` (inline scoring) / `async` (background worker). CLI: `--vmaf off|sync|async` |
 | `VMAF_WORKERS` | 1 | Number of async VMAF scoring worker threads |
 | `VMAF_EXTREME_LOW` | 60 | VMAF below this in scoring marks the file failed for retry instead of permanently rejecting it (suggests an incomplete input/output) |
 | `VMAF_ACCEPT_HIGH` | 93 | VMAF ≥ this → accept if ratio ≤ `ACCEPT_RATIO_MAX` |
@@ -239,7 +238,7 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 
 - VMAF 默认关闭，需显式启用：`--vmaf sync`（同步打分）或 `--vmaf async`（异步打分，见下）。
 - 打分前对源与产物做帧序对齐（`setpts=N/30/TB` 按帧号线性化），消除 VFR→CFR 帧序漂移造成的分数虚低；两路帧数相对差 >1% 或不可得时不下分（判为异常）。
-- If VMAF is unavailable (binary missing, timeout, or error) and `VMAF_REQUIRED=True`, the result is **REJECTED** — no score means no accept.
+- If VMAF is unavailable (binary missing, timeout, or error) and `VMAF_MODE != "off"`, the result is **REJECTED** — no score means no accept.
 - The score is stored in `data/history.db` under the `vmaf_score` column.
 - ACCEPT/REJECT log lines include VMAF when available:
   ```
@@ -252,7 +251,7 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
   - VMAF ≥ 93 → accept if output is not larger than input (ratio ≤ 1.00)
   - VMAF 80–92 → accept only if output is ≥25% smaller (ratio ≤ 0.75)
   - VMAF < 80 → reject
-  - VMAF unavailable → reject (仅当 `VMAF_REQUIRED=True`)
+  - VMAF unavailable → reject (仅当 `VMAF_MODE != "off"`)
   - VMAF < 60（`VMAF_EXTREME_LOW`）→ 视为输入/产物异常，按 failed 退避重试，不永久拒绝
 
 ### Async mode / 异步模式（`--vmaf async`）

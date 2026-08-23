@@ -177,8 +177,7 @@ def _apply_cli_overrides():
     if args.vmaf_model:
         config.VMAF_MODEL_PATH = args.vmaf_model
     if args.vmaf is not None:
-        config.VMAF_REQUIRED = args.vmaf != "off"
-        config.VMAF_ASYNC = args.vmaf == "async"
+        config.VMAF_MODE = args.vmaf
     if args.no_vmaf_hwaccel:
         config.VMAF_HWACCEL = False
     if args.no_vmaf_hw_fallback:
@@ -261,7 +260,7 @@ def main_loop():
         log.info("  [%s] %s", name, ", ".join(parts))
     log.info("Scan interval: %ds", config.SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
-    if config.VMAF_ASYNC:
+    if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
         log.info("VMAF scoring: async (%d worker(s))", config.VMAF_WORKERS)
         start_vmaf_workers(compute_vmaf=compute_vmaf)
         recover_pending_vmaf(history, ffprobe_path=config.FFPROBE_PATH)
@@ -424,7 +423,7 @@ def main_loop():
         transcode_pool.shutdown(wait=True, cancel_futures=True)
         post_pool.shutdown(wait=True, cancel_futures=True)
 
-    if config.VMAF_ASYNC:
+    if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
         drain_vmaf_tasks()
 
     log.info("Shutdown complete")

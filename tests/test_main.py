@@ -45,7 +45,7 @@ def _restore_config():
         "SKIP_CODECS": config.SKIP_CODECS.copy(),
         "VMAF_HWACCEL": config.VMAF_HWACCEL,
         "VMAF_HW_FALLBACK": config.VMAF_HW_FALLBACK,
-        "VMAF_REQUIRED": config.VMAF_REQUIRED,
+        "VMAF_MODE": config.VMAF_MODE,
         "LIBRARIES": config.LIBRARIES,
         "_LIBRARIES_RAW": config._LIBRARIES_RAW,
     }
@@ -89,56 +89,48 @@ class TestCliOverrides:
     """验证 _apply_cli_overrides 对 VMAF 开关与编码器/skip-codecs 的覆盖。"""
 
     def test_vmaf_off_disables_required_and_async(self):
-        """--vmaf off 应同时关闭 VMAF_REQUIRED 与 VMAF_ASYNC。"""
-        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        """--vmaf off 应设置 VMAF_MODE 为 VMAF_MODE_OFF。"""
+        original = config.VMAF_MODE
         try:
-            config.VMAF_REQUIRED = True
-            config.VMAF_ASYNC = True
+            config.VMAF_MODE = config.VMAF_MODE_SYNC
             with patch.object(sys, "argv", ["main", "--vmaf", "off"]):
                 main._apply_cli_overrides()
-            assert config.VMAF_REQUIRED is False
-            assert config.VMAF_ASYNC is False
+            assert config.VMAF_MODE == config.VMAF_MODE_OFF
         finally:
-            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+            config.VMAF_MODE = original
 
     def test_vmaf_sync_enables_required_not_async(self):
-        """--vmaf（无参数，即 sync）应开启 VMAF_REQUIRED 但保持 VMAF_ASYNC 关闭。"""
-        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        """--vmaf（无参数，即 sync）应设置 VMAF_MODE 为 VMAF_MODE_SYNC。"""
+        original = config.VMAF_MODE
         try:
-            config.VMAF_REQUIRED = False
-            config.VMAF_ASYNC = False
+            config.VMAF_MODE = config.VMAF_MODE_OFF
             with patch.object(sys, "argv", ["main", "--vmaf"]):
                 main._apply_cli_overrides()
-            assert config.VMAF_REQUIRED is True
-            assert config.VMAF_ASYNC is False
+            assert config.VMAF_MODE == config.VMAF_MODE_SYNC
         finally:
-            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+            config.VMAF_MODE = original
 
     def test_vmaf_async_enables_required_and_async(self):
-        """--vmaf async 应同时开启 VMAF_REQUIRED 与 VMAF_ASYNC。"""
-        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        """--vmaf async 应设置 VMAF_MODE 为 VMAF_MODE_ASYNC。"""
+        original = config.VMAF_MODE
         try:
-            config.VMAF_REQUIRED = False
-            config.VMAF_ASYNC = False
+            config.VMAF_MODE = config.VMAF_MODE_OFF
             with patch.object(sys, "argv", ["main", "--vmaf", "async"]):
                 main._apply_cli_overrides()
-            assert config.VMAF_REQUIRED is True
-            assert config.VMAF_ASYNC is True
+            assert config.VMAF_MODE == config.VMAF_MODE_ASYNC
         finally:
-            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+            config.VMAF_MODE = original
 
     def test_default_leaves_vmaf_settings_unchanged(self):
-        """不带 --vmaf 参数时，VMAF 相关设置应保持不变。"""
-        original = (config.VMAF_REQUIRED, config.VMAF_ASYNC)
+        """不带 --vmaf 参数时，VMAF_MODE 应保持不变。"""
+        original = config.VMAF_MODE
         try:
-            config.VMAF_REQUIRED = False
-            config.VMAF_ASYNC = False
+            config.VMAF_MODE = config.VMAF_MODE_OFF
             with patch.object(sys, "argv", ["main"]):
                 main._apply_cli_overrides()
-            assert config.VMAF_REQUIRED is False
-            assert config.VMAF_ASYNC is False
+            assert config.VMAF_MODE == config.VMAF_MODE_OFF
         finally:
-            config.VMAF_REQUIRED, config.VMAF_ASYNC = original
+            config.VMAF_MODE = original
 
     def test_encoder_adds_to_skip_codecs(self):
         """--encoder hevc 应设置 VIDEO_ENCODER 并把该编码器加入 SKIP_CODECS。"""
@@ -490,7 +482,7 @@ class TestMainLoop:
         assert names == ["a.mp4", "x.mp4"]
 
     def test_vmaf_async_lifecycle(self):
-        """VMAF_ASYNC 为 True 时，应启停并恢复异步 VMAF worker 任务。"""
+        """VMAF_MODE_ASYNC 时，应启停并恢复异步 VMAF worker 任务。"""
         _reset_running()
 
         def stop_after_walk(*_a, **_kw):
@@ -498,7 +490,7 @@ class TestMainLoop:
             return iter([])
 
         with (
-            patch("main.config.VMAF_ASYNC", True),
+            patch("main.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
@@ -518,7 +510,7 @@ class TestMainLoop:
         mock_drain.assert_called_once()
 
     def test_vmaf_sync_skips_worker_lifecycle(self):
-        """VMAF_ASYNC 为 False（同步）时，不应调用任何 VMAF 生命周期函数。"""
+        """VMAF_MODE_SYNC 时，不应调用任何 VMAF 生命周期函数。"""
         _reset_running()
 
         def stop_after_walk(*_a, **_kw):
@@ -526,7 +518,7 @@ class TestMainLoop:
             return iter([])
 
         with (
-            patch("main.config.VMAF_ASYNC", False),
+            patch("main.config.VMAF_MODE", config.VMAF_MODE_SYNC),
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),

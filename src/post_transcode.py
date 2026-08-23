@@ -108,7 +108,7 @@ def post_transcode(
         # 与内联打分完全互斥（内联 VMAF 耗时数分钟到数小时，阻塞转码线程）。
         # Async VMAF: move the output into place but keep the source; a background
         # worker scores it later and keeps exactly one of the two files.
-        if config.VMAF_ASYNC:
+        if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
             if ratio > config.ACCEPT_RATIO_MAX:
                 # ratio 超标必拒（VMAF ≥ 93 也要求 ratio ≤ ACCEPT_RATIO_MAX），
                 # 直接拒绝不入队，省去昂贵的采样打分。
@@ -176,7 +176,7 @@ def post_transcode(
 
         vmaf_score = None
         vmaf_elapsed = None
-        if config.VMAF_REQUIRED:
+        if config.VMAF_MODE != config.VMAF_MODE_OFF:
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = (
                 Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
@@ -197,7 +197,7 @@ def post_transcode(
         # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
         # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
         # 记 failed 永久排除，仅 --retry-failed 启动时手动重试。
-        if config.VMAF_REQUIRED:
+        if config.VMAF_MODE != config.VMAF_MODE_OFF:
             verdict = vmaf_verdict(vmaf_score, ratio)
         else:
             verdict = "accept"
