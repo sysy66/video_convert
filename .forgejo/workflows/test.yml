@@ -5,6 +5,10 @@ on: [push]
 jobs:
   test:
     runs-on: test-runner
+    container:
+      image: catthehacker/ubuntu:act-latest
+      volumes:
+        - /opt/hostedtoolcache:/opt/hostedtoolcache
     strategy:
       fail-fast: false
       matrix:
@@ -15,7 +19,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install test dependencies
-        run: pip install --break-system-packages -e '.[test]'
+        run: pip install -e '.[test]'
       - name: Run tests
         run: pytest tests/ -v --cov
       - name: Lint
