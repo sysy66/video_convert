@@ -342,9 +342,10 @@ def main_loop():
                 if lib_info is None:
                     log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
                     continue
-                job = pipeline.make_job(str(path), lib_info)
-                if job.key in _pending:
+                key = str(Path(entry).resolve())
+                if key in _pending:
                     continue
+                job = pipeline.make_job(key, lib_info)
                 _pending.add(job.key)
                 transcode_pool.submit(process_one, job, force=True)
                 log.info("REQUEUE ENTRY (queued): %s", path)
@@ -376,11 +377,13 @@ def main_loop():
                     if not _running:
                         break
                     found += 1
-                    job = pipeline.make_job(str(path), lib_info)
-                    if job.key in _pending:
+                    resolved = Path(path).resolve()
+                    key = str(resolved)
+                    if key in _pending:
                         continue
-                    if not should_submit(job.filepath, history):
+                    if not should_submit(resolved, history):
                         continue
+                    job = pipeline.make_job(key, lib_info)
                     _pending.add(job.key)
                     transcode_pool.submit(process_one, job)
                     submitted += 1
