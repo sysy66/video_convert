@@ -368,7 +368,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("main.transcode"),
+            patch("src.pipeline.transcode"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -396,7 +396,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=yield_file),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("main.transcode", side_effect=fake_transcode) as mock_transcode,
+            patch("src.pipeline.transcode", side_effect=fake_transcode) as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -416,7 +416,7 @@ class TestMainLoop:
 
         class RecordingExecutor(executor_cls):
             def submit(self, fn, *args, **kwargs):
-                submitted.append((fn, Path(args[0]).name))
+                submitted.append((fn, args[0].filepath.name))
                 return super().submit(fn, *args, **kwargs)
 
         def stop_after_walk(*_a, **_kw):
@@ -428,7 +428,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("main.transcode"),
+            patch("src.pipeline.transcode"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -455,7 +455,7 @@ class TestMainLoop:
 
         class RecordingExecutor(executor_cls):
             def submit(self, fn, *args, **kwargs):
-                submitted.append((fn, Path(args[0]).name))
+                submitted.append((fn, args[0].filepath.name))
                 return super().submit(fn, *args, **kwargs)
 
         def stop_after_walk(*_a, **_kw):
@@ -467,7 +467,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("main.transcode"),
+            patch("src.pipeline.transcode"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -494,7 +494,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("main.transcode"),
+            patch("src.pipeline.transcode"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -522,7 +522,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("main.transcode"),
+            patch("src.pipeline.transcode"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -561,7 +561,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("main.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -595,7 +595,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("main.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -617,7 +617,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=False),
             patch("main.should_process"),
-            patch("main.transcode") as mock_transcode,
+            patch("src.pipeline.transcode") as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -653,7 +653,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("main.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
