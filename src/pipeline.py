@@ -19,10 +19,10 @@ class TranscodePipeline:
         """工厂：扫描/requeue 处唯一需要构造 Job 的入口。"""
         return TranscodeJob(
             pipeline=self,
-            filepath=Path(filepath),
-            lib_input=Path(lib_info["input"]),
-            lib_output=Path(lib_info["output"]),
-            lib_cache=Path(lib_info["cache"]),
+            filepath=Path(filepath).resolve(),
+            lib_input=Path(lib_info["input"]).resolve(),
+            lib_output=Path(lib_info["output"]).resolve(),
+            lib_cache=Path(lib_info["cache"]).resolve(),
         )
 
     def transcode(self, job):

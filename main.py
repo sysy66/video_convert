@@ -295,7 +295,7 @@ def main_loop():
             return
         try:
             if not force and not should_process(
-                job.key, job.pipeline.history, config.SKIP_CODECS, config.FFPROBE_PATH
+                job.filepath, job.pipeline.history, config.SKIP_CODECS, config.FFPROBE_PATH
             ):
                 return
             result = job.transcode()
@@ -306,7 +306,6 @@ def main_loop():
         except Exception:
             _pending.discard(job.key)
             log.exception("UNHANDLED ERROR: %s", job.key)
-            
 
     try:
 
@@ -343,10 +342,10 @@ def main_loop():
                 if lib_info is None:
                     log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
                     continue
-                if str(path) in _pending:
-                    continue
                 job = pipeline.make_job(str(path), lib_info)
-                _pending.add(str(path))
+                if job.key in _pending:
+                    continue
+                _pending.add(job.key)
                 transcode_pool.submit(process_one, job, force=True)
                 log.info("REQUEUE ENTRY (queued): %s", path)
 
@@ -377,13 +376,12 @@ def main_loop():
                     if not _running:
                         break
                     found += 1
-                    key = str(path)
-                    if key in _pending:
+                    job = pipeline.make_job(str(path), lib_info)
+                    if job.key in _pending:
                         continue
-                    if not should_submit(path, history):
+                    if not should_submit(job.filepath, history):
                         continue
-                    _pending.add(key)
-                    job = pipeline.make_job(key, lib_info)
+                    _pending.add(job.key)
                     transcode_pool.submit(process_one, job)
                     submitted += 1
                 if found:
