@@ -32,6 +32,7 @@ from src.temp_cleanup import (
 
 log = __import__("logging").getLogger(__name__)
 
+
 # 内部从 job.filepath / job.lib_* / pipeline.history 等取参
 # 成功：job.output_path/dist_frame_count/elapsed 写入 job，return True
 # 失败：清理并 mark_failed，return False
@@ -254,4 +255,3 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     finally:
         with _active_temp_dirs_lock:
             _active_temp_dirs.discard(str(temp_dir))
-
