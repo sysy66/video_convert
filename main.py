@@ -277,9 +277,8 @@ def main_loop():
     # Transcode pool lives for the whole process; scan cadence is decoupled from
     # transcode progress so newly added files queue up within one scan interval.
     transcode_pool = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
-    _pending_transcode = set()
     post_pool = ThreadPoolExecutor(max_workers=config.VMAF_WORKERS)
-    _pending_post = set()
+    _pending = set()
 
     def post_process(job):
         if not _running:
@@ -289,7 +288,7 @@ def main_loop():
         except Exception:
             log.exception("UNHANDLED ERROR: %s", job.key)
         finally:
-            _pending_post.discard(job.key)
+            _pending.discard(job.key)
 
     def process_one(job, force=False):
         if not _running:
@@ -301,12 +300,13 @@ def main_loop():
                 return
             result = job.transcode()
             if result[0]:
-                _pending_post.add(job.key)
                 post_pool.submit(post_process, job)
+            else:
+                _pending.discard(job.key)
         except Exception:
+            _pending.discard(job.key)
             log.exception("UNHANDLED ERROR: %s", job.key)
-        finally:
-            _pending_transcode.discard(job.key)
+            
 
     try:
 
@@ -343,10 +343,10 @@ def main_loop():
                 if lib_info is None:
                     log.warning("REQUEUE ENTRY: no library owns %s, skipping", path)
                     continue
-                if str(path) in _pending_transcode or str(path) in _pending_post:
+                if str(path) in _pending:
                     continue
                 job = pipeline.make_job(str(path), lib_info)
-                _pending_transcode.add(str(path))
+                _pending.add(str(path))
                 transcode_pool.submit(process_one, job, force=True)
                 log.info("REQUEUE ENTRY (queued): %s", path)
 
@@ -378,11 +378,11 @@ def main_loop():
                         break
                     found += 1
                     key = str(path)
-                    if key in _pending_transcode or key in _pending_post:
+                    if key in _pending:
                         continue
                     if not should_submit(path, history):
                         continue
-                    _pending_transcode.add(key)
+                    _pending.add(key)
                     job = pipeline.make_job(key, lib_info)
                     transcode_pool.submit(process_one, job)
                     submitted += 1

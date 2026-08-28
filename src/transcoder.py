@@ -306,7 +306,6 @@ def transcode(
             (temp_dir / ".ffmpeg.log.qsv").write_text(stderr, encoding="utf-8")
         except OSError:
             pass
-
         if returncode != 0:
             if sw_decode_fallback_attempted:
                 pass  # 首轮已软解，失败直接落到底部判失败
