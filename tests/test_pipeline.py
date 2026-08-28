@@ -10,6 +10,15 @@ import pytest
 
 from src.job import TranscodeJob
 from src.pipeline import TranscodePipeline
+from src.transcoder import transcode_stage
+
+_VIDEO_AAC = {
+    "streams": [
+        {"index": 0, "codec_type": "video", "codec_name": "h264"},
+        {"index": 1, "codec_type": "audio", "codec_name": "aac"},
+    ],
+    "duration": 120.0,
+}
 
 pytestmark = pytest.mark.unit
 
@@ -128,42 +137,56 @@ class TestTranscodePipelineMakeJob:
 
 
 class TestTranscodePipelineTranscode:
-    def test_delegates_to_transcode_function_and_mutates_job(self, pipeline, tmp_path):
-        fp = tmp_path / "a.mp4"
-        fp.write_text("x")
-        job = TranscodeJob(
-            pipeline=pipeline,
-            filepath=fp,
-            lib_input=Path("/in"),
-            lib_output=Path("/out"),
-            lib_cache=Path("/cache"),
-        )
-        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
-            ok = pipeline.transcode(job)
-            mock_tc.assert_called_once_with(pipeline, job)
-            assert ok is True
-            # transcode_stage 成功时把产物信息写回 job（真实逻辑；此处校验调用契约与回填语义）
-            job.dist_frame_count = 5000
-            job.elapsed = 3.14
-            assert job.dist_frame_count == 5000
-            assert job.elapsed == 3.14
+    """pipeline.transcode 必须真跑 transcode_stage 并把结果写回 job。
 
-    def test_transcode_failure_still_writes_back(self, pipeline, tmp_path):
-        fp = tmp_path / "b.mp4"
-        fp.write_text("x")
-        job = TranscodeJob(
+    delegation + write-back are verified against the REAL transcode_stage
+    (only its heavy ffmpeg/ffprobe deps are mocked), so the assertions prove
+    the real function populates job — not a self-assigned attribute.
+    """
+
+    @staticmethod
+    def _run_real(pipeline, job, progress):
+        def _fake_progress(cmd, total_duration, file_stem, **kwargs):
+            out = Path(cmd[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("transcoded")
+            return progress
+
+        with (
+            patch("src.pipeline.transcode_stage", side_effect=transcode_stage),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_fake_progress),
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder.get_video_codec", return_value="h264"),
+        ):
+            return pipeline.transcode(job)
+
+    def _make_job(self, pipeline, tmp_path, name):
+        fp = tmp_path / name
+        fp.write_text("fake video")
+        return TranscodeJob(
             pipeline=pipeline,
             filepath=fp,
             lib_input=Path("/in"),
             lib_output=Path("/out"),
-            lib_cache=Path("/cache"),
+            lib_cache=tmp_path / "cache",
         )
-        with patch("src.pipeline.transcode_stage", return_value=False) as mock_tc:
-            ok = pipeline.transcode(job)
-            assert ok is False
-            assert mock_tc.called
-            assert job.dist_frame_count is None
-            assert job.elapsed is None
+
+    def test_transcode_delegates_and_writes_back_on_success(self, pipeline, tmp_path):
+        job = self._make_job(pipeline, tmp_path, "a.mp4")
+        ok = self._run_real(pipeline, job, (0, "frame=  5000 fps=150.0\nframe=  5000 fps=149.2\n"))
+        assert ok is True
+        # 真实 transcode_stage 写回：帧数来自 ffmpeg 进度行，耗时非空，产物路径已定
+        assert job.dist_frame_count == 5000
+        assert job.elapsed is not None
+        assert job.output_path is not None
+        assert Path(job.output_path).name == "a.mkv"
+
+    def test_transcode_failure_returns_false_and_does_not_write_back(self, pipeline, tmp_path):
+        job = self._make_job(pipeline, tmp_path, "b.mp4")
+        ok = self._run_real(pipeline, job, (1, "encode error"))
+        assert ok is False
+        assert job.dist_frame_count is None
+        assert job.elapsed is None
 
     def test_transcode_forwards_keep_source_and_compute_vmaf(self, tmp_path, history):
         sentinel = MagicMock(return_value=88.0)
@@ -174,30 +197,23 @@ class TestTranscodePipelineTranscode:
             compute_vmaf=sentinel,
             keep_source=True,
         )
-        job = TranscodeJob(
-            pipeline=pl,
-            filepath=tmp_path / "c.mp4",
-            lib_input=Path("/in"),
-            lib_output=Path("/out"),
-            lib_cache=Path("/cache"),
-        )
-        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
-            pl.transcode(job)
-            mock_tc.assert_called_once_with(pl, job)
-            # keep_source / compute_vmaf 承载在 pipeline 上，由 transcode_stage 经 pipeline 读取
-            assert pl.keep_source is True
-            assert pl.compute_vmaf is sentinel
+        job = self._make_job(pl, tmp_path, "c.mp4")
+        ok = self._run_real(pl, job, (0, "frame=  100 fps=150.0\nframe=  100 fps=149.2\n"))
+        assert ok is True
+        # keep_source / compute_vmaf 承载在 pipeline 上，transcode_stage 经 pipeline 读取
+        assert pl.keep_source is True
+        assert pl.compute_vmaf is sentinel
+        assert job.dist_frame_count == 100
 
     def test_job_transcode_shortcut(self, pipeline, tmp_path):
         fp = tmp_path / "d.mp4"
-        fp.write_text("x")
-        job = pipeline.make_job(str(fp), {"input": "/in", "output": "/out", "cache": "/cache"})
-        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
-            assert job.transcode() is True
-            mock_tc.assert_called_once_with(pipeline, job)
-            # transcode_stage 成功时写回 dist_frame_count（真实逻辑）
-            job.dist_frame_count = 123
-            assert job.dist_frame_count == 123
+        fp.write_text("fake video")
+        job = pipeline.make_job(
+            str(fp), {"input": "/in", "output": "/out", "cache": str(tmp_path / "cache")}
+        )
+        ok = self._run_real(pipeline, job, (0, "frame=  123 fps=150.0\n"))
+        assert ok is True
+        assert job.dist_frame_count == 123
 
 
 class TestTranscodePipelinePostProcess:
