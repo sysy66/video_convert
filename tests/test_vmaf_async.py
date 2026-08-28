@@ -13,12 +13,13 @@ import pytest
 
 from src import config
 from src.filter import should_process
-from src.transcoder import (
+from src.pipeline import TranscodePipeline
+from src.transcoder import transcode_stage
+from src.vmaf_async import (
     _handle_vmaf_task,
     drain_vmaf_tasks,
     recover_pending_vmaf,
     start_vmaf_workers,
-    transcode,
     vmaf_tasks,
 )
 
@@ -68,19 +69,20 @@ class TestTranscodeAsync:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
-            patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
+            patch("src.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
         ):
-            result = transcode(
+            pipeline = TranscodePipeline(history, "/ffmpeg", "/ffprobe", keep_source=True)
+            job = pipeline.make_job(
                 str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
+                {
+                    "input": str(tmp_path),
+                    "output": str(tmp_path),
+                    "cache": self._cache(tmp_path),
+                },
             )
+            result = transcode_stage(pipeline, job)
 
-        assert result[0] is True
+        assert result is True
         assert input_file.exists()
         assert not (tmp_path / "test.mkv").exists()
         history.mark_pending_transcode.assert_called_once()
@@ -105,20 +107,21 @@ class TestTranscodeAsync:
         with (
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_progress_with_frames),
-            patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
+            patch("src.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
         ):
-            result = transcode(
+            pipeline = TranscodePipeline(history, "/ffmpeg", "/ffprobe", keep_source=True)
+            job = pipeline.make_job(
                 str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
+                {
+                    "input": str(tmp_path),
+                    "output": str(tmp_path),
+                    "cache": self._cache(tmp_path),
+                },
             )
+            result = transcode_stage(pipeline, job)
 
-        assert result[0] is True
-        assert result[1] == 5000
+        assert result is True
+        assert job.dist_frame_count == 5000
         assert vmaf_tasks.empty()
 
 
@@ -174,7 +177,7 @@ class TestHandleVmafTask:
         # NOT a permanent rejection which would block the file forever.
         # VMAF_MODE_SYNC forces the reject branch so the score-None path runs.
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.transcoder.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        with patch("src.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=None))
         assert source.exists()
         assert not output.exists()
@@ -249,10 +252,10 @@ class TestHandleVmafTask:
 
 class TestVmafWorkers:
     def test_start_is_idempotent(self):
-        with patch("src.transcoder.config.VMAF_WORKERS", 2):
+        with patch("src.config.VMAF_WORKERS", 2):
             start_vmaf_workers()
             start_vmaf_workers()
-        from src.transcoder import _vmaf_worker_threads
+        from src.vmaf_async import _vmaf_worker_threads
 
         assert len(_vmaf_worker_threads) == 2
 

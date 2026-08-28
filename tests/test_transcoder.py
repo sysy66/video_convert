@@ -9,7 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config
-from src.transcoder import _build_ffmpeg_cmd, _cleanup_temp, cleanup_stale_temp_dirs, transcode
+from src.ffmpeg_runner import _build_ffmpeg_cmd
+from src.pipeline import TranscodePipeline
+from src.temp_cleanup import _cleanup_temp, cleanup_stale_temp_dirs
+from src.transcoder import transcode_stage
 
 pytestmark = pytest.mark.unit
 
@@ -38,9 +41,9 @@ _VIDEO_ONLY = {
 
 
 class TestBuildFfmpegCmd:
-    """测试 _build_ffmpeg_cmd（自 ffmpeg_runner 重导出）：构建 QSV 转码命令行。
+    """测试 _build_ffmpeg_cmd（位于 ffmpeg_runner）：构建 QSV 转码命令行。
 
-    Unit tests for _build_ffmpeg_cmd (re-exported from ffmpeg_runner): the
+    Unit tests for _build_ffmpeg_cmd (defined in ffmpeg_runner): the
     QSV transcode command-line construction.
     """
 
@@ -254,6 +257,18 @@ class TestTranscode:
     def _work_dirs(self, tmp_path):
         return [d for d in (tmp_path / "cache").iterdir() if d.name.startswith(".work_")]
 
+    def _run_transcode(self, tmp_path, history, input_file):
+        pipeline = TranscodePipeline(history, "/ffmpeg", "/ffprobe", keep_source=True)
+        job = pipeline.make_job(
+            str(input_file),
+            {
+                "input": str(tmp_path),
+                "output": str(tmp_path),
+                "cache": self._cache(tmp_path),
+            },
+        )
+        return transcode_stage(pipeline, job), job
+
     def test_success_keeps_output_in_cache(self, tmp_path):
         # 编码阶段成功后：产物保留在 cache 临时目录，源文件不动，返回三元组。
         input_file = tmp_path / "test.mp4"
@@ -265,20 +280,11 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            result, job = self._run_transcode(tmp_path, history, input_file)
 
-        success, frame_count, elapsed = result
-        assert success is True
-        assert frame_count is None
-        assert elapsed is not None
+        assert result is True
+        assert job.dist_frame_count is None
+        assert job.elapsed is not None
         assert input_file.exists()
         work_dirs = self._work_dirs(tmp_path)
         assert len(work_dirs) == 1
@@ -295,15 +301,7 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            self._run_transcode(tmp_path, history, input_file)
 
         history.mark_pending_transcode.assert_called_once()
         out_path = history.mark_pending_transcode.call_args[0][1]
@@ -329,18 +327,10 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_progress_with_frames),
         ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            result, job = self._run_transcode(tmp_path, history, input_file)
 
-        assert result[0] is True
-        assert result[1] == 5000
+        assert result is True
+        assert job.dist_frame_count == 5000
 
     def test_ffmpeg_failure_cleans_up(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -352,17 +342,9 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(1, "encode error")),
         ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            result, job = self._run_transcode(tmp_path, history, input_file)
 
-        assert result == (False, None, None)
+        assert result is False
         assert input_file.exists()
         history.mark_failed.assert_called_once()
         assert len(self._work_dirs(tmp_path)) == 0
@@ -377,17 +359,9 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")),
         ):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            result, job = self._run_transcode(tmp_path, history, input_file)
 
-        assert result == (False, None, None)
+        assert result is False
         history.mark_failed.assert_called_once()
 
     def test_probe_failure_marks_failed(self, tmp_path):
@@ -397,17 +371,9 @@ class TestTranscode:
         history = MagicMock()
 
         with patch("src.ffmpeg_runner.get_streams_info", return_value=None):
-            result = transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            result, job = self._run_transcode(tmp_path, history, input_file)
 
-        assert result == (False, None, None)
+        assert result is False
         history.mark_failed.assert_called_once()
         history.mark_done.assert_not_called()
 
@@ -421,15 +387,7 @@ class TestTranscode:
             patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
             patch("src.transcoder._run_ffmpeg_with_progress", return_value=(0, "")) as mock_run,
         ):
-            transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            self._run_transcode(tmp_path, history, input_file)
 
         assert mock_run.call_args[1]["timeout"] == config.CODEC_TIMEOUT
 
@@ -452,15 +410,7 @@ class TestTranscode:
             ) as mock_build,
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=self._fake_progress),
         ):
-            transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            self._run_transcode(tmp_path, history, input_file)
 
         _, kwargs = mock_build.call_args
         assert kwargs.get("sw_decode_fallback") is True
@@ -489,15 +439,7 @@ class TestTranscode:
                 side_effect=[(1, "Error initializing filters"), (1, "still failing"), (1, "nope")],
             ),
         ):
-            transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            self._run_transcode(tmp_path, history, input_file)
 
         build_flags = [
             c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")
@@ -528,15 +470,7 @@ class TestTranscode:
                 side_effect=[(1, "some encode error"), (1, "still failing")],
             ),
         ):
-            transcode(
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                self._cache(tmp_path),
-            )
+            self._run_transcode(tmp_path, history, input_file)
 
         build_flags = [
             c.kwargs.get("sw_scale_fallback") or c.kwargs.get("sw_decode_fallback")

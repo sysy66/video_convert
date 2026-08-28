@@ -8,56 +8,56 @@ from unittest.mock import patch
 
 import pytest
 
-from src import transcoder
+from src import ffmpeg_runner, path_utils, process_guard, temp_cleanup
 
 pytestmark = pytest.mark.unit
 
 
 def _clear_pids():
-    with transcoder._active_ffmpeg_lock:
-        transcoder._active_ffmpeg_pids.clear()
+    with process_guard._active_ffmpeg_lock:
+        process_guard._active_ffmpeg_pids.clear()
 
 
 class TestFfmpegPidRegistry:
     def test_register_adds_pid(self):
         _clear_pids()
-        transcoder.register_ffmpeg_pid(123)
-        assert 123 in transcoder._active_ffmpeg_pids
+        process_guard.register_ffmpeg_pid(123)
+        assert 123 in process_guard._active_ffmpeg_pids
 
     def test_unregister_removes_pid(self):
         _clear_pids()
-        transcoder.register_ffmpeg_pid(123)
-        transcoder.unregister_ffmpeg_pid(123)
-        assert 123 not in transcoder._active_ffmpeg_pids
+        process_guard.register_ffmpeg_pid(123)
+        process_guard.unregister_ffmpeg_pid(123)
+        assert 123 not in process_guard._active_ffmpeg_pids
 
     def test_unregister_unknown_is_idempotent(self):
         _clear_pids()
-        transcoder.unregister_ffmpeg_pid(999)
-        assert transcoder._active_ffmpeg_pids == set()
+        process_guard.unregister_ffmpeg_pid(999)
+        assert process_guard._active_ffmpeg_pids == set()
 
 
 class TestKillActiveFfmpeg:
     def test_no_pids_returns_early(self):
         _clear_pids()
         with patch("src.process_guard.os.kill") as mock_kill:
-            transcoder.kill_active_ffmpeg()
+            process_guard.kill_active_ffmpeg()
         mock_kill.assert_not_called()
 
     def test_terminate_then_kill_after_sleep(self):
         _clear_pids()
-        transcoder.register_ffmpeg_pid(123)
+        process_guard.register_ffmpeg_pid(123)
         with (
             patch("src.process_guard.os.kill") as mock_kill,
             patch("src.process_guard._time.sleep") as mock_sleep,
         ):
-            transcoder.kill_active_ffmpeg()
+            process_guard.kill_active_ffmpeg()
         mock_kill.assert_any_call(123, signal.SIGTERM)
         mock_kill.assert_any_call(123, signal.SIGKILL)
         mock_sleep.assert_called_once_with(2)
 
     def test_process_lookup_error_ignored(self):
         _clear_pids()
-        transcoder.register_ffmpeg_pid(123)
+        process_guard.register_ffmpeg_pid(123)
 
         def raise_lookup(*_a):
             raise ProcessLookupError
@@ -66,11 +66,11 @@ class TestKillActiveFfmpeg:
             patch("src.process_guard.os.kill", side_effect=raise_lookup),
             patch("src.process_guard._time.sleep"),
         ):
-            transcoder.kill_active_ffmpeg()
+            process_guard.kill_active_ffmpeg()
 
     def test_oserror_logs_warning(self):
         _clear_pids()
-        transcoder.register_ffmpeg_pid(123)
+        process_guard.register_ffmpeg_pid(123)
 
         def raise_oserror(*_a):
             raise OSError("permission denied")
@@ -79,86 +79,86 @@ class TestKillActiveFfmpeg:
             patch("src.process_guard.os.kill", side_effect=raise_oserror),
             patch("src.process_guard._time.sleep"),
         ):
-            transcoder.kill_active_ffmpeg()
+            process_guard.kill_active_ffmpeg()
 
 
 class TestUniquePath:
     def test_returns_path_when_free(self, tmp_path):
         p = tmp_path / "a.mkv"
-        assert transcoder._unique_path(p) == p
+        assert path_utils._unique_path(p) == p
 
     def test_appends_counter_when_exists(self, tmp_path):
         p = tmp_path / "a.mkv"
         p.write_text("x")
         (tmp_path / "a.1.mkv").write_text("y")
-        assert transcoder._unique_path(p) == tmp_path / "a.2.mkv"
+        assert path_utils._unique_path(p) == tmp_path / "a.2.mkv"
 
     def test_increments_until_free(self, tmp_path):
         p = tmp_path / "a.mkv"
         p.write_text("x")
         for i in range(1, 5):
             (tmp_path / f"a.{i}.mkv").write_text("y")
-        assert transcoder._unique_path(p) == tmp_path / "a.5.mkv"
+        assert path_utils._unique_path(p) == tmp_path / "a.5.mkv"
 
 
 class TestFormatSize:
     def test_bytes(self):
-        assert transcoder._format_size(512) == "512.0 B"
+        assert path_utils._format_size(512) == "512.0 B"
 
     def test_kilobytes(self):
-        assert transcoder._format_size(2048) == "2.0 KB"
+        assert path_utils._format_size(2048) == "2.0 KB"
 
     def test_megabytes(self):
-        assert transcoder._format_size(5 * 1024**2) == "5.0 MB"
+        assert path_utils._format_size(5 * 1024**2) == "5.0 MB"
 
     def test_gigabytes(self):
-        assert transcoder._format_size(3 * 1024**3) == "3.0 GB"
+        assert path_utils._format_size(3 * 1024**3) == "3.0 GB"
 
     def test_terabytes(self):
-        assert transcoder._format_size(2 * 1024**4) == "2.0 TB"
+        assert path_utils._format_size(2 * 1024**4) == "2.0 TB"
 
     def test_negative_values(self):
-        assert transcoder._format_size(-1024) == "-1.0 KB"
+        assert path_utils._format_size(-1024) == "-1.0 KB"
 
 
 class TestRandomSuffix:
     def test_default_length(self):
-        assert len(transcoder._random_suffix()) == 6
+        assert len(path_utils._random_suffix()) == 6
 
     def test_custom_length(self):
-        assert len(transcoder._random_suffix(12)) == 12
+        assert len(path_utils._random_suffix(12)) == 12
 
     def test_charset_limited(self):
         import string
 
-        suffix = transcoder._random_suffix(100)
+        suffix = path_utils._random_suffix(100)
         allowed = set(string.ascii_lowercase + string.digits)
         assert all(c in allowed for c in suffix)
 
 
 class TestParseProgressTime:
     def test_parses_hms(self):
-        assert transcoder._parse_progress_time("time=00:01:30.5") == 90.5
+        assert ffmpeg_runner._parse_progress_time("time=00:01:30.5") == 90.5
 
     def test_parses_hours(self):
-        assert transcoder._parse_progress_time("time=01:00:00") == 3600.0
+        assert ffmpeg_runner._parse_progress_time("time=01:00:00") == 3600.0
 
     def test_no_match_returns_none(self):
-        assert transcoder._parse_progress_time("frame=123 fps=30.0") is None
+        assert ffmpeg_runner._parse_progress_time("frame=123 fps=30.0") is None
 
     def test_does_not_match_plain_seconds(self):
-        assert transcoder._parse_progress_time("time=123.5") is None
+        assert ffmpeg_runner._parse_progress_time("time=123.5") is None
 
 
 class TestParseProgressFps:
     def test_parses_fps(self):
-        assert transcoder._parse_progress_fps("fps=30.5") == 30.5
+        assert ffmpeg_runner._parse_progress_fps("fps=30.5") == 30.5
 
     def test_parses_whitespace(self):
-        assert transcoder._parse_progress_fps("fps=  15.0") == 15.0
+        assert ffmpeg_runner._parse_progress_fps("fps=  15.0") == 15.0
 
     def test_no_match_returns_none(self):
-        assert transcoder._parse_progress_fps("time=00:00:01") is None
+        assert ffmpeg_runner._parse_progress_fps("time=00:00:01") is None
 
 
 class TestParseFrameCountFromStderr:
@@ -172,21 +172,21 @@ class TestParseFrameCountFromStderr:
                 "video:216315kB audio:123kB",
             ]
         )
-        assert transcoder.parse_frame_count_from_stderr(stderr) == 216315
+        assert ffmpeg_runner.parse_frame_count_from_stderr(stderr) == 216315
 
     def test_spaces_after_equals(self):
-        assert transcoder.parse_frame_count_from_stderr("frame= 12345 fps=30.0\n") == 12345
+        assert ffmpeg_runner.parse_frame_count_from_stderr("frame= 12345 fps=30.0\n") == 12345
 
     def test_frame_na_ignored(self):
         # "frame=N/A"（avformat 统计）行不匹配数字，也不影响后续解析
         stderr = "frame=N/A\nframe=123\n"
-        assert transcoder.parse_frame_count_from_stderr(stderr) == 123
+        assert ffmpeg_runner.parse_frame_count_from_stderr(stderr) == 123
 
     def test_no_frame_line_returns_none(self):
-        assert transcoder.parse_frame_count_from_stderr("nothing here\n") is None
+        assert ffmpeg_runner.parse_frame_count_from_stderr("nothing here\n") is None
 
     def test_empty_stderr_returns_none(self):
-        assert transcoder.parse_frame_count_from_stderr("") is None
+        assert ffmpeg_runner.parse_frame_count_from_stderr("") is None
 
 
 class TestRmtreeRobust:
@@ -194,7 +194,7 @@ class TestRmtreeRobust:
         d = tmp_path / "work"
         d.mkdir()
         (d / "f").write_text("x")
-        assert transcoder._rmtree_robust(d) is True
+        assert temp_cleanup._rmtree_robust(d) is True
         assert not d.exists()
 
     def test_falls_back_to_manual_removal(self, tmp_path):
@@ -206,7 +206,7 @@ class TestRmtreeRobust:
             raise OSError("busy")
 
         with patch("shutil.rmtree", side_effect=fail_once):
-            assert transcoder._rmtree_robust(d) is True
+            assert temp_cleanup._rmtree_robust(d) is True
         assert not d.exists()
 
     def test_all_strategies_fail_returns_false(self, tmp_path):
@@ -224,7 +224,7 @@ class TestRmtreeRobust:
                 side_effect=OSError("no rm"),
             ),
         ):
-            assert transcoder._rmtree_robust(d) is False
+            assert temp_cleanup._rmtree_robust(d) is False
         assert d.exists()
 
     def test_file_entry_handled(self, tmp_path):
@@ -232,7 +232,7 @@ class TestRmtreeRobust:
         d.mkdir()
         (d / "f").write_text("x")
         with patch("shutil.rmtree", side_effect=[OSError("busy"), None]):
-            assert transcoder._rmtree_robust(d) is True
+            assert temp_cleanup._rmtree_robust(d) is True
 
 
 class TestSummarizeErrorStderr:
@@ -243,20 +243,20 @@ class TestSummarizeErrorStderr:
             "frame=  185 fps=185 q=-0.0 size=     251KiB\n"
             "Error while decoding stream\n"
         )
-        result = transcoder._summarize_error_stderr(stderr)
+        result = ffmpeg_runner._summarize_error_stderr(stderr)
         assert "frame=" not in result
         assert "ffmpeg version n8.1.2" in result
         assert "Error while decoding stream" in result
 
     def test_keeps_short_output_unchanged(self):
         stderr = "line one\nline two\n"
-        assert transcoder._summarize_error_stderr(stderr) == "line one\nline two"
+        assert ffmpeg_runner._summarize_error_stderr(stderr) == "line one\nline two"
 
     def test_truncates_long_output_keeps_head_and_tail(self):
         head = [f"head-{i}" for i in range(50)]
         tail = [f"tail-{i}" for i in range(80)]
         stderr = "\n".join(head + tail)
-        result = transcoder._summarize_error_stderr(stderr)
+        result = ffmpeg_runner._summarize_error_stderr(stderr)
         lines = result.splitlines()
         assert len(lines) == 100
         assert lines[0] == "head-0"
@@ -264,7 +264,7 @@ class TestSummarizeErrorStderr:
         assert any("truncated" in line for line in lines)
 
     def test_empty_stderr_returns_empty(self):
-        assert transcoder._summarize_error_stderr("") == ""
+        assert ffmpeg_runner._summarize_error_stderr("") == ""
 
     def test_whitespace_only_stderr_returns_empty(self):
-        assert transcoder._summarize_error_stderr("   \n  \n") == ""
+        assert ffmpeg_runner._summarize_error_stderr("   \n  \n") == ""
