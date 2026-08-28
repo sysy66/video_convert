@@ -11,12 +11,12 @@ import pytest
 
 from src import config
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
+from src.pipeline import TranscodePipeline
 from src.post_transcode import post_transcode
-from src.transcoder import (
+from src.vmaf_async import (
     _handle_vmaf_task,
     drain_vmaf_tasks,
     start_vmaf_workers,
-    transcode,
     vmaf_tasks,
 )
 
@@ -72,18 +72,24 @@ def _run_pipeline(env, ffmpeg, ffprobe, compute_vmaf=None):
     Run the two-stage pipeline: transcode (encoding only) then post_transcode
     (quality gate, placement, final state).
     """
-    ok, dist_frame_count, elapsed = transcode(
-        str(env["src"]),
+    pipeline = TranscodePipeline(
         env["history"],
         ffmpeg,
         ffprobe,
-        str(env["input_dir"]),
-        str(env["output_dir"]),
-        str(env["cache_dir"]),
+        compute_vmaf=compute_vmaf,
     )
+    job = pipeline.make_job(
+        str(env["src"]),
+        {
+            "input": str(env["input_dir"]),
+            "output": str(env["output_dir"]),
+            "cache": str(env["cache_dir"]),
+        },
+    )
+    ok = job.transcode()
     assert ok, "transcode 编码阶段失败"
     done = post_transcode(
-        {"dist_frame_count": dist_frame_count, "elapsed": elapsed},
+        {"dist_frame_count": job.dist_frame_count, "elapsed": job.elapsed},
         str(env["src"]),
         env["history"],
         ffmpeg,
@@ -94,7 +100,7 @@ def _run_pipeline(env, ffmpeg, ffprobe, compute_vmaf=None):
         compute_vmaf=compute_vmaf,
     )
     assert done, "post_transcode 后处理阶段失败"
-    return dist_frame_count
+    return job.dist_frame_count
 
 
 class TestTranscodeQsv:

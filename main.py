@@ -21,16 +21,11 @@ from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.filter import should_process, should_submit
 from src.history import History
 from src.pipeline import TranscodePipeline
+from src.process_guard import kill_active_ffmpeg
 from src.quality import cleanup_vmaf_logs
-from src.transcoder import (
-    active_temp_dirs_snapshot,
-    cleanup_stale_temp_dirs,
-    drain_vmaf_tasks,
-    kill_active_ffmpeg,
-    recover_pending_vmaf,
-    start_vmaf_workers,
-)
+from src.temp_cleanup import active_temp_dirs_snapshot, cleanup_stale_temp_dirs
 from src.validation import validate_config
+from src.vmaf_async import drain_vmaf_tasks, recover_pending_vmaf, start_vmaf_workers
 from src.walker import walk_directory
 
 log = logging.getLogger(__name__)
@@ -298,8 +293,7 @@ def main_loop():
                 job.filepath, job.pipeline.history, config.SKIP_CODECS, config.FFPROBE_PATH
             ):
                 return
-            result = job.transcode()
-            if result[0]:
+            if job.transcode():
                 post_pool.submit(post_process, job)
             else:
                 _pending.discard(job.key)

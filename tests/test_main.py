@@ -368,7 +368,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode"),
+            patch("src.pipeline.transcode_stage"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -387,8 +387,8 @@ class TestMainLoop:
         def yield_file(*_a, **_kw):
             return iter([Path("/a.mp4")])
 
-        def fake_transcode(*args, **_kw):
-            results.append(args[0])
+        def fake_transcode(pipeline, job, *args, **_kw):
+            results.append(job.filepath)
             main._running = False
             return True
 
@@ -396,7 +396,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=yield_file),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode", side_effect=fake_transcode) as mock_transcode,
+            patch("src.pipeline.transcode_stage", side_effect=fake_transcode) as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -428,7 +428,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode"),
+            patch("src.pipeline.transcode_stage", return_value=False),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -467,7 +467,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode"),
+            patch("src.pipeline.transcode_stage", return_value=False),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -494,7 +494,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode"),
+            patch("src.pipeline.transcode_stage"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -522,7 +522,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode"),
+            patch("src.pipeline.transcode_stage"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -544,7 +544,7 @@ class TestMainLoop:
         finished = threading.Event()
         second_scan_observed = []
 
-        def fake_transcode(*args, **_kw):
+        def fake_transcode(pipeline, job, *args, **_kw):
             started.set()
             time.sleep(0.2)
             finished.set()
@@ -561,7 +561,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -577,8 +577,8 @@ class TestMainLoop:
         calls = []
         walk_calls = []
 
-        def fake_transcode(*args, **_kw):
-            calls.append(args[0])
+        def fake_transcode(pipeline, job, *args, **_kw):
+            calls.append(job.filepath)
             time.sleep(0.2)
 
         def fake_walk(*_a, **_kw):
@@ -595,7 +595,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -617,7 +617,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=False),
             patch("main.should_process"),
-            patch("src.pipeline.transcode") as mock_transcode,
+            patch("src.pipeline.transcode_stage") as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -634,8 +634,8 @@ class TestMainLoop:
         started = threading.Event()
         walk_calls = []
 
-        def fake_transcode(*args, **_kw):
-            calls.append(args[0])
+        def fake_transcode(pipeline, job, *args, **_kw):
+            calls.append(job.filepath)
             started.set()
             time.sleep(0.2)
 
@@ -653,7 +653,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode", side_effect=fake_transcode),
+            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),

