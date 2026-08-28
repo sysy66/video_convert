@@ -8,6 +8,8 @@ from src.path_utils import _final_dest_path, _format_size
 from src.probe import get_frame_count
 from src.quality import vmaf_verdict
 from src.temp_cleanup import (
+    _active_temp_dirs,
+    _active_temp_dirs_lock,
     _cleanup_temp,
 )
 from src.vmaf_async import (
@@ -90,6 +92,7 @@ def post_transcode(
              (True if processing completed, including rejections; False if failed)
     :rtype: bool
     """
+    temp_dir = None
     try:
         dist_frame_count = transcode_info["dist_frame_count"]
         elapsed = transcode_info["elapsed"]
@@ -349,3 +352,7 @@ def post_transcode(
         except Exception:
             log.exception("mark_failed failed for %s", filepath)
         return False
+    finally:
+        if temp_dir is not None:
+            with _active_temp_dirs_lock:
+                _active_temp_dirs.discard(str(temp_dir))

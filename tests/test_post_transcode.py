@@ -12,6 +12,11 @@ import pytest
 
 from src import config
 from src.post_transcode import post_transcode
+from src.temp_cleanup import (
+    _active_temp_dirs,
+    _active_temp_dirs_lock,
+    active_temp_dirs_snapshot,
+)
 from src.vmaf_async import drain_vmaf_tasks, vmaf_tasks
 
 pytestmark = pytest.mark.unit
@@ -355,3 +360,33 @@ class TestPostTranscodeAsync:
         history.mark_await_postprocess.assert_called_once_with(
             str(input_file), str(output_dir / "sub" / "test.mkv"), None
         )
+
+
+class TestPostTranscodeActiveTempDir:
+    """post_transcode 搬移完成后必须把 temp_dir 从活跃集移除。
+
+    post_transcode owns the temp dir's lifecycle: it must discard it from the
+    active set after moving the product out, so the protection granted by
+    transcode_stage's success path is released exactly once the file is safe.
+    """
+
+    def test_removes_temp_dir_from_active_set_after_accept(self, tmp_path):
+        input_file, output, history, info = _make(tmp_path)
+        temp_dir = str(output.parent)
+        with _active_temp_dirs_lock:
+            _active_temp_dirs.add(temp_dir)
+        assert temp_dir in active_temp_dirs_snapshot()
+
+        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_OFF):
+            result = post_transcode(
+                info,
+                str(input_file),
+                history,
+                "/ffmpeg",
+                "/ffprobe",
+                str(tmp_path),
+                str(tmp_path),
+                str(tmp_path / "cache"),
+            )
+        assert result is True
+        assert temp_dir not in active_temp_dirs_snapshot()

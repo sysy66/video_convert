@@ -11,7 +11,13 @@ import pytest
 from src import config
 from src.ffmpeg_runner import _build_ffmpeg_cmd
 from src.pipeline import TranscodePipeline
-from src.temp_cleanup import _cleanup_temp, cleanup_stale_temp_dirs
+from src.temp_cleanup import (
+    _active_temp_dirs,
+    _active_temp_dirs_lock,
+    _cleanup_temp,
+    active_temp_dirs_snapshot,
+    cleanup_stale_temp_dirs,
+)
 from src.transcoder import transcode_stage
 
 pytestmark = pytest.mark.unit
@@ -524,3 +530,57 @@ class TestCleanupStaleTempDirs:
 
         assert d1.exists()
         assert not d2.exists()
+
+
+class TestTranscodeActiveTempDir:
+    """transcode_stage 成功后 temp_dir 必须仍留在活跃集，直到 post_transcode 搬移完成。
+
+    After a successful transcode_stage the temp dir must remain in the active
+    set (protected from the stale-cleanup scan pass) until post_transcode moves
+    the product out — otherwise cleanup can delete the product while it sits
+    queued in the post_pool.
+    """
+
+    def _run(self, tmp_path, history, input_file, run_return):
+        with _active_temp_dirs_lock:
+            _active_temp_dirs.clear()
+
+        def _fake(cmd, total_duration, file_stem, **kwargs):
+            out = Path(cmd[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("transcoded")
+            return run_return
+
+        with (
+            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_fake),
+        ):
+            pipeline = TranscodePipeline(history, "/ffmpeg", "/ffprobe", keep_source=True)
+            job = pipeline.make_job(
+                str(input_file),
+                {
+                    "input": str(tmp_path),
+                    "output": str(tmp_path),
+                    "cache": str(tmp_path / "cache"),
+                },
+            )
+            return transcode_stage(pipeline, job), job
+
+    def test_success_keeps_temp_dir_active(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        ok, job = self._run(tmp_path, history, input_file, (0, "transcoded"))
+        assert ok is True
+        assert str(job.output_path.parent) in active_temp_dirs_snapshot()
+
+    def test_failure_removes_temp_dir_active(self, tmp_path):
+        input_file = tmp_path / "test.mp4"
+        input_file.write_text("fake video")
+        history = MagicMock()
+
+        ok, job = self._run(tmp_path, history, input_file, (1, "encode error"))
+        assert ok is False
+        cache = str(tmp_path / "cache")
+        assert not any(cache in p for p in active_temp_dirs_snapshot())

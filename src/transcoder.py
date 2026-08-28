@@ -73,6 +73,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     output_path = temp_dir / output_filename
     pipeline.history.mark_pending_transcode(str(job.filepath), str(output_path))
 
+    success = False
     try:
         # 转码侧不产生任何帧率规整参数；对齐只在打分侧按帧序号进行。
 
@@ -238,6 +239,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         job.output_path = output_path
         job.dist_frame_count = dist_frame_count
         job.elapsed = elapsed
+        success = True
         return True
 
     except subprocess.TimeoutExpired:
@@ -253,5 +255,6 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         pipeline.history.mark_failed(str(job.filepath), str(e))
         return False
     finally:
-        with _active_temp_dirs_lock:
-            _active_temp_dirs.discard(str(temp_dir))
+        if not success:
+            with _active_temp_dirs_lock:
+                _active_temp_dirs.discard(str(temp_dir))
