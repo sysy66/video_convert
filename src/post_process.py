@@ -30,8 +30,8 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
       0. 从 history 取回产物路径并校验存在性，计算压缩比 ratio
       1. ratio 超标直接拒绝（必拒，省去昂贵的采样打分），保留源文件
       2. 异步模式：产物复制到最终目录但不删源，投入 vmaf_tasks 由后台打分
-         同步模式：调用 compute_vmaf 打分，按 verdict 决定接受/拒绝/重试
-         - 关停期间打分被中断（score=None 且 is_shutting_down）不误标 failed，
+         同步模式：调用 compute_vmaf 打分，按 verdict 决定接受/拒绝
+         - 关停期间打分被中断（score=None 且 is_shutting_down）不记终态，
            转为 await_postprocess 待下次启动 recover 重打分
       3. 接受：删除源文件（除非 keep_source）；拒绝：保留源文件；均记 mark_done
       4. 任何未预期异常统一 mark_failed 兜底
@@ -46,7 +46,7 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
       2. Async mode: copy output into place, queue for background VMAF scoring.
          Sync mode: score via compute_vmaf; on shutdown-interrupted scoring
          (score=None and is_shutting_down) defer as await_postprocess instead of
-         marking failed
+         recording a terminal state
       3. Accept: delete source unless keep_source; reject: keep source;
          both recorded via mark_done
       4. Any unexpected exception is caught and recorded as failed
@@ -180,73 +180,54 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
             job.vmaf_score = vmaf_score  # 回填 Job，打分结果随任务对象可查
 
         # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
-        # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
-        # 记 failed 永久排除，仅 --retry-failed 启动时手动重试。
+        # sync/async 一致：打分失败(None)与极端低分按 verdict 走 reject（保留源文件，
+        # 记 rejected）；仅关停中断的打分延后，不记终态。
         if config.VMAF_MODE != config.VMAF_MODE_OFF:
             verdict = vmaf_verdict(vmaf_score, ratio)
         else:
             verdict = "accept"
 
-        if verdict == "retry":
-            if vmaf_score is None and is_shutting_down():
-                # 关停中被中断/失败的打分：非真实质量问题，转 await_postprocess
-                # 保留产物供下次启动 recover 重新打分，不误标 failed。
-                # Scoring interrupted by shutdown: keep the output as pending and
-                # rescore it on next startup instead of marking it failed.
-                final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-                if final_path.name != output_filename:
-                    log.info(
-                        "DEST EXISTS: using %s instead of %s", final_path.name, output_filename
-                    )
-                try:
-                    shutil.copyfile(str(output_path), str(final_path))
-                    output_path.unlink()
-                    _cleanup_temp(temp_dir)
-                except OSError as e:
-                    log.error("FILE MOVE FAILED (async): %s — %s", final_path.name, e)
-                    _cleanup_temp(temp_dir)
-                    history.mark_failed(str(filepath), f"File move failed: {e}")
-                    return False
-                history.mark_await_postprocess(str(filepath), str(final_path), dist_frame_count)
-                safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-                vmaf_tasks.put(
-                    (
-                        str(filepath),
-                        str(final_path),
-                        ratio,
-                        safe_stem,
-                        history,
-                        elapsed,
-                        keep_source,
-                        dist_frame_count,
-                        ffprobe_path,
-                    )
-                )
-                log.info(
-                    "VMAF DEFERRED (sync, shutting down): %s kept pending for rescore",
-                    final_path.name,
-                )
-                return True
-            _cleanup_temp(temp_dir)
-            if vmaf_score is None:
-                history.mark_failed(str(filepath), "VMAF scoring failed")
-                log.warning(
-                    "VMAF SCORING FAILED (sync): %s (ratio %.1f%%, marking failed)",
-                    filepath.name,
-                    ratio * 100,
-                )
-            else:
-                history.mark_failed(
+        # verdict 只剩 accept/reject；关停中断的打分与 verdict 无关，单独豁免
+        # (b68e5b6 语义保留：非真实质量问题不记终态，产物留待下次启动重打分)。
+        # Only accept/reject remain; shutdown-interrupted scoring is exempted
+        # independently of the verdict (keeps the b68e5b6 semantics).
+        if vmaf_score is None and is_shutting_down():
+            # 关停中被中断/失败的打分：非真实质量问题，转 await_postprocess
+            # 保留产物供下次启动 recover 重新打分，不记终态。
+            # Scoring interrupted by shutdown: keep the output as pending and
+            # rescore it on next startup instead of recording a terminal state.
+            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
+            if final_path.name != output_filename:
+                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
+            try:
+                shutil.copyfile(str(output_path), str(final_path))
+                output_path.unlink()
+                _cleanup_temp(temp_dir)
+            except OSError as e:
+                log.error("FILE MOVE FAILED (async): %s — %s", final_path.name, e)
+                _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), f"File move failed: {e}")
+                return False
+            history.mark_await_postprocess(str(filepath), str(final_path), dist_frame_count)
+            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+            vmaf_tasks.put(
+                (
                     str(filepath),
-                    f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",  # noqa: E501
+                    str(final_path),
+                    ratio,
+                    safe_stem,
+                    history,
+                    elapsed,
+                    keep_source,
+                    dist_frame_count,
+                    ffprobe_path,
                 )
-                log.warning(
-                    "VMAF EXTREME LOW (sync): %s (VMAF %.2f, ratio %.1f%%, marking failed)",
-                    filepath.name,
-                    vmaf_score,
-                    ratio * 100,
-                )
-            return False
+            )
+            log.info(
+                "VMAF DEFERRED (sync, shutting down): %s kept pending for rescore",
+                final_path.name,
+            )
+            return True
 
         if verdict == "accept":
             final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)

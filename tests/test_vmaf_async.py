@@ -162,27 +162,23 @@ class TestHandleVmafTask:
         assert not output.exists()
         history.mark_done.assert_called_once_with(str(source), None, vmaf_score=60.0, rejected=True)
 
-    def test_extreme_low_score_marks_failed_for_retry(self, tmp_path):
+    def test_extreme_low_score_rejects(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)
         _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=45.0))
         assert source.exists()
         assert not output.exists()
-        history.mark_done.assert_not_called()
-        history.mark_failed.assert_called_once_with(
-            str(source), "VMAF 45.00 below 60, input may be incomplete"
-        )
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=45.0, rejected=True)
 
-    def test_score_none_marks_failed_for_retry(self, tmp_path):
-        # VMAF scoring failed (e.g. interrupted by shutdown / decode error) → retry,
-        # NOT a permanent rejection which would block the file forever.
-        # VMAF_MODE_SYNC forces the reject branch so the score-None path runs.
+    def test_score_none_rejects(self, tmp_path):
+        # VMAF scoring failed (e.g. decode error) → reject, keeping the source.
+        # Shutdown-interrupted scoring is deferred separately (see below).
         source, output, history, task = self._setup_files(tmp_path)
-        with patch("src.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=None))
+        _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=None))
         assert source.exists()
         assert not output.exists()
-        history.mark_done.assert_not_called()
-        history.mark_failed.assert_called_once_with(str(source), "VMAF scoring failed")
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=None, rejected=True)
 
     def test_score_none_during_shutdown_defers(self, tmp_path):
         # 关停中打分失败（None）：保持 pending 待下次启动重打分，不标 failed、不删产物。
@@ -194,17 +190,15 @@ class TestHandleVmafTask:
         history.mark_failed.assert_not_called()
         history.mark_done.assert_not_called()
 
-    def test_extreme_low_during_shutdown_still_fails(self, tmp_path):
-        # 极端低分是真实质量异常，即便关停也照常标 failed（仅 None 中断才延后）。
+    def test_extreme_low_during_shutdown_rejects(self, tmp_path):
+        # 极端低分是真实质量判定，即便关停也照常拒绝（仅 None 中断才延后）。
         source, output, history, task = self._setup_files(tmp_path)
         with patch("src.vmaf_async._shutting_down", True):
             _handle_vmaf_task(task, compute_vmaf=MagicMock(return_value=45.0))
         assert source.exists()
         assert not output.exists()
-        history.mark_failed.assert_called_once_with(
-            str(source), "VMAF 45.00 below 60, input may be incomplete"
-        )
-        history.mark_done.assert_not_called()
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=45.0, rejected=True)
 
     def test_accept_missing_output_marks_failed(self, tmp_path):
         source, output, history, task = self._setup_files(tmp_path)

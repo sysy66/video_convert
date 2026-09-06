@@ -149,15 +149,20 @@ class TestPostTranscodeSync:
             str(input_file), None, vmaf_score=None, rejected=True
         )
 
-    def test_score_failed_marks_failed_for_retry(self, tmp_path):
+    def test_score_failed_rejects(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
             tmp_path, compute_vmaf=MagicMock(return_value=None)
         )
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result = post_process_stage(pipeline, job)
-        assert result is False
-        history.mark_failed.assert_called_once_with(str(input_file), "VMAF scoring failed")
-        history.mark_done.assert_not_called()
+        assert result is True
+        assert input_file.exists()
+        assert not output.exists()
+        assert job.vmaf_score is None
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), None, vmaf_score=None, rejected=True
+        )
 
     def test_score_failed_during_shutdown_defers(self, tmp_path):
         # 关停中打分失败（None）：转 await_postprocess 保留产物，不标 failed。
@@ -176,19 +181,20 @@ class TestPostTranscodeSync:
         assert not vmaf_tasks.empty()
         vmaf_tasks.get_nowait()
 
-    def test_extreme_low_marks_failed_for_retry(self, tmp_path):
+    def test_extreme_low_rejects(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
             tmp_path, compute_vmaf=MagicMock(return_value=55.0)
         )
-        with (
-            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_process.config.VMAF_EXTREME_LOW", 60),
-        ):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result = post_process_stage(pipeline, job)
-        assert result is False
-        history.mark_failed.assert_called_once()
-        assert "below 60" in history.mark_failed.call_args[0][1]
-        history.mark_done.assert_not_called()
+        assert result is True
+        assert input_file.exists()
+        assert not output.exists()
+        assert job.vmaf_score == 55.0
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), None, vmaf_score=55.0, rejected=True
+        )
 
     def test_accept_deletes_source_and_moves(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(

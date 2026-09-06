@@ -19,37 +19,33 @@ pytestmark = pytest.mark.unit
 
 
 class TestVmafVerdict:
-    def test_none_score_retries(self):
-        assert vmaf_verdict(None, 0.5) == "retry"
+    def test_none_score_rejects(self):
+        assert vmaf_verdict(None, 0.5) == "reject"
 
-    def test_extreme_low_score_retries(self):
-        with patch("src.quality.config.VMAF_EXTREME_LOW", 60):
-            assert vmaf_verdict(55.0, 0.5) == "retry"
-            assert vmaf_verdict(59.99, 1.0) == "retry"
+    def test_extreme_low_score_rejects(self):
+        assert vmaf_verdict(55.0, 0.5) == "reject"
+        assert vmaf_verdict(59.99, 1.0) == "reject"
 
-    def test_ratio_over_max_rejects_first(self):
+    def test_ratio_over_max_rejects(self):
         with patch("src.quality.config.ACCEPT_RATIO_MAX", 1.00):
             assert vmaf_verdict(55.0, 1.1) == "reject"
             assert vmaf_verdict(None, 1.1) == "reject"
 
     def test_low_score_rejects(self):
-        with patch("src.quality.config.VMAF_EXTREME_LOW", 60):
-            with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
-                assert vmaf_verdict(70.0, 0.5) == "reject"
+        with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
+            assert vmaf_verdict(70.0, 0.5) == "reject"
 
     def test_middle_good_ratio_accepts(self):
-        with patch("src.quality.config.VMAF_EXTREME_LOW", 60):
-            with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
-                with patch("src.quality.config.ACCEPT_RATIO_LOW", 0.75):
-                    with patch("src.quality.config.VMAF_ACCEPT_HIGH", 93):
-                        assert vmaf_verdict(85.0, 0.5) == "accept"
+        with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
+            with patch("src.quality.config.ACCEPT_RATIO_LOW", 0.75):
+                with patch("src.quality.config.VMAF_ACCEPT_HIGH", 93):
+                    assert vmaf_verdict(85.0, 0.5) == "accept"
 
     def test_middle_bad_ratio_rejects(self):
-        with patch("src.quality.config.VMAF_EXTREME_LOW", 60):
-            with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
-                with patch("src.quality.config.ACCEPT_RATIO_LOW", 0.75):
-                    with patch("src.quality.config.VMAF_ACCEPT_HIGH", 93):
-                        assert vmaf_verdict(85.0, 0.9) == "reject"
+        with patch("src.quality.config.VMAF_ACCEPT_LOW", 80):
+            with patch("src.quality.config.ACCEPT_RATIO_LOW", 0.75):
+                with patch("src.quality.config.VMAF_ACCEPT_HIGH", 93):
+                    assert vmaf_verdict(85.0, 0.9) == "reject"
 
     def test_high_good_ratio_accepts(self):
         with patch("src.quality.config.VMAF_ACCEPT_HIGH", 93):

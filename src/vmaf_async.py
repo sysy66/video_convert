@@ -55,10 +55,10 @@ def is_shutting_down():
 def _handle_vmaf_task(task, compute_vmaf=None):
     """
     处理单个异步 VMAF 打分任务：打分后按 vmaf_verdict 返回的 verdict
-    （retry/accept/reject）决策产物去留，并更新历史记录。
+    （accept/reject）决策产物去留，并更新历史记录。
 
     Handle one async VMAF scoring task: score the output, then decide its fate
-    based on vmaf_verdict's verdict (retry/accept/reject) and update history.
+    based on vmaf_verdict's verdict (accept/reject) and update history.
     """
     # 兼容缺少 keep_source/dist_frame_count/ffprobe_path 的短任务元组，
     # 缺失时补 None。
@@ -94,48 +94,19 @@ def _handle_vmaf_task(task, compute_vmaf=None):
 
     verdict = vmaf_verdict(vmaf_score, ratio)
 
-    if verdict == "retry":
-        # 打分本身失败（vmaf_score is None，如打分进程被打断/解码错误）或极端低分
-        # （视为输入/产物异常，如写入中的残缺文件被误转码）：
-        # 均记 failed 永久排除，仅 --retry-failed 启动时手动重试。
-        # Scoring failures (None) and extreme-low scores both mark failed (permanently
-        # excluded; retried only via --retry-failed).
-        if vmaf_score is None and _shutting_down:
-            # 关停中被中断/失败的打分：非真实质量问题，保持 await_postprocess
-            # 待下次启动 recover 重新打分，不删产物、不标 failed（误标会让
-            # 唯一副本被永久排除）。
-            # Scoring interrupted by shutdown: not a real quality issue, so the
-            # task stays pending for a rescore on next startup — the output is
-            # kept and nothing is marked failed.
-            log.info(
-                "VMAF DEFERRED (async, shutting down): %s stays pending for rescore",
-                output.name,
-            )
-            return
-        try:
-            output.unlink()
-        except OSError as e:
-            log.error("VMAF REJECT CLEANUP FAILED: %s — %s", output.name, e)
-            history.mark_failed(str(source), f"VMAF reject cleanup failed: {e}")
-            return
-        if vmaf_score is None:
-            history.mark_failed(str(source), "VMAF scoring failed")
-            log.warning(
-                "VMAF SCORING FAILED (async): %s (ratio %.1f%%, marking failed)",
-                output.name,
-                ratio * 100,
-            )
-        else:
-            history.mark_failed(
-                str(source),
-                f"VMAF {vmaf_score:.2f} below {config.VMAF_EXTREME_LOW}, input may be incomplete",
-            )
-            log.warning(
-                "VMAF EXTREME LOW (async): %s (VMAF %.2f, ratio %.1f%%, marking failed)",
-                output.name,
-                vmaf_score,
-                ratio * 100,
-            )
+    # verdict 只剩 accept/reject；关停中断的打分与 verdict 无关，单独豁免。
+    # Only accept/reject remain; shutdown-interrupted scoring is exempted
+    # independently of the verdict.
+    if vmaf_score is None and _shutting_down:
+        # 关停中被中断/失败的打分：非真实质量问题，保持 await_postprocess
+        # 待下次启动 recover 重新打分，不删产物、不记终态。
+        # Scoring interrupted by shutdown: not a real quality issue, so the
+        # task stays pending for a rescore on next startup — the output is
+        # kept and no terminal state is recorded.
+        log.info(
+            "VMAF DEFERRED (async, shutting down): %s stays pending for rescore",
+            output.name,
+        )
         return
 
     if verdict == "accept":

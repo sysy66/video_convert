@@ -41,27 +41,24 @@ def cleanup_vmaf_logs():
 def vmaf_verdict(vmaf_score, ratio):
     """
     统一 sync/async 打分后决策。规则：
-      - ratio > ACCEPT_RATIO_MAX → "reject"（超标必拒，两端一致）
-      - vmaf_score 为 None → "retry"（打分失败，记 failed 永久排除，仅 --retry-failed 重试）
-      - vmaf_score < VMAF_EXTREME_LOW → "retry"（极端低分视为输入/产物异常，同样处理）
+      - vmaf_score 为 None → "reject"（打分失败同样拒绝，保留源文件；
+        关停中断的打分由调用方单独豁免，不走 verdict）
       - 其余 → 按 should_accept 给出 "accept"/"reject"
+        （ratio 超标与极端低分均被 should_accept 覆盖为拒绝）
 
     Unified post-scoring verdict for sync and async paths. Rules:
-      - ratio > ACCEPT_RATIO_MAX → "reject" (must reject, same for both modes)
-      - vmaf_score is None → "retry" (scoring failed; mark failed, retried only via --retry-failed)
-      - vmaf_score < VMAF_EXTREME_LOW → "retry" (extreme low suggests incomplete input)
+      - vmaf_score is None → "reject" (scoring failure is also rejected,
+        keeping the source; shutdown-interrupted scoring is exempted by the
+        caller, not via the verdict)
       - otherwise → should_accept decides "accept"/"reject"
+        (over-ratio and extreme-low scores are covered as rejections)
 
     :param vmaf_score: VMAF 分数 (VMAF score, 0-100 or None)
     :param ratio: 输出/输入文件大小比 (output/input size ratio)
-    :return: "accept" | "reject" | "retry"
+    :return: "accept" | "reject"
     """
-    if ratio > config.ACCEPT_RATIO_MAX:
-        return "reject"
     if vmaf_score is None:
-        return "retry"
-    if vmaf_score < config.VMAF_EXTREME_LOW:
-        return "retry"
+        return "reject"
     return "accept" if should_accept(vmaf_score, ratio) else "reject"
 
 

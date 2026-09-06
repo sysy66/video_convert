@@ -201,7 +201,7 @@ video_convert/
 | `VMAF_HWACCEL` | `True` | QSV hardware-accelerated decode for VMAF; falls back to software on failure (`VMAF_HW_FALLBACK`) |
 | `VMAF_MODE` | `"off"` | VMAF scoring mode: `off` (ratio check only) / `sync` (inline scoring) / `async` (background worker). CLI: `--vmaf off|sync|async` |
 | `VMAF_WORKERS` | 1 | Number of async VMAF scoring worker threads |
-| `VMAF_EXTREME_LOW` | 60 | VMAF below this in scoring marks the file failed for retry instead of permanently rejecting it (suggests an incomplete input/output) |
+| `VMAF_EXTREME_LOW` | 60 | 保留参数（历史阈值说明）；当前打分失败与极端低分均按拒绝处理（保留源文件，记 rejected），仅关停中断的打分延后重打 |
 | `VMAF_ACCEPT_HIGH` | 93 | VMAF ≥ this → accept if ratio ≤ `ACCEPT_RATIO_MAX` |
 | `VMAF_ACCEPT_LOW` | 80 | VMAF < this → reject |
 | `ACCEPT_RATIO_MAX` | 1.00 | Max output/input size ratio for high-VMAF accept |
