@@ -33,6 +33,14 @@ from src.temp_cleanup import (
 log = __import__("logging").getLogger(__name__)
 
 
+def _write_log(temp_dir: Path, name: str, content: str) -> None:
+    """Best-effort write of ffmpeg stderr to temp_dir/name."""
+    try:
+        (temp_dir / name).write_text(content, encoding="utf-8")
+    except OSError:
+        pass
+
+
 # 内部从 job.filepath / job.lib_* / pipeline.history 等取参
 # 成功：job.output_path/dist_frame_count/elapsed 写入 job，return True
 # 失败：清理并 mark_failed，return False
@@ -53,123 +61,100 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
 
     filepath = Path(job.filepath)
     stem = filepath.stem
-
     output_filename = f"{stem}.mkv"
 
     start_time = _time.monotonic()
     input_size = filepath.stat().st_size
 
-    suffix = _random_suffix()
-    temp_dir = cache_dir / f"{config.TEMP_PREFIX}{suffix}"
-    with _active_temp_dirs_lock:
-        _active_temp_dirs.add(str(temp_dir))
-    try:
-        temp_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
+    # --- temp dir helper: alloc/rotate 合一，消除重复 ---
+    def _new_temp_dir(old_td: Path | None = None) -> tuple[Path, Path]:
+        if old_td is not None:
+            _cleanup_temp(old_td)
+        suffix = _random_suffix()
+        td = cache_dir / f"{config.TEMP_PREFIX}{suffix}"
         with _active_temp_dirs_lock:
-            _active_temp_dirs.discard(str(temp_dir))
-        log.error("Failed to create temp dir: %s", e)
+            if old_td is not None:
+                _active_temp_dirs.discard(str(old_td))
+            _active_temp_dirs.add(str(td))
+        try:
+            td.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            with _active_temp_dirs_lock:
+                _active_temp_dirs.discard(str(td))
+            # 首次分配才打印，轮转失败由外层统一按 "Transcode ..." 报错，避免噪音
+            if old_td is None:
+                log.error("Failed to create temp dir: %s", e)
+            raise
+        op = td / output_filename
+        pipeline.history.mark_pending_transcode(str(job.filepath), str(op))
+        return td, op
+
+    try:
+        temp_dir, output_path = _new_temp_dir()
+    except Exception:
         return False
-    output_path = temp_dir / output_filename
-    pipeline.history.mark_pending_transcode(str(job.filepath), str(output_path))
 
     success = False
+    returncode: int = 0
+    stderr: str = ""
+    total_duration: float = 0.0
+
+    def _fail(msg: str, kind: str = "failed") -> bool:
+        """统一失败出口：日志前缀按 kind 保留原样，DB 文案原样。"""
+        elapsed = _time.monotonic() - start_time
+        if kind == "timeout":
+            log.error("TRANSCODE TIMEOUT: %s (%.1fs)", job.filepath.name, elapsed)
+        elif kind == "error":
+            log.error("TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, elapsed, msg)
+        else:
+            log.error("TRANSCODE FAILED: %s (%.1fs) - %s", job.filepath.name, elapsed, msg)
+        _cleanup_temp(temp_dir)
+        pipeline.history.mark_failed(str(job.filepath), msg)
+        return False
+
     try:
-        # 转码侧不产生任何帧率规整参数；对齐只在打分侧按帧序号进行。
-
-        # 软件缩放重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
-        sw_scale_fallback_attempted = False
-
-        def _retry_sw_scale():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_scale_fallback_attempted  # noqa: E501
-            if sw_scale_fallback_attempted:
-                return
-            sw_scale_fallback_attempted = True
-            log.warning(
-                "QSV SW SCALE FALLBACK: %s - re-trying with software scale",
-                job.filepath.name,
-            )
-
-            old_temp_dir = output_path.parent
-            _cleanup_temp(temp_dir)
-
-            suffix = _random_suffix()
-            temp_dir = Path(job.lib_cache) / f"{config.TEMP_PREFIX}{suffix}"
-            with _active_temp_dirs_lock:
-                _active_temp_dirs.discard(str(old_temp_dir))
-                _active_temp_dirs.add(str(temp_dir))
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            output_path = temp_dir / output_filename
-            pipeline.history.mark_pending_transcode(str(job.filepath), str(output_path))
-
-            cmd, _ = _build_ffmpeg_cmd(
-                pipeline.ffmpeg_path,
-                pipeline.ffprobe_path,
-                job.filepath,
-                output_path,
-                sw_scale_fallback=True,
-            )
-            log.info(
-                "FFMPEG CMD (sw scale fallback): %s %s",
-                job.filepath.name,
-                " ".join(str(c) for c in cmd),
-            )
-            returncode, stderr = _run_ffmpeg_with_progress(
-                cmd, total_duration, job.filepath.name, timeout=config.CODEC_TIMEOUT
-            )
-            try:
-                (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
-            except OSError:
-                pass
-
-        # 软件解码重试辅助函数（防双重重试：无论何种触发条件，最多重试一次）
-        sw_decode_fallback_attempted = False
-
-        def _retry_sw_decode():
-            nonlocal returncode, stderr, temp_dir, output_path, sw_decode_fallback_attempted  # noqa: E501
-            if sw_decode_fallback_attempted:
-                return
-            sw_decode_fallback_attempted = True
-            log.warning(
-                "QSV SW DECODE FALLBACK: %s - re-trying with software decode",
-                job.filepath.name,
-            )
-
-            old_temp_dir = output_path.parent
-            _cleanup_temp(temp_dir)
-
-            suffix = _random_suffix()
-            temp_dir = Path(job.lib_cache) / f"{config.TEMP_PREFIX}{suffix}"
-            with _active_temp_dirs_lock:
-                _active_temp_dirs.discard(str(old_temp_dir))
-                _active_temp_dirs.add(str(temp_dir))
-            temp_dir.mkdir(parents=True, exist_ok=True)
-            output_path = temp_dir / output_filename
-            pipeline.history.mark_pending_transcode(str(job.filepath), str(output_path))
-
-            cmd, _ = _build_ffmpeg_cmd(
-                pipeline.ffmpeg_path,
-                pipeline.ffprobe_path,
-                job.filepath,
-                output_path,
-                sw_decode_fallback=True,
-            )
-            log.info(
-                "FFMPEG CMD (sw decode fallback): %s %s",
-                job.filepath.name,
-                " ".join(str(c) for c in cmd),
-            )
-            returncode, stderr = _run_ffmpeg_with_progress(
-                cmd, total_duration, job.filepath.name, timeout=config.CODEC_TIMEOUT
-            )
-            try:
-                (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
-            except OSError:
-                pass
+        # 软件降级重试状态（防双重重试：每种最多一次）
+        fallback_done = {"scale": False, "decode": False}
 
         codec = get_video_codec(job.filepath, pipeline.ffprobe_path)
         if codec in config.SW_DECODE_FALLBACK_CODECS:
-            sw_decode_fallback_attempted = True
+            fallback_done["decode"] = True
+
+        def _exec_ffmpeg(log_label: str, log_file: str, out_path: Path, **kwargs) -> None:
+            """构建命令→执行→写日志三件套，首轮与重试共用。"""
+            nonlocal returncode, stderr, total_duration
+            cmd, total_duration = _build_ffmpeg_cmd(
+                pipeline.ffmpeg_path,
+                pipeline.ffprobe_path,
+                job.filepath,
+                out_path,
+                **kwargs,
+            )
+            log.info("%s: %s %s", log_label, job.filepath.name, " ".join(str(c) for c in cmd))
+            returncode, stderr = _run_ffmpeg_with_progress(
+                cmd, total_duration, job.filepath.name, timeout=config.CODEC_TIMEOUT
+            )
+            _write_log(temp_dir, log_file, stderr)
+
+        def _retry(mode: str) -> None:
+            nonlocal temp_dir, output_path
+            if fallback_done[mode]:
+                return
+            fallback_done[mode] = True
+            label = "SW SCALE" if mode == "scale" else "SW DECODE"
+            log.warning(
+                "QSV %s FALLBACK: %s - re-trying with software %s",
+                label,
+                job.filepath.name,
+                "scale" if mode == "scale" else "decode",
+            )
+            temp_dir, output_path = _new_temp_dir(old_td=temp_dir)
+            kwargs = (
+                {"sw_scale_fallback": True} if mode == "scale" else {"sw_decode_fallback": True}
+            )
+            _exec_ffmpeg(
+                f"FFMPEG CMD ({mode} fallback)", f".ffmpeg.log.{mode}", output_path, **kwargs
+            )
 
         log.info(
             "TRANSCODE: %s (%s) -> %s (temp: %s)",
@@ -179,61 +164,33 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
             temp_dir.name,
         )
 
-        cmd, total_duration = _build_ffmpeg_cmd(
-            pipeline.ffmpeg_path,
-            pipeline.ffprobe_path,
-            job.filepath,
+        _exec_ffmpeg(
+            "FFMPEG CMD",
+            ".ffmpeg.log.qsv",
             output_path,
-            sw_decode_fallback=sw_decode_fallback_attempted,
-        )
-        log.info("FFMPEG CMD: %s %s", job.filepath.name, " ".join(str(c) for c in cmd))
-
-        returncode, stderr = _run_ffmpeg_with_progress(
-            cmd, total_duration, job.filepath.name, timeout=config.CODEC_TIMEOUT
+            sw_decode_fallback=fallback_done["decode"],
         )
 
-        # 第一次运行（QSV）stderr 存入 .ffmpeg.log.qsv
-        try:
-            (temp_dir / ".ffmpeg.log.qsv").write_text(stderr, encoding="utf-8")
-        except OSError:
-            pass
+        # 按 stderr 特征选择降级路径
         if returncode != 0:
-            if sw_decode_fallback_attempted:
-                pass  # 首轮已软解，失败直接落到底部判失败
+            if fallback_done["decode"]:
+                pass
             elif "Error reinitializing filters" in stderr or "Error initializing filters" in stderr:
-                _retry_sw_scale()
+                _retry("scale")
                 if returncode != 0:
-                    _retry_sw_decode()  # 缩放失败 → 级联解码
+                    _retry("decode")
             else:
-                _retry_sw_decode()  # 硬解其他错误 → 直接软解重试
+                _retry("decode")
 
-        # 最终 stderr 写入 .ffmpeg.log
-        try:
-            (temp_dir / ".ffmpeg.log").write_text(stderr, encoding="utf-8")
-        except OSError:
-            pass
+        _write_log(temp_dir, ".ffmpeg.log", stderr)
 
         if returncode != 0:
-            error_msg = _summarize_error_stderr(stderr) or f"exit code {returncode}"
-            elapsed = _time.monotonic() - start_time
-            log.error("TRANSCODE FAILED: %s (%.1fs) - %s", job.filepath.name, elapsed, error_msg)
-            _cleanup_temp(temp_dir)
-            pipeline.history.mark_failed(str(job.filepath), error_msg)
-            return False
+            msg = _summarize_error_stderr(stderr) or f"exit code {returncode}"
+            return _fail(msg)
 
         if not output_path.exists():
-            elapsed = _time.monotonic() - start_time
-            log.error(
-                "TRANSCODE FAILED: output not found for %s (%.1fs)",
-                job.filepath.name,
-                elapsed,
-            )
-            _cleanup_temp(temp_dir)
-            pipeline.history.mark_failed(str(job.filepath), "Output file not found after transcode")
-            return False
+            return _fail("Output file not found after transcode")
 
-        # 产物帧数直接取自 ffmpeg 最终进度行的 frame=N（与 -count_frames 计数
-        # 同源），免去打分前对 mkv 产物再做一次昂贵的全量解码计数。
         dist_frame_count = parse_frame_count_from_stderr(stderr)
         elapsed = _time.monotonic() - start_time
         job.output_path = output_path
@@ -243,17 +200,9 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         return True
 
     except subprocess.TimeoutExpired:
-        elapsed = _time.monotonic() - start_time
-        log.error("TRANSCODE TIMEOUT: %s (%.1fs)", job.filepath.name, elapsed)
-        _cleanup_temp(temp_dir)
-        pipeline.history.mark_failed(str(job.filepath), "Transcode timed out")
-        return False
+        return _fail("Transcode timed out", kind="timeout")
     except Exception as e:
-        elapsed = _time.monotonic() - start_time
-        log.error("TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, elapsed, e)
-        _cleanup_temp(temp_dir)
-        pipeline.history.mark_failed(str(job.filepath), str(e))
-        return False
+        return _fail(str(e), kind="error")
     finally:
         if not success:
             with _active_temp_dirs_lock:
