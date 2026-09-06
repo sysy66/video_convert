@@ -217,7 +217,7 @@ class TestTranscodePipelineTranscode:
 
 
 class TestTranscodePipelinePostProcess:
-    def test_delegates_to_post_transcode(self, pipeline, tmp_path):
+    def test_delegates_to_post_process_stage(self, pipeline, tmp_path):
         fp = tmp_path / "a.mp4"
         fp.write_text("x")
         job = TranscodeJob(
@@ -229,20 +229,9 @@ class TestTranscodePipelinePostProcess:
             dist_frame_count=5000,
             elapsed=2.5,
         )
-        with patch("src.pipeline.post_transcode", return_value=True) as mock_pt:
+        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             result = pipeline.post_process(job)
-            mock_pt.assert_called_once_with(
-                {"dist_frame_count": 5000, "elapsed": 2.5},
-                job.filepath,
-                pipeline.history,
-                pipeline.ffmpeg_path,
-                pipeline.ffprobe_path,
-                job.lib_input,
-                job.lib_output,
-                job.lib_cache,
-                pipeline.keep_source,
-                pipeline.compute_vmaf,
-            )
+            mock_stage.assert_called_once_with(pipeline, job)
             assert result is True
 
     def test_post_process_passes_none_when_not_transcoded(self, pipeline, tmp_path):
@@ -255,9 +244,11 @@ class TestTranscodePipelinePostProcess:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        with patch("src.pipeline.post_transcode", return_value=False) as mock_pt:
+        with patch("src.pipeline.post_process_stage", return_value=False) as mock_stage:
             result = pipeline.post_process(job)
-            assert mock_pt.call_args[0][0] == {"dist_frame_count": None, "elapsed": None}
+            mock_stage.assert_called_once_with(pipeline, job)
+            assert job.dist_frame_count is None
+            assert job.elapsed is None
             assert result is False
 
     def test_job_post_process_shortcut(self, pipeline, tmp_path):
@@ -266,9 +257,9 @@ class TestTranscodePipelinePostProcess:
         job = pipeline.make_job(str(fp), {"input": "/in", "output": "/out", "cache": "/cache"})
         job.dist_frame_count = 100
         job.elapsed = 1.0
-        with patch("src.pipeline.post_transcode", return_value=True) as mock_pt:
+        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             assert job.post_process() is True
-            mock_pt.assert_called_once()
+            mock_stage.assert_called_once_with(pipeline, job)
 
     def test_post_process_forwards_keep_source(self, tmp_path, history):
         pl = TranscodePipeline(
@@ -286,9 +277,12 @@ class TestTranscodePipelinePostProcess:
             dist_frame_count=10,
             elapsed=0.2,
         )
-        with patch("src.pipeline.post_transcode", return_value=True) as mock_pt:
+        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             pl.post_process(job)
-            assert mock_pt.call_args[0][8] is True
+            passed_pipeline, passed_job = mock_stage.call_args[0]
+            assert passed_pipeline is pl
+            assert passed_pipeline.keep_source is True
+            assert passed_job is job
 
 
 class TestCircularImport:

@@ -52,7 +52,7 @@ src/
   config.py        — all tunables in one file; libraries loaded from libraries.conf
   walker.py        — os.walk-based file discovery (filters dotfiles/temp dirs)
   filter.py        — history-based quick filter before queue submission
-  transcoder.py    — transcode_stage(pipeline, job) 两段式转码主流程（仅编码，产物留 cache 临时目录，落盘/打分由 post_transcode 接手）
+  transcoder.py    — transcode_stage(pipeline, job) 两段式转码主流程（仅编码，产物留 cache 临时目录，落盘/打分由 post_process_stage 接手）
   ffmpeg_runner.py — ffmpeg subprocess execution + progress parsing
   process_guard.py — PID registry, per-file timeout kill, stale-started recovery
   path_utils.py    — temp/unique path helpers

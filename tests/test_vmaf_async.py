@@ -60,7 +60,7 @@ class TestTranscodeAsync:
 
     def test_async_transcode_only_encodes(self, tmp_path):
         # 两段式流水线：即使 async 模式，transcode 也只编码、保留产物在
-        # cache 临时目录、不移动不删源不入队；落盘与打分由 post_transcode 接手。
+        # cache 临时目录、不移动不删源不入队；落盘与打分由 post_process_stage 接手。
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video" * 10)
 

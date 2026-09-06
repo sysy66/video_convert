@@ -22,6 +22,7 @@ class TranscodeJob:
     output_path: Path | None = None
     dist_frame_count: int | None = None
     elapsed: float | None = None
+    vmaf_score: float | None = None
 
     @property
     def key(self) -> str:

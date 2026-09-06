@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.job import TranscodeJob
-from src.post_process import post_transcode
+from src.post_process import post_process_stage
 from src.transcoder import transcode_stage
 
 
@@ -29,15 +29,4 @@ class TranscodePipeline:
         return transcode_stage(self, job)
 
     def post_process(self, job):
-        return post_transcode(
-            {"dist_frame_count": job.dist_frame_count, "elapsed": job.elapsed},
-            job.filepath,
-            self.history,
-            self.ffmpeg_path,
-            self.ffprobe_path,
-            job.lib_input,
-            job.lib_output,
-            job.lib_cache,
-            self.keep_source,
-            self.compute_vmaf,
-        )
+        return post_process_stage(self, job)

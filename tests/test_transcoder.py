@@ -533,10 +533,10 @@ class TestCleanupStaleTempDirs:
 
 
 class TestTranscodeActiveTempDir:
-    """transcode_stage 成功后 temp_dir 必须仍留在活跃集，直到 post_transcode 搬移完成。
+    """transcode_stage 成功后 temp_dir 必须仍留在活跃集，直到 post_process_stage 搬移完成。
 
     After a successful transcode_stage the temp dir must remain in the active
-    set (protected from the stale-cleanup scan pass) until post_transcode moves
+    set (protected from the stale-cleanup scan pass) until post_process_stage moves
     the product out — otherwise cleanup can delete the product while it sits
     queued in the post_pool.
     """

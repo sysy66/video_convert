@@ -1,6 +1,6 @@
-"""post_transcode 后处理模块单元测试：质量门、VMAF 打分、移动落盘与最终状态。
+"""post_process_stage 后处理模块单元测试：质量门、VMAF 打分、移动落盘与最终状态。
 
-Unit tests for the post_transcode module: quality gate, VMAF scoring, move to
+Unit tests for the post_process_stage module: quality gate, VMAF scoring, move to
 destination and final history state (the second stage of the transcode pipeline).
 """
 
@@ -11,7 +11,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config
-from src.post_process import post_transcode
+from src.job import TranscodeJob
+from src.pipeline import TranscodePipeline
+from src.post_process import post_process_stage
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -51,6 +53,36 @@ def _make(tmp_path, name="test.mp4", out_name="test.mkv"):
     return input_file, output, history, info
 
 
+def _make_stage(
+    tmp_path,
+    name="test.mp4",
+    out_name="test.mkv",
+    compute_vmaf=None,
+    keep_source=False,
+    input_dir=None,
+    output_dir=None,
+):
+    """构造 (pipeline, job) 两段式入参；input_file/output/history 照旧返回供断言。"""
+    input_file, output, history, info = _make(tmp_path, name, out_name)
+    pipeline = TranscodePipeline(
+        history=history,
+        ffmpeg_path="/ffmpeg",
+        ffprobe_path="/ffprobe",
+        compute_vmaf=compute_vmaf,
+        keep_source=keep_source,
+    )
+    job = TranscodeJob(
+        pipeline=pipeline,
+        filepath=input_file,
+        lib_input=Path(input_dir) if input_dir else tmp_path,
+        lib_output=Path(output_dir) if output_dir else tmp_path,
+        lib_cache=tmp_path / "cache",
+        dist_frame_count=info["dist_frame_count"],
+        elapsed=info["elapsed"],
+    )
+    return pipeline, job, input_file, output, history
+
+
 class TestPostTranscodeMissingOutput:
     def test_missing_output_marks_failed(self, tmp_path):
         input_file = tmp_path / "test.mp4"
@@ -58,16 +90,17 @@ class TestPostTranscodeMissingOutput:
         history = _make_history(str(tmp_path / "cache" / ".work_x" / "test.mkv"))
         assert not Path(history.get_output_path(str(input_file))).exists()
 
-        result = post_transcode(
-            {"dist_frame_count": None, "elapsed": 1.0},
-            str(input_file),
-            history,
-            "/ffmpeg",
-            "/ffprobe",
-            str(tmp_path),
-            str(tmp_path),
-            str(tmp_path / "cache"),
+        pipeline = TranscodePipeline(
+            history=history, ffmpeg_path="/ffmpeg", ffprobe_path="/ffprobe"
         )
+        job = TranscodeJob(
+            pipeline=pipeline,
+            filepath=input_file,
+            lib_input=tmp_path,
+            lib_output=tmp_path,
+            lib_cache=tmp_path / "cache",
+        )
+        result = post_process_stage(pipeline, job)
 
         assert result is False
         history.mark_failed.assert_called_once_with(
@@ -78,20 +111,10 @@ class TestPostTranscodeMissingOutput:
 class TestPostTranscodeSync:
     def test_off_mode_accepts_on_ratio_only(self, tmp_path):
         # off 模式（VMAF_MODE_OFF）：不调打分，接受并删除源、移入最终位置。
-        input_file, output, history, info = _make(tmp_path)
+        mock_vmaf = MagicMock()
+        pipeline, job, input_file, output, history = _make_stage(tmp_path, compute_vmaf=mock_vmaf)
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            mock_vmaf = MagicMock()
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=mock_vmaf,
-            )
+            result = post_process_stage(pipeline, job)
 
         assert result is True
         mock_vmaf.assert_not_called()
@@ -101,42 +124,22 @@ class TestPostTranscodeSync:
         assert history.mark_done.call_args[1]["rejected"] is False
 
     def test_accept_keeps_source_when_keep_source(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(tmp_path, keep_source=True)
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                keep_source=True,
-            )
+            post_process_stage(pipeline, job)
         assert input_file.exists()
         assert (tmp_path / "test.mkv").exists()
 
     def test_ratio_over_max_rejects_without_scoring(self, tmp_path):
         # ratio 超标必拒，省去打分；保留源文件，标 rejected。
-        input_file, output, history, info = _make(tmp_path)
+        mock_vmaf = MagicMock(return_value=95.0)
+        pipeline, job, input_file, output, history = _make_stage(tmp_path, compute_vmaf=mock_vmaf)
         input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
         with (
             patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
             patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
-            mock_vmaf = MagicMock(return_value=95.0)
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=mock_vmaf,
-            )
+            result = post_process_stage(pipeline, job)
 
         assert result is True
         mock_vmaf.assert_not_called()
@@ -147,41 +150,25 @@ class TestPostTranscodeSync:
         )
 
     def test_score_failed_marks_failed_for_retry(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=MagicMock(return_value=None)
+        )
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=MagicMock(return_value=None),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is False
         history.mark_failed.assert_called_once_with(str(input_file), "VMAF scoring failed")
         history.mark_done.assert_not_called()
 
     def test_score_failed_during_shutdown_defers(self, tmp_path):
         # 关停中打分失败（None）：转 await_postprocess 保留产物，不标 failed。
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=MagicMock(return_value=None)
+        )
         with (
             patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
             patch("src.post_process.is_shutting_down", return_value=True),
         ):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=MagicMock(return_value=None),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         history.mark_failed.assert_not_called()
         history.mark_done.assert_not_called()
@@ -190,86 +177,55 @@ class TestPostTranscodeSync:
         vmaf_tasks.get_nowait()
 
     def test_extreme_low_marks_failed_for_retry(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=MagicMock(return_value=55.0)
+        )
         with (
             patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
             patch("src.post_process.config.VMAF_EXTREME_LOW", 60),
         ):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=MagicMock(return_value=55.0),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is False
         history.mark_failed.assert_called_once()
         assert "below 60" in history.mark_failed.call_args[0][1]
         history.mark_done.assert_not_called()
 
     def test_accept_deletes_source_and_moves(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=MagicMock(return_value=95.0)
+        )
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=MagicMock(return_value=95.0),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert not input_file.exists()
         assert (tmp_path / "test.mkv").exists()
         assert (tmp_path / "test.mkv").read_text() == "transcoded"
+        assert job.vmaf_score == 95.0
         history.mark_done.assert_called_once_with(
             str(input_file), str(tmp_path / "test.mkv"), vmaf_score=95.0, rejected=False
         )
 
     def test_reject_keeps_source(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=MagicMock(return_value=60.0)
+        )
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-                compute_vmaf=MagicMock(return_value=60.0),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
         assert not (tmp_path / "test.mkv").exists()
+        assert job.vmaf_score == 60.0
         history.mark_done.assert_called_once_with(
             str(input_file), None, vmaf_score=60.0, rejected=True
         )
 
     def test_move_failure_marks_failed(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(tmp_path)
         with (
             patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF),
             patch("shutil.copyfile", side_effect=OSError("nfs down")),
         ):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is False
         history.mark_failed.assert_called_once()
         history.mark_done.assert_not_called()
@@ -277,22 +233,12 @@ class TestPostTranscodeSync:
 
 class TestPostTranscodeAsync:
     def _make_async(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
-        return input_file, output, history, info
+        return _make_stage(tmp_path)
 
     def test_keeps_source_moves_output_and_queues(self, tmp_path):
-        input_file, output, history, info = self._make_async(tmp_path)
+        pipeline, job, input_file, output, history = self._make_async(tmp_path)
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
         assert (tmp_path / "test.mkv").exists()
@@ -308,22 +254,13 @@ class TestPostTranscodeAsync:
         assert task[8] == "/ffprobe"
 
     def test_ratio_over_max_rejects_without_queue(self, tmp_path):
-        input_file, output, history, info = self._make_async(tmp_path)
+        pipeline, job, input_file, output, history = self._make_async(tmp_path)
         input_file.write_text("x" * 5)
         with (
             patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
             patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
         assert not (tmp_path / "test.mkv").exists()
@@ -342,18 +279,19 @@ class TestPostTranscodeAsync:
         output.write_text("transcoded")
         history = _make_history(str(output))
         output_dir = tmp_path / "output"
+        pipeline = TranscodePipeline(
+            history=history, ffmpeg_path="/ffmpeg", ffprobe_path="/ffprobe"
+        )
+        job = TranscodeJob(
+            pipeline=pipeline,
+            filepath=input_file,
+            lib_input=tmp_path / "input",
+            lib_output=output_dir,
+            lib_cache=tmp_path / "cache",
+        )
 
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
-            result = post_transcode(
-                {"dist_frame_count": None, "elapsed": 1.0},
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path / "input"),
-                str(output_dir),
-                str(tmp_path / "cache"),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert (output_dir / "sub" / "test.mkv").exists()
         assert input_file.exists()
@@ -363,30 +301,21 @@ class TestPostTranscodeAsync:
 
 
 class TestPostTranscodeActiveTempDir:
-    """post_transcode 搬移完成后必须把 temp_dir 从活跃集移除。
+    """post_process_stage 搬移完成后必须把 temp_dir 从活跃集移除。
 
-    post_transcode owns the temp dir's lifecycle: it must discard it from the
+    post_process_stage owns the temp dir's lifecycle: it must discard it from the
     active set after moving the product out, so the protection granted by
     transcode_stage's success path is released exactly once the file is safe.
     """
 
     def test_removes_temp_dir_from_active_set_after_accept(self, tmp_path):
-        input_file, output, history, info = _make(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(tmp_path)
         temp_dir = str(output.parent)
         with _active_temp_dirs_lock:
             _active_temp_dirs.add(temp_dir)
         assert temp_dir in active_temp_dirs_snapshot()
 
         with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            result = post_transcode(
-                info,
-                str(input_file),
-                history,
-                "/ffmpeg",
-                "/ffprobe",
-                str(tmp_path),
-                str(tmp_path),
-                str(tmp_path / "cache"),
-            )
+            result = post_process_stage(pipeline, job)
         assert result is True
         assert temp_dir not in active_temp_dirs_snapshot()

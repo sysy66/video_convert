@@ -1,8 +1,8 @@
-"""transcode() + post_transcode() 端到端集成测试：真实 QSV 硬件编码
+"""transcode_stage + post_process_stage 端到端集成测试：真实 QSV 硬件编码
 （需 --run-slow 且本机有 QSV）。
 
 End-to-end integration tests for the two-stage pipeline (transcode then
-post_transcode): real QSV hardware encoding (requires --run-slow and local QSV).
+post_process): real QSV hardware encoding (requires --run-slow and local QSV).
 """
 
 from pathlib import Path
@@ -12,7 +12,6 @@ import pytest
 from src import config
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.pipeline import TranscodePipeline
-from src.post_process import post_transcode
 from src.vmaf_async import (
     _handle_vmaf_task,
     drain_vmaf_tasks,
@@ -67,9 +66,9 @@ def _skip_if_no_qsv(qsv_available):
 
 
 def _run_pipeline(env, ffmpeg, ffprobe, compute_vmaf=None):
-    """两段式流水线：transcode 编码 → post_transcode 质量门/落盘/终态。
+    """两段式流水线：transcode 编码 → post_process 质量门/落盘/终态。
 
-    Run the two-stage pipeline: transcode (encoding only) then post_transcode
+    Run the two-stage pipeline: transcode (encoding only) then post_process
     (quality gate, placement, final state).
     """
     pipeline = TranscodePipeline(
@@ -88,18 +87,8 @@ def _run_pipeline(env, ffmpeg, ffprobe, compute_vmaf=None):
     )
     ok = job.transcode()
     assert ok, "transcode 编码阶段失败"
-    done = post_transcode(
-        {"dist_frame_count": job.dist_frame_count, "elapsed": job.elapsed},
-        str(env["src"]),
-        env["history"],
-        ffmpeg,
-        ffprobe,
-        str(env["input_dir"]),
-        str(env["output_dir"]),
-        str(env["cache_dir"]),
-        compute_vmaf=compute_vmaf,
-    )
-    assert done, "post_transcode 后处理阶段失败"
+    done = job.post_process()
+    assert done, "post_process 后处理阶段失败"
     return job.dist_frame_count
 
 
@@ -168,7 +157,7 @@ class TestTranscodeVmafAsync:
         compute_vmaf,
         monkeypatch,
     ):
-        """真实 QSV 转码 → post_transcode 排队 → 真实后台 worker + libvmaf 打分 → accept 删源"""
+        """真实 QSV 转码 → post_process 排队 → 真实后台 worker + libvmaf 打分 → accept 删源"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
@@ -177,7 +166,7 @@ class TestTranscodeVmafAsync:
         start_vmaf_workers(compute_vmaf=compute_vmaf)
         try:
             _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
-            # post_transcode 异步排队：源保留、输出已在 output 区、状态 await_postprocess
+            # post_process 异步排队：源保留、输出已在 output 区、状态 await_postprocess
             assert env["src"].exists()
             outputs = list(env["output_dir"].glob("*.mkv"))
             assert len(outputs) == 1

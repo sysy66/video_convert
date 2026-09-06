@@ -48,7 +48,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
     对单个视频执行转码（仅编码阶段）：创建临时工作目录、构建并运行 FFmpeg
     命令（含 QSV 软件缩放/软解码各一次的降级重试），成功时产物保留在
-    cache 临时目录中，质量判定与落盘由 post_transcode 接手。
+    cache 临时目录中，质量判定与落盘由 post_process_stage 接手。
       - 失败/超时/异常：清理临时目录并 mark_failed，返回 False
       - 成功：返回 True，并把 output_path/dist_frame_count/elapsed 写入 job
 

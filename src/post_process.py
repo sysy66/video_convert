@@ -2,7 +2,11 @@ import re
 import shutil
 import time as _time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from src.job import TranscodeJob
+    from src.pipeline import TranscodePipeline
 from src import config
 from src.path_utils import _final_dest_path, _format_size
 from src.probe import get_frame_count
@@ -20,18 +24,7 @@ from src.vmaf_async import (
 log = __import__("logging").getLogger(__name__)
 
 
-def post_transcode(
-    transcode_info: dict,
-    filepath,
-    history,
-    ffmpeg_path,
-    ffprobe_path,
-    input_dir=None,
-    output_dir=None,
-    cache_dir=None,
-    keep_source=False,
-    compute_vmaf=None,
-):
+def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
     对转码成功的产物执行后处理（质量判定 + 落盘），与 transcode 构成两段式流水线：
       0. 从 history 取回产物路径并校验存在性，计算压缩比 ratio
@@ -62,41 +55,29 @@ def post_transcode(
     temp dir; this function owns everything after — quality gate, VMAF scoring,
     moving to destination, and final history state.
 
-    :param transcode_info: transcode 返回的元数据字典，必须包含两个键：
-                           "dist_frame_count"（从 ffmpeg stderr 进度行解析的
-                           产物帧数，int 或 None）、"elapsed"（转码耗时秒，
-                           monotonic 差值，仅用于日志）
-                           (Metadata dict from transcode; required keys:
-                           "dist_frame_count" (int|None, parsed from ffmpeg's
-                           final progress line) and "elapsed" (seconds, for logs))
-    :type transcode_info: dict
-    :param filepath: 源文件路径 (Path to the source video file)
-    :param history: 历史记录对象，经 get_output_path 取产物路径，
-                    最终写入 done/failed/await_postprocess
-                    (History tracker; reads output path, writes final state)
-    :param ffmpeg_path: FFmpeg 可执行文件路径，透传给 VMAF 任务队列
-                        (FFmpeg binary path, forwarded to the VMAF task queue)
-    :param ffprobe_path: ffprobe 可执行文件路径，用于源帧数探测与 VMAF 任务
-                         (ffprobe binary path, used for frame probing and VMAF tasks)
-    :param input_dir: 源库根目录，用于推导产物的相对子目录结构
-                      (Source library root, used to mirror subdirectories)
-    :param output_dir: 输出根目录，产物最终落盘位置 (Output root directory)
-    :param cache_dir: 未使用，仅为与 transcode 签名对齐而保留
-                      (Unused; kept for signature symmetry with transcode)
-    :param keep_source: True=接受后仍保留源文件 (True=keep source after accept)
-    :param compute_vmaf: 打分回调 callable(filepath, output_path, log_path=...,
-                         ref_frame_count=..., dist_frame_count=...) -> score|None，
-                         仅同步打分模式使用
-                         (Scoring callback for sync mode)
+    :param pipeline: 进程级共享上下文，提供 history/ffprobe 路径/
+                     keep_source/compute_vmaf
+                     (Process-wide shared context: history, ffprobe path,
+                     keep_source flag and scoring callback)
+    :param job: 单文件任务：filepath/lib_* 定位文件，dist_frame_count/
+                elapsed 为转码段回填的阶段产物
+                (Per-file job: paths plus the transcode stage's
+                dist_frame_count/elapsed)
     :return: True 表示处理流程完成（含拒绝）；False 表示失败已记 failed
              (True if processing completed, including rejections; False if failed)
     :rtype: bool
     """
+    history = pipeline.history
+    ffprobe_path = pipeline.ffprobe_path
+    keep_source = pipeline.keep_source
+    compute_vmaf = pipeline.compute_vmaf
+    filepath = Path(job.filepath)
+    dist_frame_count = job.dist_frame_count
+    elapsed = job.elapsed
+    input_dir = job.lib_input
+    output_dir = job.lib_output
     temp_dir = None
     try:
-        dist_frame_count = transcode_info["dist_frame_count"]
-        elapsed = transcode_info["elapsed"]
-        filepath = Path(filepath)
         stem = filepath.stem
         output_filename = f"{stem}.mkv"
         input_size = filepath.stat().st_size
@@ -196,6 +177,7 @@ def post_transcode(
                 dist_frame_count=dist_frame_count,
             )
             vmaf_elapsed = _time.monotonic() - vmaf_start
+            job.vmaf_score = vmaf_score  # 回填 Job，打分结果随任务对象可查
 
         # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
         # sync 模式：打分失败(None)或极端低分(< VMAF_EXTREME_LOW) 与 async 一致，
