@@ -12,7 +12,7 @@ import pytest
 from src import config
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.pipeline import TranscodePipeline
-from src.post_transcode import post_transcode
+from src.post_process import post_transcode
 from src.vmaf_async import (
     _handle_vmaf_task,
     drain_vmaf_tasks,

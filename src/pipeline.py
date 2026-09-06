@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from src.job import TranscodeJob
-from src.post_transcode import post_transcode
+from src.post_process import post_transcode
 from src.transcoder import transcode_stage
 
 

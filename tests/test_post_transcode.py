@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config
-from src.post_transcode import post_transcode
+from src.post_process import post_transcode
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -79,7 +79,7 @@ class TestPostTranscodeSync:
     def test_off_mode_accepts_on_ratio_only(self, tmp_path):
         # off 模式（VMAF_MODE_OFF）：不调打分，接受并删除源、移入最终位置。
         input_file, output, history, info = _make(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_OFF):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
             mock_vmaf = MagicMock()
             result = post_transcode(
                 info,
@@ -102,7 +102,7 @@ class TestPostTranscodeSync:
 
     def test_accept_keeps_source_when_keep_source(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_OFF):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
             post_transcode(
                 info,
                 str(input_file),
@@ -122,8 +122,8 @@ class TestPostTranscodeSync:
         input_file, output, history, info = _make(tmp_path)
         input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
         with (
-            patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_transcode.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
+            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
             mock_vmaf = MagicMock(return_value=95.0)
             result = post_transcode(
@@ -148,7 +148,7 @@ class TestPostTranscodeSync:
 
     def test_score_failed_marks_failed_for_retry(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result = post_transcode(
                 info,
                 str(input_file),
@@ -168,8 +168,8 @@ class TestPostTranscodeSync:
         # 关停中打分失败（None）：转 await_postprocess 保留产物，不标 failed。
         input_file, output, history, info = _make(tmp_path)
         with (
-            patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_transcode.is_shutting_down", return_value=True),
+            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
+            patch("src.post_process.is_shutting_down", return_value=True),
         ):
             result = post_transcode(
                 info,
@@ -192,8 +192,8 @@ class TestPostTranscodeSync:
     def test_extreme_low_marks_failed_for_retry(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
         with (
-            patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_transcode.config.VMAF_EXTREME_LOW", 60),
+            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
+            patch("src.post_process.config.VMAF_EXTREME_LOW", 60),
         ):
             result = post_transcode(
                 info,
@@ -213,7 +213,7 @@ class TestPostTranscodeSync:
 
     def test_accept_deletes_source_and_moves(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result = post_transcode(
                 info,
                 str(input_file),
@@ -235,7 +235,7 @@ class TestPostTranscodeSync:
 
     def test_reject_keeps_source(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result = post_transcode(
                 info,
                 str(input_file),
@@ -257,7 +257,7 @@ class TestPostTranscodeSync:
     def test_move_failure_marks_failed(self, tmp_path):
         input_file, output, history, info = _make(tmp_path)
         with (
-            patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_OFF),
+            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF),
             patch("shutil.copyfile", side_effect=OSError("nfs down")),
         ):
             result = post_transcode(
@@ -282,7 +282,7 @@ class TestPostTranscodeAsync:
 
     def test_keeps_source_moves_output_and_queues(self, tmp_path):
         input_file, output, history, info = self._make_async(tmp_path)
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
             result = post_transcode(
                 info,
                 str(input_file),
@@ -311,8 +311,8 @@ class TestPostTranscodeAsync:
         input_file, output, history, info = self._make_async(tmp_path)
         input_file.write_text("x" * 5)
         with (
-            patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
-            patch("src.post_transcode.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
+            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
             result = post_transcode(
                 info,
@@ -343,7 +343,7 @@ class TestPostTranscodeAsync:
         history = _make_history(str(output))
         output_dir = tmp_path / "output"
 
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
             result = post_transcode(
                 {"dist_frame_count": None, "elapsed": 1.0},
                 str(input_file),
@@ -377,7 +377,7 @@ class TestPostTranscodeActiveTempDir:
             _active_temp_dirs.add(temp_dir)
         assert temp_dir in active_temp_dirs_snapshot()
 
-        with patch("src.post_transcode.config.VMAF_MODE", config.VMAF_MODE_OFF):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
             result = post_transcode(
                 info,
                 str(input_file),
