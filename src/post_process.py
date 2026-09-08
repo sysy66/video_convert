@@ -104,17 +104,19 @@ def _resolve_output(pipeline, job):
     return ctx, None
 
 
-def _score_inline(pipeline, job, ctx):
+def _score_inline(pipeline, job, ctx, dist_path=None):
     """
-    对 temp 区产物 inline 打分，返回 (vmaf_score, vmaf_elapsed)，
-    并回填 job.vmaf_score。
+    对指定产物 inline 打分（默认 temp 区产物；async 打落盘后的文件），
+    返回 (vmaf_score, vmaf_elapsed)，并回填 job.vmaf_score。
 
-    Score the temp output inline. Returns (vmaf_score, vmaf_elapsed)
-    and fills back job.vmaf_score.
+    Score the given output inline (the temp output by default; async scores
+    the landed file). Returns (vmaf_score, vmaf_elapsed) and fills back
+    job.vmaf_score.
     """
     compute_vmaf = pipeline.compute_vmaf
     filepath = ctx["filepath"]
     output_path = ctx["output_path"]
+    dist_path = dist_path if dist_path is not None else output_path
     stem = filepath.stem
     safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
     vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
@@ -124,7 +126,7 @@ def _score_inline(pipeline, job, ctx):
     ref_frame_count = get_frame_count(filepath, pipeline.ffprobe_path)
     vmaf_score = compute_vmaf(
         filepath,
-        output_path,
+        dist_path,
         log_path=vmaf_log,
         ref_frame_count=ref_frame_count,
         dist_frame_count=job.dist_frame_count,
@@ -134,12 +136,14 @@ def _score_inline(pipeline, job, ctx):
     return vmaf_score, vmaf_elapsed
 
 
-def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed):
+def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=None):
     """
-    按 verdict 落盘/清理并记终态，返回 bool。
+    按 verdict 落盘/清理并记终态，返回 bool。landed 非空表示已提前落盘
+    （async）：accept 跳过复拷，reject 直接处置库中文件。
 
     Settle by the verdict (land/clean up and record the terminal state).
-    Returns bool.
+    Returns bool. A non-None landed path means the file was landed up front
+    (async): accept skips the second copy, reject handles the library file.
     """
     history = pipeline.history
     keep_source = pipeline.keep_source
@@ -152,18 +156,23 @@ def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed):
     elapsed = job.elapsed
 
     if verdict == "accept":
-        # 先落盘后记 history
-        # Land the file before recording history.
-        final_path, move_err = _land_output(
-            output_path, filepath, expect_filename, job.lib_input, job.lib_output
-        )
-        if move_err is not None:
+        if landed is None:
+            # 先落盘后记 history
+            # Land the file before recording history.
+            final_path, move_err = _land_output(
+                output_path, filepath, expect_filename, job.lib_input, job.lib_output
+            )
+            if move_err is not None:
+                _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), move_err)
+                return False
+            if output_path.exists():
+                output_path.unlink()
             _cleanup_temp(temp_dir)
-            history.mark_failed(str(filepath), move_err)
-            return False
-        if output_path.exists():
-            output_path.unlink()
-        _cleanup_temp(temp_dir)
+        else:
+            # 已提前落盘（async）：temp 已清，直接记终态
+            # Already landed (async): temp is gone, record directly.
+            final_path = landed
         if not keep_source:
             filepath.unlink()
         history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
@@ -192,24 +201,40 @@ def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed):
         # 否则不落盘、只清 temp。
         # With KEEP_TARGET land into the target library but still record rejected
         # (source kept, for manual review); otherwise no landing, temp cleanup only.
-        landed_path = None
-        if config.KEEP_TARGET:
-            final_path, move_err = _land_output(
-                output_path, filepath, expect_filename, job.lib_input, job.lib_output
-            )
-            if move_err is not None:
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), move_err)
-                return False
-            landed_path = str(final_path)
-            log.warning(
-                "REJECT (kept): %s landed at %s for manual review",
-                filepath.name,
-                landed_path,
-            )
-        if output_path.exists():
-            output_path.unlink()
-        _cleanup_temp(temp_dir)
+        if landed is not None:
+            # 已在库中（async 早落盘）：KEEP_TARGET 留之，否则删之；源始终保留
+            # Already in the library (async landed up front): keep it with
+            # KEEP_TARGET, otherwise remove it; the source is always kept.
+            if config.KEEP_TARGET:
+                landed_path = str(landed)
+                log.warning(
+                    "REJECT (kept): %s landed at %s for manual review",
+                    filepath.name,
+                    landed_path,
+                )
+            else:
+                if landed.exists():
+                    landed.unlink()
+                landed_path = None
+        else:
+            landed_path = None
+            if config.KEEP_TARGET:
+                final_path, move_err = _land_output(
+                    output_path, filepath, expect_filename, job.lib_input, job.lib_output
+                )
+                if move_err is not None:
+                    _cleanup_temp(temp_dir)
+                    history.mark_failed(str(filepath), move_err)
+                    return False
+                landed_path = str(final_path)
+                log.warning(
+                    "REJECT (kept): %s landed at %s for manual review",
+                    filepath.name,
+                    landed_path,
+                )
+            if output_path.exists():
+                output_path.unlink()
+            _cleanup_temp(temp_dir)
         history.mark_done(str(filepath), landed_path, vmaf_score=vmaf_score, rejected=True)
         if vmaf_elapsed is not None:
             log.warning(
@@ -246,13 +271,10 @@ def _post_process_ratio_only(pipeline, job):
     return _settle(pipeline, job, ctx, "accept", None, None), temp_dir
 
 
-def _post_process_scored(pipeline, job):
+def _post_process_sync(pipeline, job):
     """
-    打分模式公共核心：前置检查→inline 打分→verdict→落盘/清理。
-    返回 (ok, temp_dir) 供 dispatcher 的 finally 释放活跃集。
-
-    Shared core for scoring modes: preamble → inline scoring →
-    verdict → settle. Returns (ok, temp_dir) for the dispatcher's finally.
+    sync 模式：inline 打分（阻塞转码线程）。
+    Sync mode: inline scoring (blocks the transcode thread).
     """
     ctx, terminal = _resolve_output(pipeline, job)
     temp_dir = ctx["temp_dir"] if ctx is not None else None
@@ -263,23 +285,47 @@ def _post_process_scored(pipeline, job):
     return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed), temp_dir
 
 
-def _post_process_sync(pipeline, job):
-    """
-    sync 模式：inline 打分（阻塞转码线程）。
-    Sync mode: inline scoring (blocks the transcode thread).
-    """
-    return _post_process_scored(pipeline, job)
-
-
 def _post_process_async(pipeline, job):
     """
-    async 模式：暂与 sync 同序 inline 打分（旧后台 worker 已退役）。
-    将来若恢复异步语义，在此分化。
+    async 模式：先落盘、后打分。打分对象是目标库里的文件（所见即所得），
+    inline 打分（旧后台 worker 已退役）。
+    返回 (ok, temp_dir) 供 dispatcher 的 finally 释放活跃集。
 
-    Async mode: currently inline-scores exactly like sync (the background
-    worker is retired). Diverge here if async semantics ever return.
+    Async mode: land first, then score. The scoring target is the landed file
+    in the target library (what you see is what you score); scoring is inline
+    (the background worker is retired).
+    Returns (ok, temp_dir) for the dispatcher's finally clause.
     """
-    return _post_process_scored(pipeline, job)
+    history = pipeline.history
+    ctx, terminal = _resolve_output(pipeline, job)
+    temp_dir = ctx["temp_dir"] if ctx is not None else None
+    if terminal is not None:
+        return terminal, temp_dir
+    # 先落盘：后续打分与处置都针对库中文件（早落盘的孤儿窗口与扫描器可见性
+    # 为 land-first 固有代价，见评审）。temp 随即清理，打分不再依赖它。
+    # Land first: scoring and settling both target the library file (the
+    # orphan window and scanner visibility are inherent to land-first).
+    # Temp is cleaned right away; scoring no longer depends on it.
+    final_path, move_err = _land_output(
+        ctx["output_path"],
+        ctx["filepath"],
+        ctx["expect_filename"],
+        job.lib_input,
+        job.lib_output,
+    )
+    if move_err is not None:
+        _cleanup_temp(temp_dir)
+        history.mark_failed(str(ctx["filepath"]), move_err)
+        return False, temp_dir
+    if ctx["output_path"].exists():
+        ctx["output_path"].unlink()
+    _cleanup_temp(temp_dir)
+    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx, dist_path=final_path)
+    verdict = vmaf_verdict(vmaf_score, ctx["ratio"])
+    return (
+        _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path),
+        temp_dir,
+    )
 
 
 def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:

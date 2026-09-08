@@ -305,6 +305,42 @@ class TestPostTranscodeAsync:
         history.mark_await_postprocess.assert_not_called()
         assert vmaf_tasks.empty()
 
+    def test_async_accept_scores_landed_file(self, tmp_path):
+        # async 全链：先落盘→打分对象是库中文件→accept 不复拷→删源记终态。
+        mock_vmaf = MagicMock(return_value=95.0)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=mock_vmaf, vmaf_mode=config.VMAF_MODE_ASYNC
+        )
+        result = post_process_stage(pipeline, job)
+        assert result is True
+        landed = tmp_path / "test.mkv"
+        assert landed.exists()
+        assert landed.read_text() == "transcoded"
+        assert not input_file.exists()
+        assert not output.exists()
+        # 打分对象是落盘文件而非 temp 产物（所见即所得）
+        assert mock_vmaf.call_args[0][1] == landed
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), str(landed), vmaf_score=95.0, rejected=False
+        )
+
+    def test_async_reject_removes_landed_file(self, tmp_path):
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=60.0),
+            vmaf_mode=config.VMAF_MODE_ASYNC,
+        )
+        result = post_process_stage(pipeline, job)
+        assert result is True
+        assert input_file.exists()
+        assert not (tmp_path / "test.mkv").exists()
+        assert not output.exists()
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), None, vmaf_score=60.0, rejected=True
+        )
+
 
 class TestPostTranscodeActiveTempDir:
     """post_process_stage 搬移完成后必须把 temp_dir 从活跃集移除。
