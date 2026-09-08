@@ -21,6 +21,27 @@ from src.vmaf_async import is_shutting_down
 log = __import__("logging").getLogger(__name__)
 
 
+def _land_output(output_path, filepath, filename, input_dir, output_dir):
+    """
+    把 temp 区产物复制到目标库。成功返回 (final_path, None)，
+    失败返回 (None, err_msg)（已打日志）。
+
+    Copy the temp output into the target library. Returns (final_path, None)
+    on success, (None, err_msg) on failure (already logged).
+    """
+    final_path = _final_dest_path(filepath, filename, input_dir, output_dir)
+    if final_path.name != filename:
+        log.info("DEST EXISTS: using %s instead of %s", final_path.name, filename)
+    # 跨文件系统不用 rename，NFS 上不用 copy2/chmod，只用 copyfile
+    # No rename across filesystems, no copy2/chmod (may raise EPERM on NFS).
+    try:
+        shutil.copyfile(str(output_path), str(final_path))
+    except OSError as e:
+        log.error("FILE MOVE FAILED: %s — %s", final_path.name, e)
+        return None, f"File move failed: {e}"
+    return final_path, None
+
+
 def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
     对转码成功的产物执行后处理（质量判定 + 落盘），与 transcode 构成两段式流水线：
@@ -29,8 +50,9 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
       2. 非 off 模式调用 compute_vmaf 对 temp 区产物 inline 打分，
          按 verdict 决定接受/拒绝（sync/async 同序：先打分、后落盘）
       3. 接受：落盘→清 temp→删源（除非 keep_source），记 mark_done；
-         拒绝：记 mark_done(rejected)，保留源文件，产物默认清掉，
-         KEEP_TARGET=True 时保留 temp 产物供人工复核
+         拒绝：记 mark_done(rejected)，保留源文件；
+         KEEP_TARGET=True 时拒绝也落盘到目标库（供人工复核），
+         否则拒绝不落盘、只清 temp
       4. 任何未预期异常统一 mark_failed 兜底
 
     与 transcode 的分工：transcode 只负责编码，产物留在 cache 临时目录；
@@ -43,8 +65,9 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
       2. Non-off modes score the temp output inline via compute_vmaf and decide
          by the verdict (sync/async share the order: score first, land later)
       3. Accept: land the file, clean temp, delete source unless keep_source,
-         record mark_done; reject: record mark_done(rejected), keep the source,
-         remove the output unless KEEP_TARGET keeps the temp file for review
+         record mark_done; reject: record mark_done(rejected), keep the source;
+         with KEEP_TARGET the rejected file is still landed into the target
+         library (for manual review), otherwise no landing, only temp cleanup
       4. Any unexpected exception is caught and recorded as failed
 
     Division of labor: transcode only encodes and leaves the output in the cache
@@ -87,11 +110,25 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
 
-        # ratio 超标直接拒绝：不打分、不落盘（三种模式一致，off 下同样拒绝）。
-        # Reject outright on over-ratio: no scoring, no landing (all modes, off included).
+        # ratio 超标直接拒绝：不打分（三种模式一致，off 下同样拒绝）。
+        # KEEP_TARGET=True 时仍落盘到目标库，仅记 rejected。
+        # Reject outright on over-ratio: no scoring (all modes, off included).
+        # With KEEP_TARGET the file is still landed, only recorded rejected.
         if ratio > config.ACCEPT_RATIO_MAX:
+            landed_path = None
+            if config.KEEP_TARGET:
+                final_path, move_err = _land_output(
+                    output_path, filepath, expect_filename, input_dir, output_dir
+                )
+                if move_err is not None:
+                    _cleanup_temp(temp_dir)
+                    history.mark_failed(str(filepath), move_err)
+                    return False
+                landed_path = str(final_path)
+            if output_path.exists():
+                output_path.unlink()
             _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
+            history.mark_done(str(filepath), landed_path, vmaf_score=None, rejected=True)
             log.warning(
                 "REJECT: %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
                 filepath.name,
@@ -127,30 +164,20 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
             verdict = "accept"
 
         if verdict == "accept":
-            final_path = _final_dest_path(filepath, expect_filename, input_dir, output_dir)
-            if final_path.name != expect_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, expect_filename)
-            # 先落盘后记 history；跨文件系统不用 rename，NFS 上不用 copy2/chmod
-            # Land the file before recording history; no rename across filesystems,
-            # no copy2/chmod (may raise EPERM on NFS) — copyfile only.
-            try:
-                shutil.copyfile(str(output_path), str(final_path))
-                if output_path.exists():
-                    output_path.unlink()
+            # 先落盘后记 history
+            # Land the file before recording history.
+            final_path, move_err = _land_output(
+                output_path, filepath, expect_filename, input_dir, output_dir
+            )
+            if move_err is not None:
                 _cleanup_temp(temp_dir)
-                if not keep_source:
-                    filepath.unlink()
-            except OSError as e:
-                log.error(
-                    "FILE MOVE FAILED: %s (VMAF %.2f, ratio %.1f%%) — %s",
-                    final_path.name,
-                    vmaf_score or 0,
-                    ratio * 100,
-                    e,
-                )
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
+                history.mark_failed(str(filepath), move_err)
                 return False
+            if output_path.exists():
+                output_path.unlink()
+            _cleanup_temp(temp_dir)
+            if not keep_source:
+                filepath.unlink()
             history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
             if vmaf_elapsed is not None:
                 log.info(
@@ -173,20 +200,29 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
                     elapsed,
                 )
         else:
-            # KEEP_TARGET=True 时保留 temp 区产物供人工复核（仍记 rejected，不删源）；
-            # 否则清掉 temp 产物。落盘只发生在 accept，此处不存在已落盘文件。
-            # With KEEP_TARGET keep the temp output for manual review (still rejected,
-            # source kept); otherwise remove it. Landing happens only on accept, so
-            # no landed file exists here.
+            # KEEP_TARGET=True 时落盘到目标库但仍记 rejected（源保留，供人工复核）；
+            # 否则不落盘、只清 temp。
+            # With KEEP_TARGET land into the target library but still record rejected
+            # (source kept, for manual review); otherwise no landing, temp cleanup only.
+            landed_path = None
             if config.KEEP_TARGET:
-                log.warning(
-                    "REJECT (kept): %s temp output kept at %s for manual review",
-                    filepath.name,
-                    output_path,
+                final_path, move_err = _land_output(
+                    output_path, filepath, expect_filename, input_dir, output_dir
                 )
-            else:
-                _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
+                if move_err is not None:
+                    _cleanup_temp(temp_dir)
+                    history.mark_failed(str(filepath), move_err)
+                    return False
+                landed_path = str(final_path)
+                log.warning(
+                    "REJECT (kept): %s landed at %s for manual review",
+                    filepath.name,
+                    landed_path,
+                )
+            if output_path.exists():
+                output_path.unlink()
+            _cleanup_temp(temp_dir)
+            history.mark_done(str(filepath), landed_path, vmaf_score=vmaf_score, rejected=True)
             if vmaf_elapsed is not None:
                 log.warning(
                     "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐

@@ -134,7 +134,7 @@ def _apply_cli_overrides():
     parser.add_argument(
         "--keep-target",
         action="store_true",
-        help="Keep the landed transcoded output on rejection (record rejected only)",
+        help="Land the transcoded output into the target library even on rejection",
     )
     parser.add_argument(
         "--vmaf-threads",

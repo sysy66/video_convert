@@ -234,6 +234,45 @@ class TestPostTranscodeSync:
             str(input_file), None, vmaf_score=60.0, rejected=True
         )
 
+    def test_reject_with_keep_target_lands_output(self, tmp_path):
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=60.0),
+            vmaf_mode=config.VMAF_MODE_SYNC,
+        )
+        with patch("src.post_process.config.KEEP_TARGET", True):
+            result = post_process_stage(pipeline, job)
+        assert result is True
+        assert input_file.exists()
+        landed = tmp_path / "test.mkv"
+        assert landed.exists()
+        assert landed.read_text() == "transcoded"
+        assert not output.exists()
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), str(landed), vmaf_score=60.0, rejected=True
+        )
+
+    def test_ratio_over_max_with_keep_target_lands_output(self, tmp_path):
+        mock_vmaf = MagicMock(return_value=95.0)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=mock_vmaf, vmaf_mode=config.VMAF_MODE_SYNC
+        )
+        input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
+        with (
+            patch("src.post_process.config.KEEP_TARGET", True),
+            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+        ):
+            result = post_process_stage(pipeline, job)
+        assert result is True
+        mock_vmaf.assert_not_called()
+        assert input_file.exists()
+        assert (tmp_path / "test.mkv").exists()
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), str(tmp_path / "test.mkv"), vmaf_score=None, rejected=True
+        )
+
     def test_move_failure_marks_failed(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
             tmp_path, vmaf_mode=config.VMAF_MODE_OFF
