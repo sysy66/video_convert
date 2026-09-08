@@ -74,6 +74,15 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ---
 
+## ◐ v1.6 — Post-process rework (进行中)
+
+- [x] **后台 worker 链删除** — `vmaf_async.py`（队列/worker/recover）与 `await_postprocess` 状态机删除；关停 flag 移入新建 `src/shutdown.py`；残留记录启动一次性迁回 `pending_transcode`
+- [x] **async 先落盘后打分** — `--vmaf async` 改为 land-first inline 打分，打分对象为库中文件（所见即所得）；sync 保持先打分后落盘；判定规则两模式一致
+- [x] **后处理 dispatcher** — `post_process_stage` 按 `vmaf_mode` 路由 ratio-only/sync/async 三函数，唯一 try/except/finally 护栏
+- [x] **KEEP_TARGET** — 新增：reject（含 ratio 超标）时新文件仍落盘到目标库，仅记 `rejected`（默认关闭，需人工复核）
+
+---
+
 ## 🗺 v2.0 — Web UI & API (远期规划，暂缓)
 
 - [ ] **REST API** (FastAPI) — expose transcode queue, history, and progress

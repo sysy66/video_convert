@@ -15,7 +15,7 @@ Watches directories for new video files, transcodes them via Intel Quick Sync Vi
 - **Crash-safe** — stale `.work_*` temp dirs and `started` history entries are cleaned on startup
 - **Per-file 5-hour timeout** — prevents NFS hangs from freezing the daemon forever
 - **SQLite history** — thread-safe, WAL-mode, zero dependencies beyond stdlib
-- **Async VMAF scoring** — `--vmaf async`: keep source, score in a background worker, keep exactly one file
+- **Async VMAF scoring** — `--vmaf async`: land first, then score the library file (what you see is what you score); same verdict rules as sync
 
 ## Quick Start
 
@@ -57,7 +57,7 @@ src/
   process_guard.py — PID registry, per-file timeout kill, stale-started recovery
   path_utils.py    — temp/unique path helpers
   temp_cleanup.py  — stale .work_* cleanup (skips active jobs)
-  vmaf_async.py    — async VMAF scoring workers (pending_vmaf state machine)
+  shutdown.py      — graceful-shutdown flag
   quality.py       — VMAF computation and accept/reject decision
   history.py       — SQLite-persisted state machine (started/pending_vmaf/success/rejected/failed/not required)
   probe.py         — ffprobe wrapper for stream + codec detection

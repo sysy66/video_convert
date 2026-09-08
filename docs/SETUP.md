@@ -135,10 +135,10 @@ video_convert/
 │   ├── probe.py
 │   ├── process_guard.py
 │   ├── quality.py
+│   ├── shutdown.py
 │   ├── temp_cleanup.py
 │   ├── transcoder.py
 │   ├── validation.py
-│   ├── vmaf_async.py
 │   └── walker.py
 ├── tests/
 │   ├── conftest.py
@@ -157,7 +157,6 @@ video_convert/
 │   ├── test_transcoder.py
 │   ├── test_transcoder_helpers.py
 │   ├── test_validation.py
-│   ├── test_vmaf_async.py
 │   ├── test_vmaf_integration.py
 │   └── test_walker.py
 ├── .forgejo/workflows/   # CI workflow (Forgejo Actions)
@@ -199,9 +198,9 @@ video_convert/
 | `VMAF_MODEL_PATH` | `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` | VMAF model (negative-float features). CLI: `--vmaf-model` |
 | `VMAF_TIMEOUT` | 36000 | VMAF scoring timeout per file (seconds, 10 h) |
 | `VMAF_HWACCEL` | `True` | QSV hardware-accelerated decode for VMAF; falls back to software on failure (`VMAF_HW_FALLBACK`) |
-| `VMAF_MODE` | `"off"` | VMAF scoring mode: `off` (ratio check only) / `sync` (inline scoring) / `async` (background worker). CLI: `--vmaf off|sync|async` |
-| `VMAF_WORKERS` | 1 | Number of async VMAF scoring worker threads |
-| `VMAF_EXTREME_LOW` | 60 | 保留参数（历史阈值说明）；当前打分失败与极端低分均按拒绝处理（保留源文件，记 rejected），仅关停中断的打分延后重打 |
+| `VMAF_MODE` | `"off"` | VMAF scoring mode: `off` (ratio check only) / `sync` (score temp, then land) / `async` (land first, then score the landed file). CLI: `--vmaf off|sync|async` |
+| `VMAF_WORKERS` | 1 | Post-process pool threads (`post_pool` max_workers) |
+| `VMAF_EXTREME_LOW` | 60 | 保留参数（历史阈值说明）；当前打分失败与极端低分均按拒绝处理（保留源文件，记 rejected） |
 | `VMAF_ACCEPT_HIGH` | 93 | VMAF ≥ this → accept if ratio ≤ `ACCEPT_RATIO_MAX` |
 | `VMAF_ACCEPT_LOW` | 80 | VMAF < this → reject |
 | `ACCEPT_RATIO_MAX` | 1.00 | Max output/input size ratio for high-VMAF accept |
@@ -236,7 +235,7 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 
 ### Behaviour / 行为
 
-- VMAF 默认关闭，需显式启用：`--vmaf sync`（同步打分）或 `--vmaf async`（异步打分，见下）。
+- VMAF 默认关闭，需显式启用：`--vmaf sync`（先打分后落盘）或 `--vmaf async`（先落盘后打分，见下）。
 - 打分前对源与产物做帧序对齐（`setpts=N/30/TB` 按帧号线性化），消除 VFR→CFR 帧序漂移造成的分数虚低；两路帧数相对差 >1% 或不可得时不下分（判为异常）。
 - If VMAF is unavailable (binary missing, timeout, or error) and `VMAF_MODE != "off"`, the result is **REJECTED** — no score means no accept.
 - The score is stored in `data/history.db` under the `vmaf_score` column.
@@ -252,23 +251,21 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
   - VMAF 80–92 → accept only if output is ≥25% smaller (ratio ≤ 0.75)
   - VMAF < 80 → reject
   - VMAF unavailable → reject (仅当 `VMAF_MODE != "off"`)
-  - VMAF < 60（`VMAF_EXTREME_LOW`）→ 视为输入/产物异常，按 failed 退避重试，不永久拒绝
+  - VMAF < 60（`VMAF_EXTREME_LOW`）→ 同样拒绝（保留源文件，记 rejected）
 
 ### Async mode / 异步模式（`--vmaf async`）
 
-默认（同步）模式下 VMAF 打分在转码线程内执行，一次打分可阻塞数分钟到数小时。
-开启异步模式后：
+与同步模式的唯一区别是落盘与打分的先后：先把转码产物放入输出库，再对库中文件打分（所见即所得）。打分仍为 inline（阻塞 post 线程），无后台 worker，判定规则与 sync 完全一致（同一 `vmaf_verdict`）。
 
-1. 转码成功 → 输出文件立即移入输出区，**源文件保留在原位**，状态记为 `pending_vmaf`。
-2. 后台 worker 线程（`VMAF_WORKERS` 个，默认 1）随后对比源文件与新文件打分。
-3. 打分完成：接受 → 删除源文件，状态 `success`；拒绝（含打分失败）→ 删除输出区新文件，状态 `rejected`。
-4. `ratio` 超过 `ACCEPT_RATIO_MAX` 时必拒，直接丢弃输出不排队打分（打分很贵，不浪费）。
+1. 转码成功 → 输出文件立即移入输出区，随后对库中文件打分（终态落定前源文件保留）。
+2. 打分完成：接受 → 删除源文件（除非 `--keep-source`），状态 `success`；拒绝 → 按 `KEEP_TARGET` 处置库中文件（默认删除），状态 `rejected`，源文件保留。
+3. `ratio` 超过 `ACCEPT_RATIO_MAX` 时必拒（`KEEP_TARGET=True` 时仍落盘，仅记 rejected）。
+4. 崩溃窗口：落盘与终态记录之间崩溃会在输出库留下孤儿文件（下次转码去重为 `.1` 后缀），属 land-first 固有代价。
 
 注意事项：
 
-- **打分窗口期源文件与输出文件双份存在**，请确保磁盘空间充足。
-- 优雅关闭（SIGINT/SIGTERM）时主循环会等待所有排队打分完成（`drain`）。
-- 进程被 `kill -9` 后残留的 `pending_vmaf` 记录会在下次启动时自动恢复重新打分。
+- **打分前输出文件已在库中**，采集器（Jellyfin/Plex）可能在 verdict 落定前扫到被拒文件。
+- 关停中断的打分视同普通打分失败记 `rejected`（保留源文件，可手动重跑），不延后。
 
 ```
 python3 main.py --vmaf async ...（其余参数照常）
