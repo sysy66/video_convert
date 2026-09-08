@@ -16,10 +16,7 @@ from src.temp_cleanup import (
     _active_temp_dirs_lock,
     _cleanup_temp,
 )
-from src.vmaf_async import (
-    is_shutting_down,
-    vmaf_tasks,
-)
+from src.vmaf_async import is_shutting_down
 
 log = __import__("logging").getLogger(__name__)
 
@@ -28,12 +25,12 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
     """
     对转码成功的产物执行后处理（质量判定 + 落盘），与 transcode 构成两段式流水线：
       0. 从 history 取回产物路径并校验存在性，计算压缩比 ratio
-      1. ratio 超标直接拒绝（必拒，省去昂贵的采样打分），保留源文件
-      2. 异步模式：产物复制到最终目录但不删源，投入 vmaf_tasks 由后台打分
-         同步模式：调用 compute_vmaf 打分，按 verdict 决定接受/拒绝
-         - 关停期间打分被中断（score=None 且 is_shutting_down）不记终态，
-           转为 await_postprocess 待下次启动 recover 重打分
-      3. 接受：删除源文件（除非 keep_source）；拒绝：保留源文件；均记 mark_done
+      1. ratio 超标直接拒绝（不打分、不落盘，三种模式一致），保留源文件
+      2. 非 off 模式调用 compute_vmaf 对 temp 区产物 inline 打分，
+         按 verdict 决定接受/拒绝（sync/async 同序：先打分、后落盘）
+      3. 接受：落盘→清 temp→删源（除非 keep_source），记 mark_done；
+         拒绝：记 mark_done(rejected)，保留源文件，产物默认清掉，
+         KEEP_TARGET=True 时保留 temp 产物供人工复核
       4. 任何未预期异常统一 mark_failed 兜底
 
     与 transcode 的分工：transcode 只负责编码，产物留在 cache 临时目录；
@@ -42,13 +39,12 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
     Post-processes a successfully transcoded output (quality gate + final placement),
     forming the second stage of the pipeline started by transcode:
       0. Fetch and verify the output path from history, compute compression ratio
-      1. Reject outright if ratio exceeds ACCEPT_RATIO_MAX (skip expensive scoring)
-      2. Async mode: copy output into place, queue for background VMAF scoring.
-         Sync mode: score via compute_vmaf; on shutdown-interrupted scoring
-         (score=None and is_shutting_down) defer as await_postprocess instead of
-         recording a terminal state
-      3. Accept: delete source unless keep_source; reject: keep source;
-         both recorded via mark_done
+      1. Reject outright on over-ratio (no scoring, no landing, all modes)
+      2. Non-off modes score the temp output inline via compute_vmaf and decide
+         by the verdict (sync/async share the order: score first, land later)
+      3. Accept: land the file, clean temp, delete source unless keep_source,
+         record mark_done; reject: record mark_done(rejected), keep the source,
+         remove the output unless KEEP_TARGET keeps the temp file for review
       4. Any unexpected exception is caught and recorded as failed
 
     Division of labor: transcode only encodes and leaves the output in the cache
@@ -71,6 +67,7 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
     ffprobe_path = pipeline.ffprobe_path
     keep_source = pipeline.keep_source
     compute_vmaf = pipeline.compute_vmaf
+    vmaf_mode = pipeline.vmaf_mode
     filepath = Path(job.filepath)
     dist_frame_count = job.dist_frame_count
     elapsed = job.elapsed
@@ -79,74 +76,19 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
     temp_dir = None
     try:
         stem = filepath.stem
-        output_filename = f"{stem}.mkv"
+        expect_filename = f"{stem}.mkv"
         input_size = filepath.stat().st_size
-        output_path = Path(history.get_output_path(str(filepath)))
-        if output_path is None or not output_path.exists():
+        raw_output = history.get_output_path(str(filepath))
+        if raw_output is None or not Path(raw_output).exists():
             history.mark_failed(str(filepath), "output path missing after transcode")
             return False
+        output_path = Path(raw_output)
+        temp_dir = output_path.parent
         output_size = output_path.stat().st_size
         ratio = output_size / input_size if input_size else 0
-        temp_dir = output_path.parent
-        # 异步 VMAF：文件先移入输出区但不删源，后台 worker 打分后决定去留。
-        # 与内联打分完全互斥（内联 VMAF 耗时数分钟到数小时，阻塞转码线程）。
-        # Async VMAF: move the output into place but keep the source; a background
-        # worker scores it later and keeps exactly one of the two files.
-        if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
-            if ratio > config.ACCEPT_RATIO_MAX:
-                # ratio 超标必拒（VMAF ≥ 93 也要求 ratio ≤ ACCEPT_RATIO_MAX），
-                # 直接拒绝不入队，省去昂贵的采样打分。
-                _cleanup_temp(temp_dir)
-                history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
-                log.warning(
-                    "REJECT (async): %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
-                    filepath.name,
-                    ratio * 100,
-                    config.ACCEPT_RATIO_MAX * 100,
-                )
-                return True
-            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-            if final_path.name != output_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            try:
-                shutil.copyfile(str(output_path), str(final_path))
-                output_path.unlink()
-                _cleanup_temp(temp_dir)
-            except OSError as e:
-                log.error(
-                    "FILE MOVE FAILED (async): %s — %s",
-                    final_path.name,
-                    e,
-                )
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
-                return False
-            history.mark_await_postprocess(str(filepath), str(final_path), dist_frame_count)
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put(
-                (
-                    str(filepath),
-                    str(final_path),
-                    ratio,
-                    safe_stem,
-                    history,
-                    elapsed,
-                    keep_source,
-                    dist_frame_count,
-                    ffprobe_path,
-                )
-            )
-            log.info(
-                "VMAF PENDING (async): %s (%s, ratio %.1f%%, codec %.1fs, queued for scoring)",
-                final_path.name,
-                _format_size(output_size),
-                ratio * 100,
-                elapsed,
-            )
-            return True
 
-        # ratio 超标则直接跳过 VMAF（必拒，省去几十分钟到2小时的采样打分），
-        # 与 async 路径一致：不入队、不做任何质量判定。
+        # ratio 超标直接拒绝：不打分、不落盘（三种模式一致，off 下同样拒绝）。
+        # Reject outright on over-ratio: no scoring, no landing (all modes, off included).
         if ratio > config.ACCEPT_RATIO_MAX:
             _cleanup_temp(temp_dir)
             history.mark_done(str(filepath), None, vmaf_score=None, rejected=True)
@@ -160,7 +102,7 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
 
         vmaf_score = None
         vmaf_elapsed = None
-        if config.VMAF_MODE != config.VMAF_MODE_OFF:
+        if vmaf_mode != "off":
             safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
             vmaf_log = (
                 Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
@@ -179,67 +121,22 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
             vmaf_elapsed = _time.monotonic() - vmaf_start
             job.vmaf_score = vmaf_score  # 回填 Job，打分结果随任务对象可查
 
-        # off 模式（--vmaf off）：无质量门，仅按大小比接受（此处 ratio 已 ≤ MAX）。
-        # sync/async 一致：打分失败(None)与极端低分按 verdict 走 reject（保留源文件，
-        # 记 rejected）；仅关停中断的打分延后，不记终态。
-        if config.VMAF_MODE != config.VMAF_MODE_OFF:
+        if vmaf_mode != "off":
             verdict = vmaf_verdict(vmaf_score, ratio)
         else:
             verdict = "accept"
 
-        # verdict 只剩 accept/reject；关停中断的打分与 verdict 无关，单独豁免
-        # (b68e5b6 语义保留：非真实质量问题不记终态，产物留待下次启动重打分)。
-        # Only accept/reject remain; shutdown-interrupted scoring is exempted
-        # independently of the verdict (keeps the b68e5b6 semantics).
-        if vmaf_score is None and is_shutting_down():
-            # 关停中被中断/失败的打分：非真实质量问题，转 await_postprocess
-            # 保留产物供下次启动 recover 重新打分，不记终态。
-            # Scoring interrupted by shutdown: keep the output as pending and
-            # rescore it on next startup instead of recording a terminal state.
-            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-            if final_path.name != output_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            try:
-                shutil.copyfile(str(output_path), str(final_path))
-                output_path.unlink()
-                _cleanup_temp(temp_dir)
-            except OSError as e:
-                log.error("FILE MOVE FAILED (async): %s — %s", final_path.name, e)
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), f"File move failed: {e}")
-                return False
-            history.mark_await_postprocess(str(filepath), str(final_path), dist_frame_count)
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_tasks.put(
-                (
-                    str(filepath),
-                    str(final_path),
-                    ratio,
-                    safe_stem,
-                    history,
-                    elapsed,
-                    keep_source,
-                    dist_frame_count,
-                    ffprobe_path,
-                )
-            )
-            log.info(
-                "VMAF DEFERRED (sync, shutting down): %s kept pending for rescore",
-                final_path.name,
-            )
-            return True
-
         if verdict == "accept":
-            final_path = _final_dest_path(filepath, output_filename, input_dir, output_dir)
-            if final_path.name != output_filename:
-                log.info("DEST EXISTS: using %s instead of %s", final_path.name, output_filename)
-            # 先移动文件，成功后再记录 history；失败不影响 VMAF 日志
-            # Copy output before logging acceptance — file I/O may fail on NFS
+            final_path = _final_dest_path(filepath, expect_filename, input_dir, output_dir)
+            if final_path.name != expect_filename:
+                log.info("DEST EXISTS: using %s instead of %s", final_path.name, expect_filename)
+            # 先落盘后记 history；跨文件系统不用 rename，NFS 上不用 copy2/chmod
+            # Land the file before recording history; no rename across filesystems,
+            # no copy2/chmod (may raise EPERM on NFS) — copyfile only.
             try:
-                # 跨文件系统时 os.rename 不可用，且 copy2/chmod 在 NFS 上 EPERM
-                # os.rename fails across filesystems; copy2/copymode raises EPERM on NFS
                 shutil.copyfile(str(output_path), str(final_path))
-                output_path.unlink()
+                if output_path.exists():
+                    output_path.unlink()
                 _cleanup_temp(temp_dir)
                 if not keep_source:
                     filepath.unlink()
@@ -276,7 +173,19 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
                     elapsed,
                 )
         else:
-            _cleanup_temp(temp_dir)
+            # KEEP_TARGET=True 时保留 temp 区产物供人工复核（仍记 rejected，不删源）；
+            # 否则清掉 temp 产物。落盘只发生在 accept，此处不存在已落盘文件。
+            # With KEEP_TARGET keep the temp output for manual review (still rejected,
+            # source kept); otherwise remove it. Landing happens only on accept, so
+            # no landed file exists here.
+            if config.KEEP_TARGET:
+                log.warning(
+                    "REJECT (kept): %s temp output kept at %s for manual review",
+                    filepath.name,
+                    output_path,
+                )
+            else:
+                _cleanup_temp(temp_dir)
             history.mark_done(str(filepath), None, vmaf_score=vmaf_score, rejected=True)
             if vmaf_elapsed is not None:
                 log.warning(

@@ -281,6 +281,13 @@ VMAF_WORKERS = 1
 # only place the output into the output directory (useful for verification or batches).
 KEEP_SOURCE = False
 
+# 拒绝时保留已落盘的转码产物：True=reject（含 ratio 超标）时不删除输出区的产物文件，
+# 仅记 rejected（用于人工复核被拒文件）；False=拒绝时删除产物，只保留源文件。
+# Keep the landed transcoded output on rejection: True=do not delete the output file
+# on reject (including ratio-over-max), only record rejected (for manual review of
+# rejected files); False=delete the output on reject, keeping only the source.
+KEEP_TARGET = False
+
 # 质量接受规则阈值 / Quality acceptance thresholds
 # 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），记 failed
 # 永久排除，仅 --retry-failed 启动时手动重试。

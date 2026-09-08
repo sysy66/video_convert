@@ -132,6 +132,11 @@ def _apply_cli_overrides():
         help="Keep the source file after a successful transcode",
     )
     parser.add_argument(
+        "--keep-target",
+        action="store_true",
+        help="Keep the landed transcoded output on rejection (record rejected only)",
+    )
+    parser.add_argument(
         "--vmaf-threads",
         type=int,
         metavar="N",
@@ -178,6 +183,8 @@ def _apply_cli_overrides():
         config.VMAF_HW_FALLBACK = False
     if args.keep_source:
         config.KEEP_SOURCE = True
+    if args.keep_target:
+        config.KEEP_TARGET = True
     if args.vmaf_threads is not None:
         config.VMAF_N_THREADS = args.vmaf_threads
     if args.retry_failed:
@@ -239,6 +246,7 @@ def main_loop():
         ffprobe_path=config.FFPROBE_PATH,
         compute_vmaf=compute_vmaf,
         keep_source=config.KEEP_SOURCE,
+        vmaf_mode=config.VMAF_MODE,
     )
 
     errors, warnings = validate_config()

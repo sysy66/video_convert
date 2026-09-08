@@ -61,6 +61,7 @@ def _make_stage(
     keep_source=False,
     input_dir=None,
     output_dir=None,
+    vmaf_mode=config.VMAF_MODE_SYNC,
 ):
     """构造 (pipeline, job) 两段式入参；input_file/output/history 照旧返回供断言。"""
     input_file, output, history, info = _make(tmp_path, name, out_name)
@@ -70,6 +71,7 @@ def _make_stage(
         ffprobe_path="/ffprobe",
         compute_vmaf=compute_vmaf,
         keep_source=keep_source,
+        vmaf_mode=vmaf_mode,
     )
     job = TranscodeJob(
         pipeline=pipeline,
@@ -112,9 +114,10 @@ class TestPostTranscodeSync:
     def test_off_mode_accepts_on_ratio_only(self, tmp_path):
         # off 模式（VMAF_MODE_OFF）：不调打分，接受并删除源、移入最终位置。
         mock_vmaf = MagicMock()
-        pipeline, job, input_file, output, history = _make_stage(tmp_path, compute_vmaf=mock_vmaf)
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            result = post_process_stage(pipeline, job)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=mock_vmaf, vmaf_mode=config.VMAF_MODE_OFF
+        )
+        result = post_process_stage(pipeline, job)
 
         assert result is True
         mock_vmaf.assert_not_called()
@@ -124,21 +127,21 @@ class TestPostTranscodeSync:
         assert history.mark_done.call_args[1]["rejected"] is False
 
     def test_accept_keeps_source_when_keep_source(self, tmp_path):
-        pipeline, job, input_file, output, history = _make_stage(tmp_path, keep_source=True)
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            post_process_stage(pipeline, job)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, keep_source=True, vmaf_mode=config.VMAF_MODE_OFF
+        )
+        post_process_stage(pipeline, job)
         assert input_file.exists()
         assert (tmp_path / "test.mkv").exists()
 
     def test_ratio_over_max_rejects_without_scoring(self, tmp_path):
         # ratio 超标必拒，省去打分；保留源文件，标 rejected。
         mock_vmaf = MagicMock(return_value=95.0)
-        pipeline, job, input_file, output, history = _make_stage(tmp_path, compute_vmaf=mock_vmaf)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, compute_vmaf=mock_vmaf, vmaf_mode=config.VMAF_MODE_SYNC
+        )
         input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
-        with (
-            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
-        ):
+        with patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5):
             result = post_process_stage(pipeline, job)
 
         assert result is True
@@ -151,9 +154,29 @@ class TestPostTranscodeSync:
 
     def test_score_failed_rejects(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
-            tmp_path, compute_vmaf=MagicMock(return_value=None)
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=None),
+            vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        result = post_process_stage(pipeline, job)
+        assert result is True
+        assert input_file.exists()
+        assert not output.exists()
+        assert job.vmaf_score is None
+        history.mark_failed.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(input_file), None, vmaf_score=None, rejected=True
+        )
+
+    def test_score_none_during_shutdown_rejects(self, tmp_path):
+        # 关停中断的打分视同普通打分失败：记 rejected（保留源文件），
+        # 不再延后（await_postprocess/recover 已随 async 退役）。
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=None),
+            vmaf_mode=config.VMAF_MODE_SYNC,
+        )
+        with patch("src.post_process.is_shutting_down", return_value=True):
             result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
@@ -164,29 +187,13 @@ class TestPostTranscodeSync:
             str(input_file), None, vmaf_score=None, rejected=True
         )
 
-    def test_score_failed_during_shutdown_defers(self, tmp_path):
-        # 关停中打分失败（None）：转 await_postprocess 保留产物，不标 failed。
-        pipeline, job, input_file, output, history = _make_stage(
-            tmp_path, compute_vmaf=MagicMock(return_value=None)
-        )
-        with (
-            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("src.post_process.is_shutting_down", return_value=True),
-        ):
-            result = post_process_stage(pipeline, job)
-        assert result is True
-        history.mark_failed.assert_not_called()
-        history.mark_done.assert_not_called()
-        history.mark_await_postprocess.assert_called_once()
-        assert not vmaf_tasks.empty()
-        vmaf_tasks.get_nowait()
-
     def test_extreme_low_rejects(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
-            tmp_path, compute_vmaf=MagicMock(return_value=55.0)
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=55.0),
+            vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_process_stage(pipeline, job)
+        result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
         assert not output.exists()
@@ -198,10 +205,11 @@ class TestPostTranscodeSync:
 
     def test_accept_deletes_source_and_moves(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
-            tmp_path, compute_vmaf=MagicMock(return_value=95.0)
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=95.0),
+            vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_process_stage(pipeline, job)
+        result = post_process_stage(pipeline, job)
         assert result is True
         assert not input_file.exists()
         assert (tmp_path / "test.mkv").exists()
@@ -213,10 +221,11 @@ class TestPostTranscodeSync:
 
     def test_reject_keeps_source(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
-            tmp_path, compute_vmaf=MagicMock(return_value=60.0)
+            tmp_path,
+            compute_vmaf=MagicMock(return_value=60.0),
+            vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
-            result = post_process_stage(pipeline, job)
+        result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
         assert not (tmp_path / "test.mkv").exists()
@@ -226,11 +235,10 @@ class TestPostTranscodeSync:
         )
 
     def test_move_failure_marks_failed(self, tmp_path):
-        pipeline, job, input_file, output, history = _make_stage(tmp_path)
-        with (
-            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF),
-            patch("shutil.copyfile", side_effect=OSError("nfs down")),
-        ):
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, vmaf_mode=config.VMAF_MODE_OFF
+        )
+        with patch("shutil.copyfile", side_effect=OSError("nfs down")):
             result = post_process_stage(pipeline, job)
         assert result is False
         history.mark_failed.assert_called_once()
@@ -240,24 +248,6 @@ class TestPostTranscodeSync:
 class TestPostTranscodeAsync:
     def _make_async(self, tmp_path):
         return _make_stage(tmp_path)
-
-    def test_keeps_source_moves_output_and_queues(self, tmp_path):
-        pipeline, job, input_file, output, history = self._make_async(tmp_path)
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
-            result = post_process_stage(pipeline, job)
-        assert result is True
-        assert input_file.exists()
-        assert (tmp_path / "test.mkv").exists()
-        history.mark_await_postprocess.assert_called_once()
-        history.mark_done.assert_not_called()
-        assert not (tmp_path / "cache" / ".work_x").exists()
-
-        task = vmaf_tasks.get_nowait()
-        assert task[0] == str(input_file)
-        assert task[1] == str(tmp_path / "test.mkv")
-        assert task[3] == "test"
-        assert task[4] is history
-        assert task[8] == "/ffprobe"
 
     def test_ratio_over_max_rejects_without_queue(self, tmp_path):
         pipeline, job, input_file, output, history = self._make_async(tmp_path)
@@ -276,35 +266,6 @@ class TestPostTranscodeAsync:
         history.mark_await_postprocess.assert_not_called()
         assert vmaf_tasks.empty()
 
-    def test_output_moved_into_output_dir_preserving_subdir(self, tmp_path):
-        input_file = tmp_path / "input" / "sub" / "test.mp4"
-        input_file.parent.mkdir(parents=True)
-        input_file.write_text("fake video" * 10)
-        output = tmp_path / "cache" / ".work_x" / "test.mkv"
-        output.parent.mkdir(parents=True)
-        output.write_text("transcoded")
-        history = _make_history(str(output))
-        output_dir = tmp_path / "output"
-        pipeline = TranscodePipeline(
-            history=history, ffmpeg_path="/ffmpeg", ffprobe_path="/ffprobe"
-        )
-        job = TranscodeJob(
-            pipeline=pipeline,
-            filepath=input_file,
-            lib_input=tmp_path / "input",
-            lib_output=output_dir,
-            lib_cache=tmp_path / "cache",
-        )
-
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC):
-            result = post_process_stage(pipeline, job)
-        assert result is True
-        assert (output_dir / "sub" / "test.mkv").exists()
-        assert input_file.exists()
-        history.mark_await_postprocess.assert_called_once_with(
-            str(input_file), str(output_dir / "sub" / "test.mkv"), None
-        )
-
 
 class TestPostTranscodeActiveTempDir:
     """post_process_stage 搬移完成后必须把 temp_dir 从活跃集移除。
@@ -315,13 +276,14 @@ class TestPostTranscodeActiveTempDir:
     """
 
     def test_removes_temp_dir_from_active_set_after_accept(self, tmp_path):
-        pipeline, job, input_file, output, history = _make_stage(tmp_path)
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, vmaf_mode=config.VMAF_MODE_OFF
+        )
         temp_dir = str(output.parent)
         with _active_temp_dirs_lock:
             _active_temp_dirs.add(temp_dir)
         assert temp_dir in active_temp_dirs_snapshot()
 
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_OFF):
-            result = post_process_stage(pipeline, job)
+        result = post_process_stage(pipeline, job)
         assert result is True
         assert temp_dir not in active_temp_dirs_snapshot()
