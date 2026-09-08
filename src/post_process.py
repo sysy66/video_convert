@@ -42,42 +42,262 @@ def _land_output(output_path, filepath, filename, input_dir, output_dir):
     return final_path, None
 
 
+def _resolve_output(pipeline, job):
+    """
+    前置公共段：取产物路径→算 ratio→ratio 门（含 KEEP_TARGET 落盘）。
+    返回 (ctx, terminal)：terminal 为 None 表示继续；否则为已记终态的结果。
+    产物缺失返回 (None, False)；ratio 超标返回 (ctx, True)。
+
+    Shared preamble: resolve output, compute ratio, apply the ratio gate
+    (including KEEP_TARGET landing). Returns (ctx, terminal): terminal None
+    means continue; otherwise the already-recorded terminal result.
+    Missing output returns (None, False); over-ratio returns (ctx, True).
+    """
+    history = pipeline.history
+    filepath = Path(job.filepath)
+    stem = filepath.stem
+    expect_filename = f"{stem}.mkv"
+    input_size = filepath.stat().st_size
+    raw_output = history.get_output_path(str(filepath))
+    if raw_output is None or not Path(raw_output).exists():
+        history.mark_failed(str(filepath), "output path missing after transcode")
+        return None, False
+    output_path = Path(raw_output)
+    temp_dir = output_path.parent
+    output_size = output_path.stat().st_size
+    ratio = output_size / input_size if input_size else 0
+    ctx = {
+        "filepath": filepath,
+        "output_path": output_path,
+        "temp_dir": temp_dir,
+        "output_size": output_size,
+        "ratio": ratio,
+        "expect_filename": expect_filename,
+    }
+
+    # ratio 超标直接拒绝：不打分（三种模式一致，off 下同样拒绝）。
+    # KEEP_TARGET=True 时仍落盘到目标库，仅记 rejected。
+    # Reject outright on over-ratio: no scoring (all modes, off included).
+    # With KEEP_TARGET the file is still landed, only recorded rejected.
+    if ratio > config.ACCEPT_RATIO_MAX:
+        landed_path = None
+        if config.KEEP_TARGET:
+            final_path, move_err = _land_output(
+                output_path, filepath, expect_filename, job.lib_input, job.lib_output
+            )
+            if move_err is not None:
+                _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), move_err)
+                return ctx, False
+            landed_path = str(final_path)
+        if output_path.exists():
+            output_path.unlink()
+        _cleanup_temp(temp_dir)
+        history.mark_done(str(filepath), landed_path, vmaf_score=None, rejected=True)
+        log.warning(
+            "REJECT: %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
+            filepath.name,
+            ratio * 100,
+            config.ACCEPT_RATIO_MAX * 100,
+        )
+        return ctx, True
+    return ctx, None
+
+
+def _score_inline(pipeline, job, ctx):
+    """
+    对 temp 区产物 inline 打分，返回 (vmaf_score, vmaf_elapsed)，
+    并回填 job.vmaf_score。
+
+    Score the temp output inline. Returns (vmaf_score, vmaf_elapsed)
+    and fills back job.vmaf_score.
+    """
+    compute_vmaf = pipeline.compute_vmaf
+    filepath = ctx["filepath"]
+    output_path = ctx["output_path"]
+    stem = filepath.stem
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
+    vmaf_log = Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
+    vmaf_start = _time.monotonic()
+    # 源帧数走 nb_frames 容器索引快路径（mp4 秒级，mkv 回退全量计数），
+    # 产物帧数已由转码 stderr 解析，两路都不再需要打分侧全量探测
+    ref_frame_count = get_frame_count(filepath, pipeline.ffprobe_path)
+    vmaf_score = compute_vmaf(
+        filepath,
+        output_path,
+        log_path=vmaf_log,
+        ref_frame_count=ref_frame_count,
+        dist_frame_count=job.dist_frame_count,
+    )
+    vmaf_elapsed = _time.monotonic() - vmaf_start
+    job.vmaf_score = vmaf_score  # 回填 Job，打分结果随任务对象可查
+    return vmaf_score, vmaf_elapsed
+
+
+def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed):
+    """
+    按 verdict 落盘/清理并记终态，返回 bool。
+
+    Settle by the verdict (land/clean up and record the terminal state).
+    Returns bool.
+    """
+    history = pipeline.history
+    keep_source = pipeline.keep_source
+    filepath = ctx["filepath"]
+    output_path = ctx["output_path"]
+    temp_dir = ctx["temp_dir"]
+    output_size = ctx["output_size"]
+    ratio = ctx["ratio"]
+    expect_filename = ctx["expect_filename"]
+    elapsed = job.elapsed
+
+    if verdict == "accept":
+        # 先落盘后记 history
+        # Land the file before recording history.
+        final_path, move_err = _land_output(
+            output_path, filepath, expect_filename, job.lib_input, job.lib_output
+        )
+        if move_err is not None:
+            _cleanup_temp(temp_dir)
+            history.mark_failed(str(filepath), move_err)
+            return False
+        if output_path.exists():
+            output_path.unlink()
+        _cleanup_temp(temp_dir)
+        if not keep_source:
+            filepath.unlink()
+        history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
+        if vmaf_elapsed is not None:
+            log.info(
+                "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
+                final_path.name,
+                _format_size(output_size),
+                "smaller" if ratio < 1 else "larger",
+                ratio * 100,
+                vmaf_score,
+                elapsed,
+                vmaf_elapsed,
+            )
+        else:
+            log.info(
+                "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
+                final_path.name,
+                _format_size(output_size),
+                "smaller" if ratio < 1 else "larger",
+                ratio * 100,
+                elapsed,
+            )
+    else:
+        # KEEP_TARGET=True 时落盘到目标库但仍记 rejected（源保留，供人工复核）；
+        # 否则不落盘、只清 temp。
+        # With KEEP_TARGET land into the target library but still record rejected
+        # (source kept, for manual review); otherwise no landing, temp cleanup only.
+        landed_path = None
+        if config.KEEP_TARGET:
+            final_path, move_err = _land_output(
+                output_path, filepath, expect_filename, job.lib_input, job.lib_output
+            )
+            if move_err is not None:
+                _cleanup_temp(temp_dir)
+                history.mark_failed(str(filepath), move_err)
+                return False
+            landed_path = str(final_path)
+            log.warning(
+                "REJECT (kept): %s landed at %s for manual review",
+                filepath.name,
+                landed_path,
+            )
+        if output_path.exists():
+            output_path.unlink()
+        _cleanup_temp(temp_dir)
+        history.mark_done(str(filepath), landed_path, vmaf_score=vmaf_score, rejected=True)
+        if vmaf_elapsed is not None:
+            log.warning(
+                "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
+                filepath.name,
+                f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+                ratio * 100,
+                elapsed,
+                vmaf_elapsed,
+            )
+        else:
+            log.warning(
+                "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+                filepath.name,
+                f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
+                ratio * 100,
+                elapsed,
+            )
+    return True
+
+
+def _post_process_ratio_only(pipeline, job):
+    """
+    off 模式：只做 ratio 门，无打分，前置检查后直接 accept 落盘。
+    返回 (ok, temp_dir) 供 dispatcher 的 finally 释放活跃集。
+
+    Off mode: ratio gate only, no scoring; accept and land after the preamble.
+    Returns (ok, temp_dir) for the dispatcher's finally clause.
+    """
+    ctx, terminal = _resolve_output(pipeline, job)
+    temp_dir = ctx["temp_dir"] if ctx is not None else None
+    if terminal is not None:
+        return terminal, temp_dir
+    return _settle(pipeline, job, ctx, "accept", None, None), temp_dir
+
+
+def _post_process_scored(pipeline, job):
+    """
+    打分模式公共核心：前置检查→inline 打分→verdict→落盘/清理。
+    返回 (ok, temp_dir) 供 dispatcher 的 finally 释放活跃集。
+
+    Shared core for scoring modes: preamble → inline scoring →
+    verdict → settle. Returns (ok, temp_dir) for the dispatcher's finally.
+    """
+    ctx, terminal = _resolve_output(pipeline, job)
+    temp_dir = ctx["temp_dir"] if ctx is not None else None
+    if terminal is not None:
+        return terminal, temp_dir
+    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx)
+    verdict = vmaf_verdict(vmaf_score, ctx["ratio"])
+    return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed), temp_dir
+
+
+def _post_process_sync(pipeline, job):
+    """
+    sync 模式：inline 打分（阻塞转码线程）。
+    Sync mode: inline scoring (blocks the transcode thread).
+    """
+    return _post_process_scored(pipeline, job)
+
+
+def _post_process_async(pipeline, job):
+    """
+    async 模式：暂与 sync 同序 inline 打分（旧后台 worker 已退役）。
+    将来若恢复异步语义，在此分化。
+
+    Async mode: currently inline-scores exactly like sync (the background
+    worker is retired). Diverge here if async semantics ever return.
+    """
+    return _post_process_scored(pipeline, job)
+
+
 def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
-    对转码成功的产物执行后处理（质量判定 + 落盘），与 transcode 构成两段式流水线：
-      0. 从 history 取回产物路径并校验存在性，计算压缩比 ratio
-      1. ratio 超标直接拒绝（不打分、不落盘，三种模式一致），保留源文件
-      2. 非 off 模式调用 compute_vmaf 对 temp 区产物 inline 打分，
-         按 verdict 决定接受/拒绝（sync/async 同序：先打分、后落盘）
-      3. 接受：落盘→清 temp→删源（除非 keep_source），记 mark_done；
-         拒绝：记 mark_done(rejected)，保留源文件；
-         KEEP_TARGET=True 时拒绝也落盘到目标库（供人工复核），
-         否则拒绝不落盘、只清 temp
-      4. 任何未预期异常统一 mark_failed 兜底
+    后处理 dispatcher：按 pipeline.vmaf_mode 路由到三模式函数，
+    并持有唯一的 try/except/finally 护栏（关停豁免/失败兜底/活跃集释放）。
 
-    与 transcode 的分工：transcode 只负责编码，产物留在 cache 临时目录；
-    本函数负责此后的一切——质量门、VMAF 打分、移动落盘与最终状态记录。
+    路由：off → _post_process_ratio_only；sync → _post_process_sync；
+    async → _post_process_async；未知值警告后走 async。
 
-    Post-processes a successfully transcoded output (quality gate + final placement),
-    forming the second stage of the pipeline started by transcode:
-      0. Fetch and verify the output path from history, compute compression ratio
-      1. Reject outright on over-ratio (no scoring, no landing, all modes)
-      2. Non-off modes score the temp output inline via compute_vmaf and decide
-         by the verdict (sync/async share the order: score first, land later)
-      3. Accept: land the file, clean temp, delete source unless keep_source,
-         record mark_done; reject: record mark_done(rejected), keep the source;
-         with KEEP_TARGET the rejected file is still landed into the target
-         library (for manual review), otherwise no landing, only temp cleanup
-      4. Any unexpected exception is caught and recorded as failed
-
-    Division of labor: transcode only encodes and leaves the output in the cache
-    temp dir; this function owns everything after — quality gate, VMAF scoring,
-    moving to destination, and final history state.
+    Post-process dispatcher: routes by pipeline.vmaf_mode and owns the
+    single try/except/finally guard (shutdown exemption, failure fallback,
+    active-set release).
 
     :param pipeline: 进程级共享上下文，提供 history/ffprobe 路径/
-                     keep_source/compute_vmaf
+                     keep_source/compute_vmaf/vmaf_mode
                      (Process-wide shared context: history, ffprobe path,
-                     keep_source flag and scoring callback)
+                     keep_source flag, scoring callback and VMAF mode)
     :param job: 单文件任务：filepath/lib_* 定位文件，dist_frame_count/
                 elapsed 为转码段回填的阶段产物
                 (Per-file job: paths plus the transcode stage's
@@ -86,173 +306,36 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
              (True if processing completed, including rejections; False if failed)
     :rtype: bool
     """
-    history = pipeline.history
-    ffprobe_path = pipeline.ffprobe_path
-    keep_source = pipeline.keep_source
-    compute_vmaf = pipeline.compute_vmaf
-    vmaf_mode = pipeline.vmaf_mode
-    filepath = Path(job.filepath)
-    dist_frame_count = job.dist_frame_count
-    elapsed = job.elapsed
-    input_dir = job.lib_input
-    output_dir = job.lib_output
     temp_dir = None
     try:
-        stem = filepath.stem
-        expect_filename = f"{stem}.mkv"
-        input_size = filepath.stat().st_size
-        raw_output = history.get_output_path(str(filepath))
-        if raw_output is None or not Path(raw_output).exists():
-            history.mark_failed(str(filepath), "output path missing after transcode")
-            return False
-        output_path = Path(raw_output)
-        temp_dir = output_path.parent
-        output_size = output_path.stat().st_size
-        ratio = output_size / input_size if input_size else 0
-
-        # ratio 超标直接拒绝：不打分（三种模式一致，off 下同样拒绝）。
-        # KEEP_TARGET=True 时仍落盘到目标库，仅记 rejected。
-        # Reject outright on over-ratio: no scoring (all modes, off included).
-        # With KEEP_TARGET the file is still landed, only recorded rejected.
-        if ratio > config.ACCEPT_RATIO_MAX:
-            landed_path = None
-            if config.KEEP_TARGET:
-                final_path, move_err = _land_output(
-                    output_path, filepath, expect_filename, input_dir, output_dir
-                )
-                if move_err is not None:
-                    _cleanup_temp(temp_dir)
-                    history.mark_failed(str(filepath), move_err)
-                    return False
-                landed_path = str(final_path)
-            if output_path.exists():
-                output_path.unlink()
-            _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), landed_path, vmaf_score=None, rejected=True)
-            log.warning(
-                "REJECT: %s (ratio %.1f%% exceeds %.0f%%, keeping original)",
-                filepath.name,
-                ratio * 100,
-                config.ACCEPT_RATIO_MAX * 100,
-            )
-            return True
-
-        vmaf_score = None
-        vmaf_elapsed = None
-        if vmaf_mode != "off":
-            safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:80]
-            vmaf_log = (
-                Path(config.VMAF_LOG_DIR) / f"{safe_stem}.{_time.strftime('%Y%m%d-%H%M%S')}.json"
-            )
-            vmaf_start = _time.monotonic()
-            # 源帧数走 nb_frames 容器索引快路径（mp4 秒级，mkv 回退全量计数），
-            # 产物帧数已由转码 stderr 解析，两路都不再需要打分侧全量探测
-            ref_frame_count = get_frame_count(filepath, ffprobe_path)
-            vmaf_score = compute_vmaf(
-                filepath,
-                output_path,
-                log_path=vmaf_log,
-                ref_frame_count=ref_frame_count,
-                dist_frame_count=dist_frame_count,
-            )
-            vmaf_elapsed = _time.monotonic() - vmaf_start
-            job.vmaf_score = vmaf_score  # 回填 Job，打分结果随任务对象可查
-
-        if vmaf_mode != "off":
-            verdict = vmaf_verdict(vmaf_score, ratio)
+        mode = pipeline.vmaf_mode or config.VMAF_MODE
+        if mode == config.VMAF_MODE_OFF:
+            ok, temp_dir = _post_process_ratio_only(pipeline, job)
+        elif mode == config.VMAF_MODE_SYNC:
+            ok, temp_dir = _post_process_sync(pipeline, job)
         else:
-            verdict = "accept"
-
-        if verdict == "accept":
-            # 先落盘后记 history
-            # Land the file before recording history.
-            final_path, move_err = _land_output(
-                output_path, filepath, expect_filename, input_dir, output_dir
-            )
-            if move_err is not None:
-                _cleanup_temp(temp_dir)
-                history.mark_failed(str(filepath), move_err)
-                return False
-            if output_path.exists():
-                output_path.unlink()
-            _cleanup_temp(temp_dir)
-            if not keep_source:
-                filepath.unlink()
-            history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
-            if vmaf_elapsed is not None:
-                log.info(
-                    "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
-                    final_path.name,
-                    _format_size(output_size),
-                    "smaller" if ratio < 1 else "larger",
-                    ratio * 100,
-                    vmaf_score,
-                    elapsed,
-                    vmaf_elapsed,
-                )
-            else:
-                log.info(
-                    "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
-                    final_path.name,
-                    _format_size(output_size),
-                    "smaller" if ratio < 1 else "larger",
-                    ratio * 100,
-                    elapsed,
-                )
-        else:
-            # KEEP_TARGET=True 时落盘到目标库但仍记 rejected（源保留，供人工复核）；
-            # 否则不落盘、只清 temp。
-            # With KEEP_TARGET land into the target library but still record rejected
-            # (source kept, for manual review); otherwise no landing, temp cleanup only.
-            landed_path = None
-            if config.KEEP_TARGET:
-                final_path, move_err = _land_output(
-                    output_path, filepath, expect_filename, input_dir, output_dir
-                )
-                if move_err is not None:
-                    _cleanup_temp(temp_dir)
-                    history.mark_failed(str(filepath), move_err)
-                    return False
-                landed_path = str(final_path)
-                log.warning(
-                    "REJECT (kept): %s landed at %s for manual review",
-                    filepath.name,
-                    landed_path,
-                )
-            if output_path.exists():
-                output_path.unlink()
-            _cleanup_temp(temp_dir)
-            history.mark_done(str(filepath), landed_path, vmaf_score=vmaf_score, rejected=True)
-            if vmaf_elapsed is not None:
-                log.warning(
-                    "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
-                    filepath.name,
-                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
-                    ratio * 100,
-                    elapsed,
-                    vmaf_elapsed,
-                )
-            else:
-                log.warning(
-                    "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
-                    filepath.name,
-                    f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
-                    ratio * 100,
-                    elapsed,
-                )
-        return True
+            if mode != config.VMAF_MODE_ASYNC:
+                log.warning("未知 vmaf_mode %r，按 async/inline 流程处理", mode)
+            ok, temp_dir = _post_process_async(pipeline, job)
+        return ok
     except Exception as e:
-        # 关停期被打断：非真实质量问题，不标 failed，产物留给启动时 recover。
-        # Interrupted by shutdown: not a real failure; leave the record for
-        # startup recovery instead of marking failed.
+        history = pipeline.history
+        filepath = Path(job.filepath)
+        # 关停期被打断：非真实质量问题，不标 failed；记录保持 pending_transcode，
+        # 留待下次启动重入队转码。
+        # Interrupted by shutdown: not a real failure; the record stays
+        # pending_transcode and will be requeued on next startup.
         if is_shutting_down():
             log.warning("POSTPROCESS INTERRUPTED (shutting down): %s kept pending", filepath)
             return False
-        # 非关停异常：清理临时目录后标记 failed
-        out = history.get_output_path(str(filepath))
-        if out:
+        # 非关停异常：清理已知临时目录后标记 failed（temp_dir 为 None 说明前置
+        # 检查都没过，无可清理；不查库，避免 DB 故障时兜底自身再抛）。
+        # Non-shutdown failure: clean the known temp dir, then mark failed
+        # (nothing to clean when temp_dir is None; no DB round-trip, so a
+        # broken DB cannot break the fallback itself).
+        if temp_dir is not None:
             try:
-                _cleanup_temp(Path(out).parent)
+                _cleanup_temp(temp_dir)
             except Exception:
                 log.exception("cleanup failed for %s", filepath)
         try:

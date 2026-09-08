@@ -326,3 +326,60 @@ class TestPostTranscodeActiveTempDir:
         result = post_process_stage(pipeline, job)
         assert result is True
         assert temp_dir not in active_temp_dirs_snapshot()
+
+
+class TestPostProcessDispatcher:
+    """dispatcher 路由：按 pipeline.vmaf_mode 分发三模式函数。
+
+    Dispatcher routing: dispatch to the per-mode function by
+    pipeline.vmaf_mode (None falls back to the global config).
+    """
+
+    def _route(self, tmp_path, vmaf_mode):
+        pipeline, job, *_ = _make_stage(tmp_path, vmaf_mode=vmaf_mode)
+        with (
+            patch(
+                "src.post_process._post_process_ratio_only", return_value=(True, None)
+            ) as mock_off,
+            patch("src.post_process._post_process_sync", return_value=(True, None)) as mock_sync,
+            patch("src.post_process._post_process_async", return_value=(True, None)) as mock_async,
+        ):
+            result = post_process_stage(pipeline, job)
+        return result, mock_off, mock_sync, mock_async
+
+    def test_routes_off(self, tmp_path):
+        result, mock_off, mock_sync, mock_async = self._route(tmp_path, config.VMAF_MODE_OFF)
+        assert result is True
+        mock_off.assert_called_once()
+        mock_sync.assert_not_called()
+        mock_async.assert_not_called()
+
+    def test_routes_sync(self, tmp_path):
+        result, mock_off, mock_sync, mock_async = self._route(tmp_path, config.VMAF_MODE_SYNC)
+        assert result is True
+        mock_sync.assert_called_once()
+        mock_off.assert_not_called()
+        mock_async.assert_not_called()
+
+    def test_routes_async(self, tmp_path):
+        result, mock_off, mock_sync, mock_async = self._route(tmp_path, config.VMAF_MODE_ASYNC)
+        assert result is True
+        mock_async.assert_called_once()
+        mock_off.assert_not_called()
+        mock_sync.assert_not_called()
+
+    def test_none_falls_back_to_global_config(self, tmp_path):
+        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+            result, mock_off, mock_sync, mock_async = self._route(tmp_path, None)
+        assert result is True
+        mock_sync.assert_called_once()
+        mock_off.assert_not_called()
+        mock_async.assert_not_called()
+
+    def test_unknown_mode_warns_and_uses_async(self, tmp_path, caplog):
+        result, mock_off, mock_sync, mock_async = self._route(tmp_path, "bogus")
+        assert result is True
+        mock_async.assert_called_once()
+        mock_off.assert_not_called()
+        mock_sync.assert_not_called()
+        assert "bogus" in caplog.text
