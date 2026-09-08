@@ -79,7 +79,7 @@ class TestSignalHandler:
         import signal
 
         main._running = True
-        with patch("main.vmaf_async.signal_shutdown") as mock_shutdown:
+        with patch("main.signal_shutdown") as mock_shutdown:
             main.signal_handler(signal.SIGINT, None)
         assert main._running is False
         mock_shutdown.assert_called_once()
@@ -481,8 +481,8 @@ class TestMainLoop:
         names = [name for _fn, name in submitted]
         assert names == ["a.mp4", "x.mp4"]
 
-    def test_vmaf_async_lifecycle(self):
-        """VMAF_MODE_ASYNC 时，应启停并恢复异步 VMAF worker 任务。"""
+    def test_startup_migrates_await_postprocess(self):
+        """启动时应把残留 await_postprocess 记录迁回 pending（一次性迁移）。"""
         _reset_running()
 
         def stop_after_walk(*_a, **_kw):
@@ -490,52 +490,18 @@ class TestMainLoop:
             return iter([])
 
         with (
-            patch("main.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
             patch("src.pipeline.transcode_stage"),
-            patch("main.History"),
+            patch("main.History") as mock_history,
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
-            patch("main.start_vmaf_workers") as mock_start,
-            patch("main.recover_pending_vmaf") as mock_recover,
-            patch("main.drain_vmaf_tasks") as mock_drain,
         ):
             main.main_loop()
 
-        mock_start.assert_called_once()
-        mock_recover.assert_called_once()
-        mock_drain.assert_called_once()
-
-    def test_vmaf_sync_skips_worker_lifecycle(self):
-        """VMAF_MODE_SYNC 时，不应调用任何 VMAF 生命周期函数。"""
-        _reset_running()
-
-        def stop_after_walk(*_a, **_kw):
-            main._running = False
-            return iter([])
-
-        with (
-            patch("main.config.VMAF_MODE", config.VMAF_MODE_SYNC),
-            patch("main.walk_directory", side_effect=stop_after_walk),
-            patch("main.should_submit"),
-            patch("main.should_process"),
-            patch("src.pipeline.transcode_stage"),
-            patch("main.History"),
-            patch("main.validate_config", return_value=([], [])),
-            patch("main.cleanup_stale_temp_dirs"),
-            patch("main.cleanup_vmaf_logs"),
-            patch("main.start_vmaf_workers") as mock_start,
-            patch("main.recover_pending_vmaf") as mock_recover,
-            patch("main.drain_vmaf_tasks") as mock_drain,
-        ):
-            main.main_loop()
-
-        mock_start.assert_not_called()
-        mock_recover.assert_not_called()
-        mock_drain.assert_not_called()
+        mock_history.return_value.migrate_await_postprocess_to_pending.assert_called_once_with()
 
     def test_next_scan_starts_while_transcode_running(self):
         """转码仍在运行期间即应开始下一轮扫描（SCAN_INTERVAL=0，扫描与转码解耦）。"""

@@ -12,12 +12,6 @@ import pytest
 from src import config
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.pipeline import TranscodePipeline
-from src.vmaf_async import (
-    _handle_vmaf_task,
-    drain_vmaf_tasks,
-    start_vmaf_workers,
-    vmaf_tasks,
-)
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -146,9 +140,9 @@ class TestTranscodeQsv:
 
 
 class TestTranscodeVmafAsync:
-    """异步 VMAF 打分全流程：转码返回（源保留 + await_postprocess），worker 打分后终态化。"""
+    """async 全流程（先落盘后打分，所见即所得）：转码 → 落盘 → inline 打分 → 终态。"""
 
-    def test_async_worker_full_flow(
+    def test_async_full_flow_real_vmaf(
         self,
         transcode_env,
         transcode_ffmpeg,
@@ -157,62 +151,21 @@ class TestTranscodeVmafAsync:
         compute_vmaf,
         monkeypatch,
     ):
-        """真实 QSV 转码 → post_process 排队 → 真实后台 worker + libvmaf 打分 → accept 删源"""
+        """真实 QSV 转码 → post_process 落盘 → 真实 libvmaf 打分库中文件 → accept 删源"""
         _skip_if_no_qsv(qsv_available)
         monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
         monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
         env = transcode_env
 
-        start_vmaf_workers(compute_vmaf=compute_vmaf)
-        try:
-            _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
-            # post_process 异步排队：源保留、输出已在 output 区、状态 await_postprocess
-            assert env["src"].exists()
-            outputs = list(env["output_dir"].glob("*.mkv"))
-            assert len(outputs) == 1
-            assert env["history"].is_pending_vmaf(str(env["src"]))
-            assert not env["history"].is_success(str(env["src"]))
+        _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe, compute_vmaf=compute_vmaf)
 
-            drain_vmaf_tasks()
-
-            # worker 打分完成：accept（hevc 输出远小于 2.0 上限）→ 源删除、输出保留
-            assert env["history"].is_success(str(env["src"]))
-            assert not env["src"].exists()
-            assert outputs[0].exists()
-            entry = env["history"].get_entry(str(env["src"]))
-            assert entry["vmaf_score"] is not None
-            assert list(env["cache_dir"].glob(config.TEMP_PREFIX + "*")) == []
-            assert list(Path(config.VMAF_LOG_DIR).glob("*.json")) != []
-        finally:
-            drain_vmaf_tasks()
-
-    def test_async_handle_task_real_vmaf(
-        self,
-        transcode_env,
-        transcode_ffmpeg,
-        transcode_ffprobe,
-        qsv_available,
-        compute_vmaf,
-        monkeypatch,
-    ):
-        """直接消费队列任务做真实打分（不经线程，验证 _handle_vmaf_task 真实路径）"""
-        _skip_if_no_qsv(qsv_available)
-        monkeypatch.setattr(config, "VIDEO_ENCODER", "hevc")
-        monkeypatch.setattr(config, "VMAF_MODE", config.VMAF_MODE_ASYNC)
-        env = transcode_env
-
-        _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
-
-        task = vmaf_tasks.get_nowait()
-        assert task[0] == str(env["src"])
-        assert task[1] == str(list(env["output_dir"].glob("*.mkv"))[0])
-        assert task[3] == "synth_320x240_1s_h264"
-        assert task[4] is env["history"]
-        assert task[5] >= 0
-
-        _handle_vmaf_task(task, compute_vmaf=compute_vmaf)
-
+        # inline 打分完成即终态：accept → 源删除、输出保留
         assert env["history"].is_success(str(env["src"]))
         assert not env["src"].exists()
+        outputs = list(env["output_dir"].glob("*.mkv"))
+        assert len(outputs) == 1
+        assert outputs[0].exists()
         entry = env["history"].get_entry(str(env["src"]))
         assert entry["vmaf_score"] is not None
+        assert list(env["cache_dir"].glob(config.TEMP_PREFIX + "*")) == []
+        assert list(Path(config.VMAF_LOG_DIR).glob("*.json")) != []

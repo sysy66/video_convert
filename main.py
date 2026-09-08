@@ -16,16 +16,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from src import config, vmaf_async
+from src import config
 from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.filter import should_process, should_submit
 from src.history import History
 from src.pipeline import TranscodePipeline
 from src.process_guard import kill_active_ffmpeg
 from src.quality import cleanup_vmaf_logs
+from src.shutdown import signal_shutdown
 from src.temp_cleanup import active_temp_dirs_snapshot, cleanup_stale_temp_dirs
 from src.validation import validate_config
-from src.vmaf_async import drain_vmaf_tasks, recover_pending_vmaf, start_vmaf_workers
 from src.walker import walk_directory
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def signal_handler(signum, frame):
     global _running
     log.info("Received signal %s, shutting down gracefully...", signum)
     _running = False
-    vmaf_async.signal_shutdown()
+    signal_shutdown()
 
 
 def _setup_logging():
@@ -215,12 +215,12 @@ def _apply_cli_overrides():
 
 
 def main_loop():
-    """运行主监控循环：校验配置、启动异步 VMAF、扫描库目录并调度转码。
+    """运行主监控循环：校验配置、扫描库目录并调度转码。
 
     循环内定期清理临时目录/过期记录，遍历各库目录，把应处理的文件提交到
     转码线程池。收到退出信号后优雅关闭并返回历史对象。
 
-    Run the main monitoring loop: validate config, start async VMAF, scan the
+    Run the main monitoring loop: validate config, scan the
     library directories and schedule transcodes. Cleans up temp dirs/stale records
     each cycle, submits processable files to the transcode pool, then shuts down
     gracefully on exit signal and returns the History object.
@@ -269,10 +269,12 @@ def main_loop():
         log.info("  [%s] %s", name, ", ".join(parts))
     log.info("Scan interval: %ds", config.SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
-    if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
-        log.info("VMAF scoring: async (%d worker(s))", config.VMAF_WORKERS)
-        start_vmaf_workers(compute_vmaf=compute_vmaf)
-        recover_pending_vmaf(history, ffprobe_path=config.FFPROBE_PATH)
+    migrated = history.migrate_await_postprocess_to_pending()
+    if migrated:
+        log.info(
+            "MIGRATION: %d leftover await_postprocess record(s) requeued for transcode",
+            migrated,
+        )
     log.info("=" * 50)
 
     # 转码池常驻整个进程生命周期：扫描周期独立于转码进度，
@@ -411,9 +413,6 @@ def main_loop():
         # (they are re-discovered on next startup).
         transcode_pool.shutdown(wait=True, cancel_futures=True)
         post_pool.shutdown(wait=True, cancel_futures=True)
-
-    if config.VMAF_MODE == config.VMAF_MODE_ASYNC:
-        drain_vmaf_tasks()
 
     log.info("Shutdown complete")
     return history

@@ -4,7 +4,6 @@ Unit tests for the post_process_stage module: quality gate, VMAF scoring, move t
 destination and final history state (the second stage of the transcode pipeline).
 """
 
-import queue
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,20 +18,8 @@ from src.temp_cleanup import (
     _active_temp_dirs_lock,
     active_temp_dirs_snapshot,
 )
-from src.vmaf_async import drain_vmaf_tasks, vmaf_tasks
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def _cleanup_vmaf_workers():
-    yield
-    drain_vmaf_tasks()
-    while True:
-        try:
-            vmaf_tasks.get_nowait()
-        except queue.Empty:
-            break
 
 
 def _make_history(output_path):
@@ -285,16 +272,12 @@ class TestPostTranscodeSync:
 
 
 class TestPostTranscodeAsync:
-    def _make_async(self, tmp_path):
-        return _make_stage(tmp_path)
-
-    def test_ratio_over_max_rejects_without_queue(self, tmp_path):
-        pipeline, job, input_file, output, history = self._make_async(tmp_path)
+    def test_ratio_over_max_rejects_in_async_mode(self, tmp_path):
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, vmaf_mode=config.VMAF_MODE_ASYNC
+        )
         input_file.write_text("x" * 5)
-        with (
-            patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_ASYNC),
-            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
-        ):
+        with patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5):
             result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
@@ -302,8 +285,6 @@ class TestPostTranscodeAsync:
         history.mark_done.assert_called_once_with(
             str(input_file), None, vmaf_score=None, rejected=True
         )
-        history.mark_await_postprocess.assert_not_called()
-        assert vmaf_tasks.empty()
 
     def test_async_accept_scores_landed_file(self, tmp_path):
         # async 全链：先落盘→打分对象是库中文件→accept 不复拷→删源记终态。

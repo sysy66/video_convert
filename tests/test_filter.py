@@ -132,10 +132,6 @@ def test_should_submit_skips_pending_transcode():
     assert not should_submit(Path("/v.mp4"), _mock_history({"status": "pending_transcode"}))
 
 
-def test_should_submit_skips_await_postprocess():
-    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "await_postprocess"}))
-
-
 def test_should_submit_skips_failed():
     assert not should_submit(Path("/v.mp4"), _mock_history({"status": "failed"}))
 

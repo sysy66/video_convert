@@ -31,7 +31,7 @@ def _history_allows(filepath, history):
         if status in ("success", "rejected", "not required"):
             return False
 
-        if status in ("pending_transcode", "await_postprocess", "failed"):
+        if status in ("pending_transcode", "failed"):
             return False
 
     return True

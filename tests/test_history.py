@@ -52,11 +52,11 @@ class TestHistoryInit:
         assert "output_frames" in cols
         assert h.get_entry("/old.mp4")["status"] == "await_postprocess"
 
-        # 新方法写帧数可持久化，iter 返回三元组
-        h.mark_await_postprocess("/old.mp4", "/old.mkv", 12345)
+        # 残留 await_postprocess 行经一次性迁移转回 pending（幂等）
+        assert h.migrate_await_postprocess_to_pending() == 1
+        assert h.get_entry("/old.mp4")["status"] == "pending_transcode"
+        assert h.migrate_await_postprocess_to_pending() == 0
         h.close()
-        h2 = make_history("legacy.db")
-        assert h2.iter_pending_vmaf() == [("/old.mp4", "/old.mkv", 12345)]
 
 
 class TestHistoryQueries:
@@ -155,14 +155,19 @@ class TestHistoryIter:
         h.mark_done("/c.mp4", "/c.mkv")
         assert set(h.iter_started()) == {"/a.mp4", "/b.mp4"}
 
-    def test_iter_pending_vmaf_yields_output_frames(self, make_history):
+    def test_migrate_await_postprocess_to_pending(self, make_history):
         h = make_history()
-        h.mark_await_postprocess("/p.mp4", "/p.mkv", 216315)
-        h.mark_await_postprocess("/q.mp4", "/q.mkv", None)
-        assert h.iter_pending_vmaf() == [
-            ("/p.mp4", "/p.mkv", 216315),
-            ("/q.mp4", "/q.mkv", None),
-        ]
+        h._conn.execute(
+            "INSERT INTO files (filepath, status) VALUES ('/p.mp4', 'await_postprocess')"
+        )
+        h._conn.execute(
+            "INSERT INTO files (filepath, status) VALUES ('/q.mp4', 'await_postprocess')"
+        )
+        h._conn.execute("INSERT INTO files (filepath, status) VALUES ('/ok.mp4', 'success')")
+        assert h.migrate_await_postprocess_to_pending() == 2
+        assert h.get_entry("/p.mp4")["status"] == "pending_transcode"
+        assert h.get_entry("/q.mp4")["status"] == "pending_transcode"
+        assert h.get_entry("/ok.mp4")["status"] == "success"
 
     def test_iter_final_states(self, make_history):
         h = make_history()
@@ -171,7 +176,7 @@ class TestHistoryIter:
         h.mark_skipped("/skip.mp4", "hevc")
         h.mark_done("/ok.mp4", "/ok.mkv")
         h.mark_pending_transcode("/start.mp4", "/start.mkv")
-        h.mark_await_postprocess("/pend.mp4", "/pend.mkv")
+        h.mark_pending_transcode("/pend.mp4", "/pend.mkv")
         assert set(h.iter_final_states()) == {"/rej.mp4", "/fail.mp4", "/skip.mp4"}
 
     def test_delete_removes_record(self, make_history):

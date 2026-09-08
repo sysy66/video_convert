@@ -11,12 +11,12 @@ from src import config
 from src.path_utils import _final_dest_path, _format_size
 from src.probe import get_frame_count
 from src.quality import vmaf_verdict
+from src.shutdown import is_shutting_down
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
     _cleanup_temp,
 )
-from src.vmaf_async import is_shutting_down
 
 log = __import__("logging").getLogger(__name__)
 

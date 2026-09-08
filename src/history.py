@@ -1,10 +1,10 @@
 """
 历史记录模块。使用 SQLite 持久化每个文件的转码状态（pending_transcode/
-await_postprocess/success/rejected/failed/not required 等），线程安全，
+success/rejected/failed/not required 等），线程安全，
 供扫描、转码与主循环使用。
 
 History tracking module. Persists each file's transcode status
-(pending_transcode/await_postprocess/success/rejected/failed/not required,
+(pending_transcode/success/rejected/failed/not required,
 etc.) in SQLite, is thread-safe, and is used by the scanner, transcoder and
 main loop.
 """
@@ -55,8 +55,7 @@ class History:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute(
                 """
-                -- status 取值：pending_transcode|await_postprocess|success|
-                --           rejected|failed|not required
+                -- status 取值：pending_transcode|success|rejected|failed|not required
                 CREATE TABLE IF NOT EXISTS files (
                     filepath     TEXT PRIMARY KEY,   -- 文件绝对路径 / absolute file path
                     status       TEXT NOT NULL,
@@ -151,12 +150,10 @@ class History:
     def iter_final_states(self):
         """
         遍历终态记录（rejected/failed/not required）的路径，供孤儿记录清理。
-        排除 pending_transcode（转码线程收尾）与 await_postprocess（启动时
-        recover 处理），避免与运行中的并发写者竞争。
+        排除 pending_transcode（转码线程收尾），避免与运行中的并发写者竞争。
         Yield filepaths of terminal-state records (rejected/failed/not required)
         for orphan cleanup. Excludes pending_transcode (finished by the transcode
-        thread) and await_postprocess (handled by recover at startup) to avoid
-        races.
+        thread) to avoid races.
         """
         with self._lock:
             rows = self._conn.execute(
@@ -238,49 +235,19 @@ class History:
                 (filepath, codec, time.time()),
             )
 
-    def mark_await_postprocess(self, filepath, output_path, output_frames=None):
+    def migrate_await_postprocess_to_pending(self):
         """
-        转码完成、产物就绪，进入后处理（移动到目标 + 可选 VMAF 打分）队列：
-        status = "await_postprocess"。output_frames 为转码时从 stderr 解析的
-        产物帧数，持久化供启动恢复（recover）重新打分时直接使用，免去对
-        mkv 产物再做昂贵的全量解码计数；None 表示不可得，仅帧数诊断日志缺省。
-        Transcode finished and output is ready; queue for post-processing
-        (move to target + optional VMAF scoring): status = "await_postprocess".
-        output_frames is the frame count parsed from the transcode stderr,
-        persisted so a startup recover can reuse it instead of re-counting the
-        mkv output by full decode; None only omits it from diagnostics.
+        一次性迁移：把残留的 await_postprocess 记录转回 pending_transcode
+        （旧异步链路已删除，改由重转码收尾）。返回迁移行数。
+        One-time migration: move leftover await_postprocess records back to
+        pending_transcode (the async chain is gone; they are finalized by
+        re-transcoding instead). Returns the migrated row count.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
-            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
-            self._conn.execute(
-                "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, "
-                "vmaf_score, error, output_frames) "
-                "VALUES (?, 'await_postprocess', ?, ?, ?, NULL, NULL, ?)",
-                (filepath, started_at, time.time(), output_path, output_frames),
+            cur = self._conn.execute(
+                "UPDATE files SET status='pending_transcode' WHERE status='await_postprocess'"
             )
-
-    def is_pending_vmaf(self, filepath):
-        """True iff status == "await_postprocess" (transcoded, awaiting post-process)."""
-        return self._get_status(filepath) == "await_postprocess"
-
-    def iter_pending_vmaf(self):
-        """
-        遍历 status == "await_postprocess" 的文件路径、产物路径与产物帧数
-        （用于启动时 recover 重新入队）。产物已存在才返回。
-        Yield (filepath, output_path, output_frames) for status ==
-        "await_postprocess" entries (re-enqueued on startup by recover).
-        The output must exist.
-        """
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT filepath, output_path, output_frames "
-                "FROM files WHERE status='await_postprocess'"
-            ).fetchall()
-        return [(r["filepath"], r["output_path"], r["output_frames"]) for r in rows]
+            return cur.rowcount
 
     def mark_failed(self, filepath, error):
         with self._lock:
@@ -304,14 +271,13 @@ class History:
         """清理源文件已不存在的终态记录。
 
         success 记录的源缺失是 ACCEPT 删源后的正常状态（用于同名去重），永不清理；
-        pending_transcode/await_postprocess 由转码线程/启动 recover 收尾。仅处理源文件
+        pending_transcode 由转码线程收尾。仅处理源文件
         已消失的 rejected/failed/not required 记录——记录失去意义（无文件要重试或保护）。
 
         Purge terminal records whose source file no longer exists. A missing source on a
         success record is the normal post-ACCEPT state (used for same-name dedup) and is
-        never removed; pending_transcode/await_postprocess records are finalized by the
-        transcode threads
-        or startup recovery. Only rejected/failed/not-required records whose source is gone
+        never removed; pending_transcode records are finalized by the transcode
+        threads. Only rejected/failed/not-required records whose source is gone
         are removed, since they no longer serve a purpose (nothing to retry or protect).
         """
         for filepath in self.iter_final_states():
