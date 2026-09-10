@@ -1,10 +1,10 @@
 from pathlib import Path
 
 from src import config
-from src.job import TranscodeJob
-from src.post_process import post_process_stage
-from src.probe import VideoProbe
-from src.transcoder import transcode_stage
+from src.application.job import TranscodeJob
+from src.application.post_process import post_process_stage
+from src.application.transcoder import transcode_stage
+from src.media.probe import VideoProbe
 
 
 class TranscodePipeline:

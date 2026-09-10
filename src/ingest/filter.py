@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from src import config
-from src.probe import VideoProbe
+from src.media.probe import VideoProbe
 
 log = __import__("logging").getLogger(__name__)
 

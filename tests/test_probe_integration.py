@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.probe import VideoProbe
+from src.media.probe import VideoProbe
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

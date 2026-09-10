@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from src import ffmpeg_runner, path_utils, process_guard, temp_cleanup
+from src.media import ffmpeg_runner
+from src.runtime import process_guard, temp_cleanup
+from src.support import path_utils
 
 pytestmark = pytest.mark.unit
 
@@ -39,7 +41,7 @@ class TestFfmpegPidRegistry:
 class TestKillActiveFfmpeg:
     def test_no_pids_returns_early(self):
         _clear_pids()
-        with patch("src.process_guard.os.kill") as mock_kill:
+        with patch("src.runtime.process_guard.os.kill") as mock_kill:
             process_guard.kill_active_ffmpeg()
         mock_kill.assert_not_called()
 
@@ -47,8 +49,8 @@ class TestKillActiveFfmpeg:
         _clear_pids()
         process_guard.register_ffmpeg_pid(123)
         with (
-            patch("src.process_guard.os.kill") as mock_kill,
-            patch("src.process_guard._time.sleep") as mock_sleep,
+            patch("src.runtime.process_guard.os.kill") as mock_kill,
+            patch("src.runtime.process_guard._time.sleep") as mock_sleep,
         ):
             process_guard.kill_active_ffmpeg()
         mock_kill.assert_any_call(123, signal.SIGTERM)
@@ -63,8 +65,8 @@ class TestKillActiveFfmpeg:
             raise ProcessLookupError
 
         with (
-            patch("src.process_guard.os.kill", side_effect=raise_lookup),
-            patch("src.process_guard._time.sleep"),
+            patch("src.runtime.process_guard.os.kill", side_effect=raise_lookup),
+            patch("src.runtime.process_guard._time.sleep"),
         ):
             process_guard.kill_active_ffmpeg()
 
@@ -76,8 +78,8 @@ class TestKillActiveFfmpeg:
             raise OSError("permission denied")
 
         with (
-            patch("src.process_guard.os.kill", side_effect=raise_oserror),
-            patch("src.process_guard._time.sleep"),
+            patch("src.runtime.process_guard.os.kill", side_effect=raise_oserror),
+            patch("src.runtime.process_guard._time.sleep"),
         ):
             process_guard.kill_active_ffmpeg()
 
@@ -220,7 +222,7 @@ class TestRmtreeRobust:
             patch("shutil.rmtree", side_effect=fail),
             patch("os.listdir", side_effect=fail),
             patch(
-                "src.temp_cleanup.subprocess.run",
+                "src.runtime.temp_cleanup.subprocess.run",
                 side_effect=OSError("no rm"),
             ),
         ):

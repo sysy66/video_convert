@@ -5,7 +5,7 @@ Unit tests for the walker module: directory walking and extension filtering.
 
 import pytest
 
-from src.walker import walk_directory
+from src.ingest.walker import walk_directory
 
 pytestmark = pytest.mark.unit
 

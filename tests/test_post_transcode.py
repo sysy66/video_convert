@@ -10,14 +10,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config
-from src.job import TranscodeJob
-from src.pipeline import TranscodePipeline
-from src.post_process import (
+from src.application.job import TranscodeJob
+from src.application.pipeline import TranscodePipeline
+from src.application.post_process import (
     post_process_stage,
     recover_pending_postprocess,
     resume_pending_postprocess,
 )
-from src.temp_cleanup import (
+from src.runtime.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
     active_temp_dirs_snapshot,
@@ -148,7 +148,7 @@ class TestPostTranscodeSync:
             tmp_path, compute_vmaf=mock_vmaf, vmaf_mode=config.VMAF_MODE_SYNC
         )
         input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
-        with patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5):
+        with patch("src.application.post_process.config.ACCEPT_RATIO_MAX", 0.5):
             result = post_process_stage(pipeline, job)
 
         assert result is True
@@ -184,7 +184,7 @@ class TestPostTranscodeSync:
             compute_vmaf=MagicMock(return_value=None),
             vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.is_shutting_down", return_value=True):
+        with patch("src.application.post_process.is_shutting_down", return_value=True):
             result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
@@ -250,7 +250,7 @@ class TestPostTranscodeSync:
             compute_vmaf=MagicMock(return_value=60.0),
             vmaf_mode=config.VMAF_MODE_SYNC,
         )
-        with patch("src.post_process.config.KEEP_TARGET", True):
+        with patch("src.application.post_process.config.KEEP_TARGET", True):
             result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
@@ -270,8 +270,8 @@ class TestPostTranscodeSync:
         )
         input_file.write_text("x" * 5)  # 极小源 → ratio 远超 MAX
         with (
-            patch("src.post_process.config.KEEP_TARGET", True),
-            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.application.post_process.config.KEEP_TARGET", True),
+            patch("src.application.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
             result = post_process_stage(pipeline, job)
         assert result is True
@@ -300,7 +300,7 @@ class TestPostTranscodeAsync:
             tmp_path, vmaf_mode=config.VMAF_MODE_ASYNC
         )
         input_file.write_text("x" * 5)
-        with patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5):
+        with patch("src.application.post_process.config.ACCEPT_RATIO_MAX", 0.5):
             result = post_process_stage(pipeline, job)
         assert result is True
         assert input_file.exists()
@@ -315,8 +315,8 @@ class TestPostTranscodeAsync:
         )
         input_file.write_text("x" * 5)
         with (
-            patch("src.post_process.config.KEEP_TARGET", True),
-            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.application.post_process.config.KEEP_TARGET", True),
+            patch("src.application.post_process.config.ACCEPT_RATIO_MAX", 0.5),
         ):
             result = post_process_stage(pipeline, job)
 
@@ -424,7 +424,7 @@ class TestAsyncPostprocessRecovery:
             vmaf_mode=config.VMAF_MODE_ASYNC,
         )
 
-        with patch("src.post_process._score_inline", return_value=(95.0, 2.0)) as score:
+        with patch("src.application.post_process._score_inline", return_value=(95.0, 2.0)) as score:
             result = resume_pending_postprocess(pipeline, source, final)
 
         assert result is True
@@ -453,8 +453,8 @@ class TestAsyncPostprocessRecovery:
         )
 
         with (
-            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
-            patch("src.post_process._score_inline") as score,
+            patch("src.application.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.application.post_process._score_inline") as score,
         ):
             result = resume_pending_postprocess(pipeline, source, final)
 
@@ -521,10 +521,14 @@ class TestPostProcessDispatcher:
         pipeline, job, *_ = _make_stage(tmp_path, vmaf_mode=vmaf_mode)
         with (
             patch(
-                "src.post_process._post_process_ratio_only", return_value=(True, None)
+                "src.application.post_process._post_process_ratio_only", return_value=(True, None)
             ) as mock_off,
-            patch("src.post_process._post_process_sync", return_value=(True, None)) as mock_sync,
-            patch("src.post_process._post_process_async", return_value=(True, None)) as mock_async,
+            patch(
+                "src.application.post_process._post_process_sync", return_value=(True, None)
+            ) as mock_sync,
+            patch(
+                "src.application.post_process._post_process_async", return_value=(True, None)
+            ) as mock_async,
         ):
             result = post_process_stage(pipeline, job)
         return result, mock_off, mock_sync, mock_async
@@ -551,7 +555,7 @@ class TestPostProcessDispatcher:
         mock_sync.assert_not_called()
 
     def test_none_falls_back_to_global_config(self, tmp_path):
-        with patch("src.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
+        with patch("src.application.post_process.config.VMAF_MODE", config.VMAF_MODE_SYNC):
             result, mock_off, mock_sync, mock_async = self._route(tmp_path, None)
         assert result is True
         mock_sync.assert_called_once()

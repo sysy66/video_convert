@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.filter import should_process, should_submit
-from src.probe import VideoProbe
+from src.ingest.filter import should_process, should_submit
+from src.media.probe import VideoProbe
 
 pytestmark = pytest.mark.unit
 
@@ -34,40 +34,40 @@ def _probe():
 
 def test_new_file_passes(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="h264"):
         assert should_process(_real_file(tmp_path), h, {"hevc"}, _probe())
 
 
 def test_probe_failure_queues_anyway(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec", return_value=None):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value=None):
         assert should_process(_real_file(tmp_path), h, {"hevc"}, _probe())
 
 
 def test_missing_file_skips_without_probe(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec") as mock_probe:
+    with patch("src.ingest.filter.VideoProbe.get_codec") as mock_probe:
         assert not should_process(tmp_path / "gone.mp4", h, {"hevc"}, _probe())
     mock_probe.assert_not_called()
 
 
 def test_skip_hevc(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec", return_value="hevc"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="hevc"):
         assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
         h.mark_skipped.assert_called_once()
 
 
 def test_skip_av1(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec", return_value="av1"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="av1"):
         assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
         h.mark_skipped.assert_called_once()
 
 
 def test_allows_h264(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="h264"):
         assert should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
 
 
@@ -103,7 +103,7 @@ def test_failed_skips():
 
 def test_ready_with_hevc_skips(tmp_path):
     entry = {"status": "ready", "codec": "hevc"}
-    with patch("src.filter.VideoProbe.get_codec", return_value="hevc"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="hevc"):
         assert not should_process(
             _real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe()
         )
@@ -111,13 +111,13 @@ def test_ready_with_hevc_skips(tmp_path):
 
 def test_ready_with_h264_passes(tmp_path):
     entry = {"status": "ready", "codec": "h264"}
-    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value="h264"):
         assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe())
 
 
 def test_ready_with_none_codec_passes(tmp_path):
     entry = {"status": "ready", "codec": None}
-    with patch("src.filter.VideoProbe.get_codec", return_value=None):
+    with patch("src.ingest.filter.VideoProbe.get_codec", return_value=None):
         assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe())
 
 
@@ -158,23 +158,23 @@ def _stable_file(tmp_path, age_seconds):
 
 def test_should_submit_skips_recently_modified(tmp_path):
     p = _stable_file(tmp_path, 10)
-    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+    with patch("src.ingest.filter.config.FILE_STABLE_WINDOW", 300):
         assert not should_submit(p, _mock_history(None))
 
 
 def test_should_submit_passes_stable_file(tmp_path):
     p = _stable_file(tmp_path, 3600)
-    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+    with patch("src.ingest.filter.config.FILE_STABLE_WINDOW", 300):
         assert should_submit(p, _mock_history(None))
 
 
 def test_should_submit_stat_failure_does_not_block(tmp_path):
     p = tmp_path / "gone.mp4"
-    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+    with patch("src.ingest.filter.config.FILE_STABLE_WINDOW", 300):
         assert should_submit(p, _mock_history(None))
 
 
 def test_should_submit_stability_checked_after_history(tmp_path):
     p = _stable_file(tmp_path, 10)
-    with patch("src.filter.config.FILE_STABLE_WINDOW", 300):
+    with patch("src.ingest.filter.config.FILE_STABLE_WINDOW", 300):
         assert not should_submit(p, _mock_history({"status": "success"}))

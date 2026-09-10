@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # 只在 mypy/IDE 静态分析时为 True
-    from src.pipeline import TranscodePipeline
+    from src.application.pipeline import TranscodePipeline
 
 
 @dataclass

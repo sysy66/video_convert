@@ -17,8 +17,8 @@ test = [
     "ruff",
 ]
 
-[tool.setuptools]
-packages = ["src"]
+[tool.setuptools.packages.find]
+include = ["src", "src.*"]
 
 [tool.coverage.run]
 source = ["src", "main.py"]

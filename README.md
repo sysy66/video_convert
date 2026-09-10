@@ -50,19 +50,14 @@ python3 main.py --vmaf async
 main.py            — CLI + event loop: scan → transcode → (assess) → repeat
 src/
   config.py        — all tunables in one file; libraries loaded from libraries.conf
-  walker.py        — os.walk-based file discovery (filters dotfiles/temp dirs)
-  filter.py        — history-based quick filter before queue submission
-  transcoder.py    — transcode_stage(pipeline, job) 两段式转码主流程（仅编码，产物留 cache 临时目录，落盘/打分由 post_process_stage 接手）
-  ffmpeg_runner.py — ffmpeg subprocess execution + progress parsing
-  process_guard.py — PID registry, per-file timeout kill, stale-started recovery
-  path_utils.py    — temp/unique path helpers
-  temp_cleanup.py  — stale .work_* cleanup (skips active jobs)
-  shutdown.py      — graceful-shutdown flag
-  quality.py       — VMAF computation and accept/reject decision
-  history.py       — SQLite-persisted state machine (pending_transcode/pending_postprocess/success/rejected/failed/not required)
-  probe.py         — ffprobe wrapper for stream + codec detection
-  validation.py    — startup validation of paths/executables/disk space
-  ai_analyze.py    — optional LLM analysis of transcode logs
+  application/     — job model, pipeline orchestration, transcoding, post-processing
+  ingest/          — directory discovery and pre-submit filtering
+  media/           — ffprobe, ffmpeg and VMAF adapters
+  storage/         — SQLite-persisted transcoding history
+  runtime/         — process guards, shutdown state and stale-temp cleanup
+  policy/          — VMAF accept/reject rules
+  support/         — path helpers and startup validation
+  tools/           — optional standalone utilities
 ```
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed setup, configuration reference, and troubleshooting.

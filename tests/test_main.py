@@ -17,7 +17,7 @@ import pytest
 
 import main
 from src import config
-from src.history import History
+from src.storage.history import History
 
 pytestmark = pytest.mark.unit
 
@@ -368,7 +368,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode_stage"),
+            patch("src.application.pipeline.transcode_stage"),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -396,7 +396,9 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=yield_file),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode_stage", side_effect=fake_transcode) as mock_transcode,
+            patch(
+                "src.application.pipeline.transcode_stage", side_effect=fake_transcode
+            ) as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -428,7 +430,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode_stage", return_value=False),
+            patch("src.application.pipeline.transcode_stage", return_value=False),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -467,7 +469,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=stop_after_walk),
             patch("main.should_submit"),
             patch("main.should_process"),
-            patch("src.pipeline.transcode_stage", return_value=False),
+            patch("src.application.pipeline.transcode_stage", return_value=False),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
             patch("main.cleanup_vmaf_logs"),
@@ -556,7 +558,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
+            patch("src.application.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -590,7 +592,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
+            patch("src.application.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -612,7 +614,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=False),
             patch("main.should_process"),
-            patch("src.pipeline.transcode_stage") as mock_transcode,
+            patch("src.application.pipeline.transcode_stage") as mock_transcode,
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),
@@ -648,7 +650,7 @@ class TestMainLoop:
             patch("main.walk_directory", side_effect=fake_walk),
             patch("main.should_submit", return_value=True),
             patch("main.should_process", return_value=True),
-            patch("src.pipeline.transcode_stage", side_effect=fake_transcode),
+            patch("src.application.pipeline.transcode_stage", side_effect=fake_transcode),
             patch("main.History"),
             patch("main.validate_config", return_value=([], [])),
             patch("main.cleanup_stale_temp_dirs"),

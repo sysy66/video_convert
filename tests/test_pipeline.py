@@ -8,9 +8,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.job import TranscodeJob
-from src.pipeline import TranscodePipeline
-from src.transcoder import transcode_stage
+from src.application.job import TranscodeJob
+from src.application.pipeline import TranscodePipeline
+from src.application.transcoder import transcode_stage
 
 _VIDEO_AAC = {
     "streams": [
@@ -153,10 +153,12 @@ class TestTranscodePipelineTranscode:
             return progress
 
         with (
-            patch("src.pipeline.transcode_stage", side_effect=transcode_stage),
-            patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_fake_progress),
-            patch("src.ffmpeg_runner.VideoProbe.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.probe.VideoProbe.get_codec", return_value="h264"),
+            patch("src.application.pipeline.transcode_stage", side_effect=transcode_stage),
+            patch(
+                "src.application.transcoder._run_ffmpeg_with_progress", side_effect=_fake_progress
+            ),
+            patch("src.media.ffmpeg_runner.VideoProbe.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.media.probe.VideoProbe.get_codec", return_value="h264"),
         ):
             return pipeline.transcode(job)
 
@@ -229,7 +231,7 @@ class TestTranscodePipelinePostProcess:
             dist_frame_count=5000,
             transcode_elapsed=2.5,
         )
-        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
+        with patch("src.application.pipeline.post_process_stage", return_value=True) as mock_stage:
             result = pipeline.post_process(job)
             mock_stage.assert_called_once_with(pipeline, job)
             assert result is True
@@ -244,7 +246,7 @@ class TestTranscodePipelinePostProcess:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
         )
-        with patch("src.pipeline.post_process_stage", return_value=False) as mock_stage:
+        with patch("src.application.pipeline.post_process_stage", return_value=False) as mock_stage:
             result = pipeline.post_process(job)
             mock_stage.assert_called_once_with(pipeline, job)
             assert job.dist_frame_count is None
@@ -257,7 +259,7 @@ class TestTranscodePipelinePostProcess:
         job = pipeline.make_job(str(fp), {"input": "/in", "output": "/out", "cache": "/cache"})
         job.dist_frame_count = 100
         job.transcode_elapsed = 1.0
-        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
+        with patch("src.application.pipeline.post_process_stage", return_value=True) as mock_stage:
             assert job.post_process() is True
             mock_stage.assert_called_once_with(pipeline, job)
 
@@ -277,7 +279,7 @@ class TestTranscodePipelinePostProcess:
             dist_frame_count=10,
             transcode_elapsed=0.2,
         )
-        with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
+        with patch("src.application.pipeline.post_process_stage", return_value=True) as mock_stage:
             pl.post_process(job)
             passed_pipeline, passed_job = mock_stage.call_args[0]
             assert passed_pipeline is pl
@@ -290,14 +292,14 @@ class TestCircularImport:
         # job -> pipeline cycle must be broken via TYPE_CHECKING / string annotation
         import importlib
 
-        import src.job as job_mod
-        import src.pipeline as pipe_mod
+        import src.application.job as job_mod
+        import src.application.pipeline as pipe_mod
 
         importlib.reload(job_mod)
         importlib.reload(pipe_mod)
         # re-import after reload should still work
-        from src.job import TranscodeJob as TJ2
-        from src.pipeline import TranscodePipeline as TP2
+        from src.application.job import TranscodeJob as TJ2
+        from src.application.pipeline import TranscodePipeline as TP2
 
         h = MagicMock()
         pl = TP2(history=h, ffmpeg_path="/ffmpeg", ffprobe_path="/ffprobe")

@@ -12,7 +12,7 @@ import subprocess
 import pytest
 
 from src import config
-from src.history import History
+from src.storage.history import History
 
 
 def pytest_addoption(parser):

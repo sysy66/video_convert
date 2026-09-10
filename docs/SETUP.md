@@ -126,20 +126,40 @@ video_convert/
 │   └── vmaf_logs/               # Per-transcode frame-level JSON logs (auto-purged after 7 days)
 ├── src/
 │   ├── __init__.py
-│   ├── ai_analyze.py
 │   ├── config.py
-│   ├── ffmpeg_runner.py
-│   ├── filter.py
-│   ├── history.py
-│   ├── path_utils.py
-│   ├── probe.py
-│   ├── process_guard.py
-│   ├── quality.py
-│   ├── shutdown.py
-│   ├── temp_cleanup.py
-│   ├── transcoder.py
-│   ├── validation.py
-│   └── walker.py
+│   ├── application/
+│   │   ├── __init__.py
+│   │   ├── job.py
+│   │   ├── pipeline.py
+│   │   ├── post_process.py
+│   │   └── transcoder.py
+│   ├── ingest/
+│   │   ├── __init__.py
+│   │   ├── filter.py
+│   │   └── walker.py
+│   ├── media/
+│   │   ├── __init__.py
+│   │   ├── ffmpeg_runner.py
+│   │   ├── ffmpeg_vmaf_scorer.py
+│   │   └── probe.py
+│   ├── policy/
+│   │   ├── __init__.py
+│   │   └── quality.py
+│   ├── runtime/
+│   │   ├── __init__.py
+│   │   ├── process_guard.py
+│   │   ├── shutdown.py
+│   │   └── temp_cleanup.py
+│   ├── storage/
+│   │   ├── __init__.py
+│   │   └── history.py
+│   ├── support/
+│   │   ├── __init__.py
+│   │   ├── path_utils.py
+│   │   └── validation.py
+│   └── tools/
+│       ├── __init__.py
+│       └── ai_analyze.py
 ├── tests/
 │   ├── conftest.py
 │   ├── fixtures/
@@ -226,7 +246,8 @@ shows = /mnt/media/shows, /mnt/out/shows, /mnt/cache
 VMAF (Video Multi-Method Assessment Fusion) is an optional post-transcode quality check.
 It compares the original and transcoded video and produces a score (0–100).
 
-Requires `src/quality.py` as the Python wrapper.
+Requires `src/media/ffmpeg_vmaf_scorer.py` for the ffmpeg/libvmaf wrapper and
+`src/policy/quality.py` for the accept/reject decision.
 
 VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮点特征，匹配自编译统一版 libvmaf），
 为默认模型；如需其他版本可通过 `--vmaf-model` CLI 指定，并在 `VMAF_MODEL_PATH` 中手动配置。

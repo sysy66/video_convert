@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from src import config
-from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
+from src.media.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 

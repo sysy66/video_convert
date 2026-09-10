@@ -17,17 +17,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from src import config
-from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
-from src.filter import should_process, should_submit
-from src.history import History
-from src.pipeline import TranscodePipeline
-from src.post_process import recover_pending_postprocess, resume_pending_postprocess
-from src.process_guard import kill_active_ffmpeg
-from src.quality import cleanup_vmaf_logs
-from src.shutdown import signal_shutdown
-from src.temp_cleanup import active_temp_dirs_snapshot, cleanup_stale_temp_dirs
-from src.validation import validate_config
-from src.walker import walk_directory
+from src.application.pipeline import TranscodePipeline
+from src.application.post_process import recover_pending_postprocess, resume_pending_postprocess
+from src.ingest.filter import should_process, should_submit
+from src.ingest.walker import walk_directory
+from src.media.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
+from src.policy.quality import cleanup_vmaf_logs
+from src.runtime.process_guard import kill_active_ffmpeg
+from src.runtime.shutdown import signal_shutdown
+from src.runtime.temp_cleanup import active_temp_dirs_snapshot, cleanup_stale_temp_dirs
+from src.storage.history import History
+from src.support.validation import validate_config
 
 log = logging.getLogger(__name__)
 

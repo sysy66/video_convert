@@ -11,8 +11,8 @@ import subprocess
 import threading
 
 from src import config
-from src.probe import VideoProbe
-from src.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
+from src.media.probe import VideoProbe
+from src.runtime.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
 
 log = __import__("logging").getLogger(__name__)
 

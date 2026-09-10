@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from src import config
-from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
-from src.pipeline import TranscodePipeline
+from src.application.pipeline import TranscodePipeline
+from src.media.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -130,7 +130,7 @@ class TestTranscodeQsv:
 
         _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
 
-        from src.probe import VideoProbe
+        from src.media.probe import VideoProbe
 
         out = list(env["output_dir"].glob("*.mkv"))[0]
         info = VideoProbe(transcode_ffprobe).get_streams_info(str(out))

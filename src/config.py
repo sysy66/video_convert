@@ -199,7 +199,7 @@ AUDIO_PASSTHROUGH_CODECS = {"aac"}
 KEEP_SUBTITLES = True
 KEEP_ATTACHMENTS = True
 # 软解回退编解码器（QSV 硬解崩溃时回退到纯软件解码 + hwupload）。
-# 加入的编解码器需与 src/ffmpeg_runner.py 的动态解码器名解析保持一致。
+# 加入的编解码器需与 src/media/ffmpeg_runner.py 的动态解码器名解析保持一致。
 # Software decode fallback codecs (fall back to software decode + hwupload when QSV crashes).
 SW_DECODE_FALLBACK_CODECS = {"vc1", "mpeg4", "vp9"}
 

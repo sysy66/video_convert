@@ -56,7 +56,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 - [x] **Decoupled scan & transcode** — 转码池常驻进程，扫描周期独立于转码进度（新入库文件最多等一个扫描间隔，不再排队等批次转码完成）；提交前 history 轻量过滤 + `_pending` 内存去重（队列只含真正待处理文件）；stale temp 清理跳过活跃转码目录；SIGTERM 取消排队任务（下次启动重扫）
 - [x] **Incomplete-input guard** — 写入稳定检测（`FILE_STABLE_WINDOW`，mtime 窗口内不入队，防残缺文件被转码）；async VMAF 极端低分（`VMAF_EXTREME_LOW`）改记 failed 退避重试而非永久 rejected（防写入中文件被误判低分锁死）
 - [x] **Orphan record guard** — worker 处理前检查源文件存在（入队后被删则直接丢弃，不白跑 ffmpeg、不污染 history）；扫描轮清理源文件已消失的终态记录（rejected/failed/not required），`success` 永不清理（源缺失是 ACCEPT 删源的正常状态，保留同名去重）
-- [x] **Module split / 模块拆分** — `transcoder.py`（927 行）按职责拆分为 `path_utils` / `ffmpeg_runner` / `process_guard` / `temp_cleanup` / `vmaf_async`；`transcoder` 收口为 transcode_stage(pipeline, job) 两段式转码主流程，兼容再导出层已移除，相关用例改为直接 import 真实模块（src.ffmpeg_runner / src.vmaf_async / src.temp_cleanup / src.process_guard / src.path_utils）
+- [x] **Module split / 模块拆分** — `transcoder.py`（927 行）按职责拆分为路径、ffmpeg、进程、临时目录和 VMAF 模块；`transcoder` 收口为 transcode_stage(pipeline, job) 两段式转码主流程，兼容再导出层已移除。当前模块按 `application` / `ingest` / `media` / `runtime` / `storage` / `policy` / `support` 分包。
 
 ---
 
@@ -76,7 +76,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ## ◐ v1.6 — Post-process rework (进行中)
 
-- [x] **后台 worker 链删除** — `vmaf_async.py`（队列/worker/recover）与旧异步状态机删除；关停 flag 移入新建 `src/shutdown.py`
+- [x] **后台 worker 链删除** — `vmaf_async.py`（队列/worker/recover）与旧异步状态机删除；关停 flag 移入 `src/runtime/shutdown.py`
 - [x] **async 先落盘后打分** — `--vmaf async` 改为 land-first inline 打分，打分对象为库中文件（所见即所得）；sync 保持先打分后落盘；判定规则两模式一致
 - [x] **后处理 dispatcher** — `post_process_stage` 按 `vmaf_mode` 路由 ratio-only/sync/async 三函数，唯一 try/except/finally 护栏
 - [x] **KEEP_TARGET** — 新增：reject（含 ratio 超标）时新文件仍落盘到目标库，仅记 `rejected`（默认关闭，需人工复核）

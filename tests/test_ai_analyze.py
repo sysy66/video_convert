@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src import ai_analyze
+from src.tools import ai_analyze
 
 pytestmark = pytest.mark.unit
 

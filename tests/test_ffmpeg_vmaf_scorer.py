@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src import config
-from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
+from src.media.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 
 pytestmark = pytest.mark.unit
 
@@ -41,25 +41,27 @@ class TestHwDownloadFormat:
     def test_p010le_from_probe(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p10le"):
+        with patch(
+            "src.media.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p10le"
+        ):
             assert _make_scorer()._hw_download_format(str(f)) == "p010le"
 
     def test_nv12_from_probe(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p"):
+        with patch("src.media.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p"):
             assert _make_scorer()._hw_download_format(str(f)) == "nv12"
 
     def test_default_on_probe_failure(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value=None):
+        with patch("src.media.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value=None):
             assert _make_scorer()._hw_download_format(str(f)) == "nv12"
 
     def test_p010le_direct_match(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="p010le"):
+        with patch("src.media.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="p010le"):
             assert _make_scorer()._hw_download_format(str(f)) == "p010le"
 
 
@@ -138,7 +140,7 @@ class TestRunVmaf:
         with (
             patch("subprocess.run", return_value=result),
             patch(
-                "src.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
+                "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(94.0, 90.0),
             ),
         ):
@@ -160,7 +162,7 @@ class TestRunVmaf:
         with (
             patch("subprocess.run", return_value=result),
             patch(
-                "src.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
+                "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
             ),
         ):
@@ -196,7 +198,7 @@ class TestRunVmaf:
             patch.object(scorer, "_hw_download_format", return_value="nv12"),
             patch("subprocess.run", return_value=result) as mock_run,
             patch(
-                "src.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
+                "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
             ),
         ):
@@ -247,7 +249,7 @@ class TestRunVmaf:
         with (
             patch("subprocess.run", return_value=result) as mock_run,
             patch(
-                "src.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
+                "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
             ),
         ):
@@ -268,7 +270,7 @@ class TestRunVmaf:
         with (
             patch("subprocess.run", return_value=result) as mock_run,
             patch(
-                "src.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
+                "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(94.0, 90.0),
             ),
         ):
