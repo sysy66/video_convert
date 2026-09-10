@@ -1,10 +1,8 @@
 """
-探测模块。封装 ffprobe 调用，获取视频的编码、像素格式、帧率、帧间隔等元数据，
-并对帧率进行归一化/投票以处理 VFR 源。
+探测模块。封装 ffprobe 调用，获取视频的编码、像素格式、流信息和帧数。
 
-Probing module. Wraps ffprobe to obtain video metadata (codec, pixel format,
-frame rate, frame intervals, etc.) and normalizes/votes the frame rate to handle
-VFR sources.
+Probing module. Wraps ffprobe to obtain video metadata such as codec, pixel
+format, stream information and frame counts.
 """
 
 import json
@@ -13,35 +11,6 @@ import subprocess
 from src import config
 
 log = __import__("logging").getLogger(__name__)
-
-_COMMON_FRAME_RATES = (
-    ("24000/1001", 24000.0 / 1001.0),
-    ("24/1", 24.0),
-    ("25/1", 25.0),
-    ("30000/1001", 30000.0 / 1001.0),
-    ("30/1", 30.0),
-    ("50/1", 50.0),
-    ("60000/1001", 60000.0 / 1001.0),
-    ("60/1", 60.0),
-    ("120/1", 120.0),
-)
-
-#: avg_frame_rate 与 r_frame_rate 相对差不超过该值即视为一致（0.05%，即相邻
-#: 帧率档位间距 0.1% 的一半）：吸收 avg 计算噪声（nb_frames/duration 的毫级
-#: 抖动），又不吞 29.97/30、23.976/24 这类真实差异（间距恰 0.1%）。
-#: _normalize_common_rate 的归一化容差复用同一值。
-_RATE_AGREE_TOLERANCE = 0.0005
-#: 帧间隔与常见帧率表周期的最大相对偏差（0.5%），超过即拒绝投票。
-#: 足够吸收封装时间戳量化抖动（90kHz tick ±6us），又不至于让 30 与 29.97 互相污染。
-_PTS_MAX_DEVIATION = 0.005
-#: 得票最高项的占比低于该值视为帧序不可靠，放弃投票结果
-_PTS_VOTE_MIN_RATIO = 0.3
-#: 帧时间戳抽样：前/中/尾各取该秒数（总样本 ~15s，分 3 段覆盖帧率中途切换）
-_PTS_SAMPLE_SECONDS = 5
-#: 抽样的三个相对位置（前/中/尾）
-_PTS_SAMPLE_FRACTIONS = ("0%", "50%", "95%")
-#: 抽样窗口内至少需要的帧间隔数
-_PTS_MIN_INTERVALS = 30
 
 
 class VideoProbe:
@@ -332,34 +301,3 @@ class VideoProbe:
             return v if v > 0 else None
         except ValueError:
             return None
-
-
-# ---------------------------------------------------------------------------
-# 兼容层：模块级函数薄包装，签名与旧版一致，测试与既有调用方无需改动。
-# fps_fraction_to_float 仅测试使用，已删除，测试改为直接调用
-# VideoProbe.fps_fraction_to_float 静态方法。
-# Backward-compatibility shims: thin module-level wrappers keeping the legacy
-# signatures so existing callers need no changes. fps_fraction_to_float was
-# only used by tests and was removed; tests now call the static method
-# VideoProbe.fps_fraction_to_float directly.
-# ---------------------------------------------------------------------------
-
-
-def get_video_codec(filepath, ffprobe_path):
-    """探测视频流的编码名称（如 h264/hevc/av1）。见 VideoProbe.get_codec。"""
-    return VideoProbe(ffprobe_path).get_codec(filepath)
-
-
-def get_video_pix_fmt(filepath, ffprobe_path):
-    """探测视频流的像素格式（如 yuv420p / yuv420p10le）。见 VideoProbe.get_pix_fmt。"""
-    return VideoProbe(ffprobe_path).get_pix_fmt(filepath)
-
-
-def get_streams_info(filepath, ffprobe_path):
-    """探测所有流与容器格式信息。见 VideoProbe.get_streams_info。"""
-    return VideoProbe(ffprobe_path).get_streams_info(filepath)
-
-
-def get_frame_count(filepath, ffprobe_path):
-    """全量解码计数视频流帧数。见 VideoProbe.get_frame_count。"""
-    return VideoProbe(ffprobe_path).get_frame_count(filepath)

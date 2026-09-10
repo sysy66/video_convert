@@ -323,9 +323,7 @@ class TestPostTranscodeAsync:
         landed = tmp_path / "test.mkv"
         assert result is True
         assert landed.exists()
-        history.mark_pending_postprocess.assert_called_once_with(
-            str(input_file), str(landed)
-        )
+        history.mark_pending_postprocess.assert_called_once_with(str(input_file), str(landed))
         history.mark_done.assert_called_once_with(
             str(input_file), str(landed), vmaf_score=None, rejected=True
         )
@@ -347,9 +345,7 @@ class TestPostTranscodeAsync:
         assert not output.exists()
         # 打分对象是落盘文件而非 temp 产物（所见即所得）
         assert mock_vmaf.call_args[0][1] == landed
-        history.mark_pending_postprocess.assert_called_once_with(
-            str(input_file), str(landed)
-        )
+        history.mark_pending_postprocess.assert_called_once_with(str(input_file), str(landed))
         history.mark_failed.assert_not_called()
         history.mark_done.assert_called_once_with(
             str(input_file), str(landed), vmaf_score=95.0, rejected=False
@@ -468,9 +464,7 @@ class TestAsyncPostprocessRecovery:
         score.assert_not_called()
         history.mark_vmaf_started.assert_not_called()
         history.mark_vmaf_finished.assert_not_called()
-        history.mark_done.assert_called_once_with(
-            str(source), None, vmaf_score=None, rejected=True
-        )
+        history.mark_done.assert_called_once_with(str(source), None, vmaf_score=None, rejected=True)
 
     def test_resume_failure_does_not_remove_library_directory(self, tmp_path):
         source = tmp_path / "source.mp4"

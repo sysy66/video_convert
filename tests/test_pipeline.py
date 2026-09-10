@@ -155,8 +155,8 @@ class TestTranscodePipelineTranscode:
         with (
             patch("src.pipeline.transcode_stage", side_effect=transcode_stage),
             patch("src.transcoder._run_ffmpeg_with_progress", side_effect=_fake_progress),
-            patch("src.ffmpeg_runner.get_streams_info", return_value=_VIDEO_AAC),
-            patch("src.transcoder.get_video_codec", return_value="h264"),
+            patch("src.ffmpeg_runner.VideoProbe.get_streams_info", return_value=_VIDEO_AAC),
+            patch("src.probe.VideoProbe.get_codec", return_value="h264"),
         ):
             return pipeline.transcode(job)
 

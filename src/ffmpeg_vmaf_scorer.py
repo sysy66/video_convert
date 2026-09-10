@@ -5,7 +5,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from src.probe import get_video_pix_fmt
+from src.probe import VideoProbe
 
 log = __import__("logging").getLogger(__name__)
 
@@ -34,6 +34,9 @@ class FfmpegVMAFScorer:
         vmaf_hw_fallback: bool,
     ):
         self.ffprobe_path = ffprobe_path
+        # The wrapper is stateless; one scorer-level instance serves all VMAF jobs.
+        # 封装没有可变状态；一个 scorer 实例即可服务所有 VMAF 任务。
+        self.probe = VideoProbe(ffprobe_path)
         self.vmaf_ffmpeg_path = vmaf_ffmpeg_path
         self.vmaf_model_path = vmaf_model_path
         self.vmaf_log_dir = vmaf_log_dir
@@ -43,8 +46,7 @@ class FfmpegVMAFScorer:
         self.vmaf_hwaccel = vmaf_hwaccel
         self.vmaf_hw_fallback = vmaf_hw_fallback
 
-    # TODO: later to refactor in ffprobe
-    def _hw_download_format(self, filepath, ffprobe_path):
+    def _hw_download_format(self, filepath):
         """
         探测视频真实 pix_fmt，决定 hwdownload 应该按 8bit(nv12) 还是 10bit(p010le) 取帧。
         不能假定输入位深——新番生肉常见 10bit x265，老番/自制转码常见 8bit。
@@ -56,7 +58,7 @@ class FfmpegVMAFScorer:
         Defaults to 8bit on probe failure: a wrong guess only makes hwdownload fail
         and fall back to software, never a corrupted score.
         """
-        pix_fmt = get_video_pix_fmt(filepath, ffprobe_path) or ""
+        pix_fmt = self.probe.get_pix_fmt(filepath) or ""
         if "10le" in pix_fmt or "10be" in pix_fmt or pix_fmt == "p010le":
             return "p010le"
         return "nv12"
@@ -151,9 +153,8 @@ class FfmpegVMAFScorer:
         self._frame_counts_check(ref_frame_count, dist_frame_count)
 
         if hwaccel:
-            ffprobe_path = self.ffprobe_path
-            ref_fmt = self._hw_download_format(ref_path, ffprobe_path)
-            dist_fmt = self._hw_download_format(dist_path, ffprobe_path)
+            ref_fmt = self._hw_download_format(ref_path)
+            dist_fmt = self._hw_download_format(dist_path)
             hwaccel_flags = ["-hwaccel", "qsv", "-hwaccel_output_format", "qsv"]
             filter_complex = (
                 "[0:v]hwdownload,format=" + ref_fmt + "[ref_dl];"

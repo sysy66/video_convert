@@ -130,10 +130,10 @@ class TestTranscodeQsv:
 
         _run_pipeline(env, transcode_ffmpeg, transcode_ffprobe)
 
-        from src.probe import get_streams_info
+        from src.probe import VideoProbe
 
         out = list(env["output_dir"].glob("*.mkv"))[0]
-        info = get_streams_info(str(out), transcode_ffprobe)
+        info = VideoProbe(transcode_ffprobe).get_streams_info(str(out))
         assert info is not None
         assert info["duration"] == pytest.approx(1.0, abs=0.1)
         assert info["streams"][0]["codec_name"] == "hevc"

@@ -23,7 +23,6 @@ from src.ffmpeg_runner import (
     parse_frame_count_from_stderr,
 )
 from src.path_utils import _format_size, _random_suffix
-from src.probe import get_video_codec
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -108,9 +107,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         if kind == "timeout":
             log.error("TRANSCODE TIMEOUT: %s (%.1fs)", job.filepath.name, transcode_elapsed)
         elif kind == "error":
-            log.error(
-                "TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, transcode_elapsed, msg
-            )
+            log.error("TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, transcode_elapsed, msg)
         else:
             log.error(
                 "TRANSCODE FAILED: %s (%.1fs) - %s", job.filepath.name, transcode_elapsed, msg
@@ -123,7 +120,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         # 软件降级重试状态（防双重重试：每种最多一次）
         fallback_done = {"scale": False, "decode": False}
 
-        codec = get_video_codec(job.filepath, pipeline.ffprobe_path)
+        codec = pipeline.probe.get_codec(job.filepath)
         if codec in config.SW_DECODE_FALLBACK_CODECS:
             fallback_done["decode"] = True
 
@@ -135,6 +132,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
                 pipeline.ffprobe_path,
                 job.filepath,
                 out_path,
+                probe=pipeline.probe,
                 **kwargs,
             )
             log.info("%s: %s %s", log_label, job.filepath.name, " ".join(str(c) for c in cmd))

@@ -10,12 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.probe import (
-    VideoProbe,
-    get_frame_count,
-    get_streams_info,
-    get_video_codec,
-)
+from src.probe import VideoProbe
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +23,7 @@ class TestProbeSuccess:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "h264\n"
             mock_run.return_value.stderr = ""
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result == "h264"
 
     def test_hevc(self):
@@ -36,7 +31,7 @@ class TestProbeSuccess:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "hevc\n"
             mock_run.return_value.stderr = ""
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result == "hevc"
 
     def test_av1(self):
@@ -44,7 +39,7 @@ class TestProbeSuccess:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "av1\n"
             mock_run.return_value.stderr = ""
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result == "av1"
 
     def test_strips_whitespace_and_lowercases(self):
@@ -52,17 +47,17 @@ class TestProbeSuccess:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "  H264 \n"
             mock_run.return_value.stderr = ""
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result == "h264"
 
 
 class TestProbeErrors:
     def test_empty_ffprobe_path(self):
-        result = get_video_codec("/test.mp4", "")
+        result = VideoProbe("").get_codec("/test.mp4")
         assert result is None
 
     def test_none_ffprobe_path(self):
-        result = get_video_codec("/test.mp4", None)
+        result = VideoProbe(None).get_codec("/test.mp4")
         assert result is None
 
     def test_nonzero_exit_code(self):
@@ -70,25 +65,25 @@ class TestProbeErrors:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stderr = "error message"
             mock_run.return_value.stdout = ""
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result is None
 
     def test_file_not_found(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result is None
 
     def test_timeout(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffprobe", timeout=30)
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result is None
 
     def test_generic_exception(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = PermissionError()
-            result = get_video_codec("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_codec("/test.mp4")
         assert result is None
 
 
@@ -109,7 +104,7 @@ class TestGetStreamsInfo:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._MOCK_JSON
             mock_run.return_value.stderr = ""
-            info = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            info = _probe.get_streams_info("/test.mp4")
         assert info is not None
         assert len(info["streams"]) == 3
         assert info["streams"][0]["codec_type"] == "video"
@@ -118,11 +113,11 @@ class TestGetStreamsInfo:
         assert info["duration"] == 123.456
 
     def test_empty_ffprobe_path(self):
-        result = get_streams_info("/test.mp4", "")
+        result = VideoProbe("").get_streams_info("/test.mp4")
         assert result is None
 
     def test_none_ffprobe_path(self):
-        result = get_streams_info("/test.mp4", None)
+        result = VideoProbe(None).get_streams_info("/test.mp4")
         assert result is None
 
     def test_nonzero_exit_code(self):
@@ -130,19 +125,19 @@ class TestGetStreamsInfo:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stderr = "error"
             mock_run.return_value.stdout = ""
-            result = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_streams_info("/test.mp4")
         assert result is None
 
     def test_file_not_found(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
-            result = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_streams_info("/test.mp4")
         assert result is None
 
     def test_timeout(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffprobe", timeout=30)
-            result = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_streams_info("/test.mp4")
         assert result is None
 
     def test_no_duration_in_format(self):
@@ -154,7 +149,7 @@ class TestGetStreamsInfo:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = json.dumps(data)
             mock_run.return_value.stderr = ""
-            info = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            info = _probe.get_streams_info("/test.mp4")
         assert info["duration"] is None
 
     def test_bad_json(self):
@@ -162,7 +157,7 @@ class TestGetStreamsInfo:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "not json"
             mock_run.return_value.stderr = ""
-            result = get_streams_info("/test.mp4", "/usr/bin/ffprobe")
+            result = _probe.get_streams_info("/test.mp4")
         assert result is None
 
 
@@ -193,7 +188,7 @@ class TestGetFrameCount:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._META_OK
             mock_run.return_value.stderr = ""
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n == 216315
         assert mock_run.call_count == 1
 
@@ -202,7 +197,7 @@ class TestGetFrameCount:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._META_OK
             mock_run.return_value.stderr = ""
-            get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            _probe.get_frame_count("/test.mp4")
         cmd = mock_run.call_args[0][0]
         assert any("nb_frames" in c for c in cmd)
         assert any("avg_frame_rate" in c for c in cmd)
@@ -216,7 +211,7 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout=self._META_BAD, stderr=""),
                 MagicMock(returncode=0, stdout="361548", stderr=""),
             ]
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n == 361548
         assert mock_run.call_count == 2
 
@@ -228,7 +223,7 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout=self._META_MKV, stderr=""),
                 MagicMock(returncode=0, stdout="216315", stderr=""),
             ]
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n == 216315
 
     def test_nb_frames_without_rate_trusts_index(self):
@@ -237,7 +232,7 @@ class TestGetFrameCount:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = self._META_BARE
             mock_run.return_value.stderr = ""
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n == 12345
 
     def test_returns_frame_count(self):
@@ -248,7 +243,7 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout=self._META_MKV, stderr=""),
                 MagicMock(returncode=0, stdout="361548", stderr=""),
             ]
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n == 361548
 
     def test_count_packets_flag_and_select_streams(self):
@@ -259,7 +254,7 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout=self._META_MKV, stderr=""),
                 MagicMock(returncode=0, stdout="10", stderr=""),
             ]
-            get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            _probe.get_frame_count("/test.mp4")
         cmd = mock_run.call_args[0][0]
         assert "-count_packets" in cmd
         assert "-count_frames" not in cmd
@@ -275,7 +270,7 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout=self._META_MKV, stderr=""),
                 MagicMock(returncode=0, stdout="N/A", stderr=""),
             ]
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n is None
 
     def test_nonzero_exit_returns_none(self):
@@ -283,7 +278,7 @@ class TestGetFrameCount:
             mock_run.return_value.returncode = 1
             mock_run.return_value.stderr = "decode error"
             mock_run.return_value.stdout = ""
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n is None
 
     def test_parse_error_returns_none(self):
@@ -293,17 +288,17 @@ class TestGetFrameCount:
                 MagicMock(returncode=0, stdout="garbage", stderr=""),
                 MagicMock(returncode=0, stdout="not-a-number", stderr=""),
             ]
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n is None
 
     def test_timeout_returns_none(self):
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(cmd="ffprobe", timeout=30)
-            n = get_frame_count("/test.mp4", "/usr/bin/ffprobe")
+            n = _probe.get_frame_count("/test.mp4")
         assert n is None
 
     def test_empty_ffprobe_path(self):
-        result = get_frame_count("/test.mp4", "")
+        result = VideoProbe("").get_frame_count("/test.mp4")
         assert result is None
 
 

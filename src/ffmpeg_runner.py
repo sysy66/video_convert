@@ -11,7 +11,7 @@ import subprocess
 import threading
 
 from src import config
-from src.probe import get_streams_info, get_video_codec
+from src.probe import VideoProbe
 from src.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
 
 log = __import__("logging").getLogger(__name__)
@@ -24,6 +24,7 @@ def _build_ffmpeg_cmd(
     output_path,
     sw_scale_fallback=False,
     sw_decode_fallback=False,
+    probe=None,
 ):
     """
     构建 FFmpeg 命令行参数列表。
@@ -42,11 +43,15 @@ def _build_ffmpeg_cmd(
     :param sw_scale_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
                         Whether to use software-scale fallback (bypass vpp_qsv filter
                         compatibility issues during hwaccel reconfiguration)
+    :param probe: 可复用的 VideoProbe 实例；省略时按 ffprobe_path 创建
+                  Reusable VideoProbe instance; created from ffprobe_path when omitted
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
              (cmd_list, total_duration) where duration is in seconds, or None if unknown
     :raises RuntimeError: 当流探测失败时抛出 (Raised when stream probing fails)
     """
-    info = get_streams_info(input_path, ffprobe_path)
+    if probe is None:
+        probe = VideoProbe(ffprobe_path)
+    info = probe.get_streams_info(input_path)
     if info is None:
         raise RuntimeError(f"Failed to probe streams for {input_path}")
 
@@ -55,7 +60,7 @@ def _build_ffmpeg_cmd(
 
     sw_decode_codec = None
     if sw_decode_fallback:
-        sw_decode_codec = get_video_codec(input_path, ffprobe_path)
+        sw_decode_codec = probe.get_codec(input_path)
 
     cmd = [
         # 基础参数 / Basic parameters

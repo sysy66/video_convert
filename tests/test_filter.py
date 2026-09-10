@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.filter import should_process, should_submit
+from src.probe import VideoProbe
 
 pytestmark = pytest.mark.unit
 
@@ -27,89 +28,97 @@ def _real_file(tmp_path, name="v.mp4"):
     return p
 
 
+def _probe():
+    return VideoProbe("/fp")
+
+
 def test_new_file_passes(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec", return_value="h264"):
-        assert should_process(_real_file(tmp_path), h, {"hevc"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+        assert should_process(_real_file(tmp_path), h, {"hevc"}, _probe())
 
 
 def test_probe_failure_queues_anyway(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec", return_value=None):
-        assert should_process(_real_file(tmp_path), h, {"hevc"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value=None):
+        assert should_process(_real_file(tmp_path), h, {"hevc"}, _probe())
 
 
 def test_missing_file_skips_without_probe(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec") as mock_probe:
-        assert not should_process(tmp_path / "gone.mp4", h, {"hevc"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec") as mock_probe:
+        assert not should_process(tmp_path / "gone.mp4", h, {"hevc"}, _probe())
     mock_probe.assert_not_called()
 
 
 def test_skip_hevc(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec", return_value="hevc"):
-        assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value="hevc"):
+        assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
         h.mark_skipped.assert_called_once()
 
 
 def test_skip_av1(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec", return_value="av1"):
-        assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value="av1"):
+        assert not should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
         h.mark_skipped.assert_called_once()
 
 
 def test_allows_h264(tmp_path):
     h = _mock_history(None)
-    with patch("src.filter.get_video_codec", return_value="h264"):
-        assert should_process(_real_file(tmp_path), h, {"hevc", "av1"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+        assert should_process(_real_file(tmp_path), h, {"hevc", "av1"}, _probe())
 
 
 def test_skips_success():
-    assert not should_process(Path("/v.mp4"), _mock_history({"status": "success"}), {"hevc"}, "/fp")
+    assert not should_process(
+        Path("/v.mp4"), _mock_history({"status": "success"}), {"hevc"}, _probe()
+    )
 
 
 def test_skips_rejected():
     assert not should_process(
-        Path("/v.mp4"), _mock_history({"status": "rejected"}), {"hevc"}, "/fp"
+        Path("/v.mp4"), _mock_history({"status": "rejected"}), {"hevc"}, _probe()
     )
 
 
 def test_skips_not_required():
     assert not should_process(
-        Path("/v.mp4"), _mock_history({"status": "not required"}), {"hevc"}, "/fp"
+        Path("/v.mp4"), _mock_history({"status": "not required"}), {"hevc"}, _probe()
     )
 
 
 def test_skips_pending_transcode():
     assert not should_process(
-        Path("/v.mp4"), _mock_history({"status": "pending_transcode"}), {"hevc"}, "/fp"
+        Path("/v.mp4"), _mock_history({"status": "pending_transcode"}), {"hevc"}, _probe()
     )
 
 
 def test_failed_skips():
-    assert not should_process(Path("/v.mp4"), _mock_history({"status": "failed"}), {"hevc"}, "/fp")
+    assert not should_process(
+        Path("/v.mp4"), _mock_history({"status": "failed"}), {"hevc"}, _probe()
+    )
 
 
 def test_ready_with_hevc_skips(tmp_path):
     entry = {"status": "ready", "codec": "hevc"}
-    with patch("src.filter.get_video_codec", return_value="hevc"):
+    with patch("src.filter.VideoProbe.get_codec", return_value="hevc"):
         assert not should_process(
-            _real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, "/fp"
+            _real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe()
         )
 
 
 def test_ready_with_h264_passes(tmp_path):
     entry = {"status": "ready", "codec": "h264"}
-    with patch("src.filter.get_video_codec", return_value="h264"):
-        assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value="h264"):
+        assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe())
 
 
 def test_ready_with_none_codec_passes(tmp_path):
     entry = {"status": "ready", "codec": None}
-    with patch("src.filter.get_video_codec", return_value=None):
-        assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, "/fp")
+    with patch("src.filter.VideoProbe.get_codec", return_value=None):
+        assert should_process(_real_file(tmp_path), _mock_history(entry), {"hevc", "av1"}, _probe())
 
 
 def test_should_submit_new_file():
@@ -133,9 +142,7 @@ def test_should_submit_skips_pending_transcode():
 
 
 def test_should_submit_skips_pending_postprocess():
-    assert not should_submit(
-        Path("/v.mp4"), _mock_history({"status": "pending_postprocess"})
-    )
+    assert not should_submit(Path("/v.mp4"), _mock_history({"status": "pending_postprocess"}))
 
 
 def test_should_submit_skips_failed():

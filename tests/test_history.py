@@ -53,9 +53,7 @@ class TestHistoryInit:
         h = make_history()
 
         with pytest.raises(sqlite3.IntegrityError):
-            h._conn.execute(
-                "INSERT INTO files (filepath, status) VALUES ('/v.mp4', 'unknown')"
-            )
+            h._conn.execute("INSERT INTO files (filepath, status) VALUES ('/v.mp4', 'unknown')")
 
         with pytest.raises(sqlite3.IntegrityError):
             h._conn.execute(

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from src import config
-from src.probe import get_video_codec
+from src.probe import VideoProbe
 
 log = __import__("logging").getLogger(__name__)
 
@@ -68,7 +68,7 @@ def should_submit(filepath, history):
     return True
 
 
-def should_process(filepath, history, skip_codecs, ffprobe_path):
+def should_process(filepath, history, skip_codecs, probe: VideoProbe):
     """判断文件是否应进入转码队列：历史允许、文件存在且编码不在跳过列表中。
 
     Decide whether a file should enter the transcode queue: history permits it,
@@ -77,7 +77,7 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
     :param filepath: 源文件路径 (Path to the source file)
     :param history: 历史记录对象 (History tracking object)
     :param skip_codecs: 需要跳过的编码集合 (Set of codecs to skip)
-    :param ffprobe_path: ffprobe 可执行文件路径 (Path to the ffprobe executable)
+    :param probe: 共享的 VideoProbe 实例 (Shared VideoProbe instance)
     :return: True 表示应处理，否则 False (True if it should be processed)
     """
     if not _history_allows(filepath, history):
@@ -88,7 +88,7 @@ def should_process(filepath, history, skip_codecs, ffprobe_path):
         log.debug("SKIP (missing): %s", filepath.name)
         return False
 
-    codec = get_video_codec(filepath, ffprobe_path)
+    codec = probe.get_codec(filepath)
     if codec is None:
         log.warning("PROBE FAILED (queued anyway): %s", filepath)
         return True

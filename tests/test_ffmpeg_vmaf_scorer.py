@@ -41,26 +41,26 @@ class TestHwDownloadFormat:
     def test_p010le_from_probe(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.get_video_pix_fmt", return_value="yuv420p10le"):
-            assert _make_scorer()._hw_download_format(str(f), "/ffprobe") == "p010le"
+        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p10le"):
+            assert _make_scorer()._hw_download_format(str(f)) == "p010le"
 
     def test_nv12_from_probe(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.get_video_pix_fmt", return_value="yuv420p"):
-            assert _make_scorer()._hw_download_format(str(f), "/ffprobe") == "nv12"
+        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="yuv420p"):
+            assert _make_scorer()._hw_download_format(str(f)) == "nv12"
 
     def test_default_on_probe_failure(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.get_video_pix_fmt", return_value=None):
-            assert _make_scorer()._hw_download_format(str(f), "/ffprobe") == "nv12"
+        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value=None):
+            assert _make_scorer()._hw_download_format(str(f)) == "nv12"
 
     def test_p010le_direct_match(self, tmp_path):
         f = tmp_path / "test.mkv"
         f.write_text("x")
-        with patch("src.ffmpeg_vmaf_scorer.get_video_pix_fmt", return_value="p010le"):
-            assert _make_scorer()._hw_download_format(str(f), "/ffprobe") == "p010le"
+        with patch("src.ffmpeg_vmaf_scorer.VideoProbe.get_pix_fmt", return_value="p010le"):
+            assert _make_scorer()._hw_download_format(str(f)) == "p010le"
 
 
 class TestReadVmafFromJson:

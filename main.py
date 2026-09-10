@@ -302,7 +302,7 @@ def main_loop():
             return
         try:
             if not force and not should_process(
-                job.filepath, job.pipeline.history, config.SKIP_CODECS, config.FFPROBE_PATH
+                job.filepath, job.pipeline.history, config.SKIP_CODECS, pipeline.probe
             ):
                 return
             if job.transcode():

@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from src.pipeline import TranscodePipeline
 from src import config
 from src.path_utils import _final_dest_path, _format_size
-from src.probe import get_frame_count
 from src.quality import vmaf_verdict
 from src.shutdown import is_shutting_down
 from src.temp_cleanup import (
@@ -143,7 +142,7 @@ def _score_inline(pipeline, job, ctx, dist_path=None):
     vmaf_start = _time.monotonic()
     # 源帧数走 nb_frames 容器索引快路径（mp4 秒级，mkv 回退全量计数），
     # 产物帧数已由转码 stderr 解析，两路都不再需要打分侧全量探测
-    ref_frame_count = get_frame_count(filepath, pipeline.ffprobe_path)
+    ref_frame_count = pipeline.probe.get_frame_count(filepath)
     vmaf_score = compute_vmaf(
         filepath,
         dist_path,
@@ -360,9 +359,7 @@ def _post_process_async(pipeline, job):
     if ctx["output_path"].exists():
         ctx["output_path"].unlink()
     _cleanup_temp(temp_dir)
-    vmaf_score, vmaf_elapsed = _score_with_history(
-        pipeline, job, ctx, dist_path=final_path
-    )
+    vmaf_score, vmaf_elapsed = _score_with_history(pipeline, job, ctx, dist_path=final_path)
     verdict = vmaf_verdict(vmaf_score, ctx["ratio"])
     return (
         _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path),
@@ -426,9 +423,7 @@ def _resume_async_postprocess(pipeline, filepath, final_path):
     }
     if ratio > config.ACCEPT_RATIO_MAX:
         return _settle(pipeline, job, ctx, "reject", None, None, landed=final_path)
-    vmaf_score, vmaf_elapsed = _score_with_history(
-        pipeline, job, ctx, dist_path=final_path
-    )
+    vmaf_score, vmaf_elapsed = _score_with_history(pipeline, job, ctx, dist_path=final_path)
     verdict = vmaf_verdict(vmaf_score, ratio)
     return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path)
 
