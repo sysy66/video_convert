@@ -74,7 +74,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ---
 
-## ◐ v1.6 — Post-process rework (进行中)
+## ✔ v1.6 — Post-process rework (已发布)
 
 - [x] **后台 worker 链删除** — `vmaf_async.py`（队列/worker/recover）与旧异步状态机删除；关停 flag 移入 `src/runtime/shutdown.py`
 - [x] **async 先落盘后打分** — `--vmaf async` 改为 land-first inline 打分，打分对象为库中文件（所见即所得）；sync 保持先打分后落盘；判定规则两模式一致
@@ -84,7 +84,32 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ---
 
-## 🗺 v2.0 — Web UI & API (远期规划，暂缓)
+## ◐ v1.7 — 稳定性、调度与质量策略
+
+- [ ] **VMAF 子进程可中断** — 将转码、VMAF 和 ffprobe 子进程纳入统一进程守卫；关停时及时终止子进程，避免等待整个超时时间
+- [ ] **输出原子落盘与并发冲突保护** — 目标文件名保留、临时文件复制和最终提交保持原子性，避免同名任务互相覆盖或留下半成品
+- [ ] **转码产物完整性检查** — 落盘前用 ffprobe 检查文件可读性、视频流和附属流，校验位深、像素格式及基本流信息
+- [ ] **失败重试策略重做** — 记录失败次数和下次重试时间，区分临时错误、输入损坏和配置错误，限制无效重试；同步修正路线图中与实际代码不符的重试说明
+- [ ] **有界任务队列与资源预算** — 限制待处理任务数量，避免大媒体库一次扫描创建大量 Future；统一约束转码并发、VMAF 并发和 VMAF 线程数
+- [ ] **History 访问和状态一致性** — 统一所有 SQLite 访问的加锁方式，收拢状态转换和产物路径不变量，补充并发读写测试
+- [ ] **源文件身份与媒体库边界** — 用文件大小、修改时间或指纹识别同一路径上的新文件；校验媒体库输入目录重叠，避免恢复任务匹配到错误的库
+- [ ] **扫描成本控制** — 减少大媒体库的重复遍历和逐文件查询，增加批量历史查询或文件变更筛选
+- [ ] **按媒体库配置编码策略** — 允许不同媒体库分别配置编码器、质量参数、音频策略和 VMAF 阈值
+- [ ] **运行控制与可观测性** — 增加单次扫描、试运行、队列状态和失败记录查询；日志补充活动任务、排队数量和阶段耗时
+- [ ] **故障注入和文档同步** — 覆盖关停中断、VMAF 超时、输出冲突、源文件消失和网络存储失败；清理路线图及安装文档中的退役状态和旧流程说明
+- [ ] **可选：智能码率（ab-av1）** — 根据目标 VMAF 分数（全平台默认 93）自动测算最佳压制参数，支持 **10-bit** 深度；不作为 v1.7 完成条件
+
+---
+
+## 🗺 v2.0 — Golang Port (远期规划，暂缓)
+
+- [ ] Port core scanner + transcoder + quality gate to Go
+- [ ] Compare concurrency models (goroutines vs ThreadPoolExecutor)
+- [ ] Native inotify/FSEvents support (no polling on local filesystems)
+
+---
+
+## 🗺 v3.0 — Web UI & API (远期规划，暂缓)
 
 - [ ] **REST API** (FastAPI) — expose transcode queue, history, and progress
 - [ ] **Web dashboard** — browse libraries, view history, trigger manual transcodes
@@ -93,13 +118,6 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ---
 
-## 🗺 v3.0 — Golang Port (远期规划，暂缓)
-
-- [ ] Port core scanner + transcoder + quality gate to Go
-- [ ] Compare concurrency models (goroutines vs ThreadPoolExecutor)
-- [ ] Native inotify/FSEvents support (no polling on local filesystems)
-
----
 
 ## ❌ Cancelled / 已取消
 
