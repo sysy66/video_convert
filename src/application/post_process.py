@@ -16,7 +16,8 @@ from src.runtime.temp_cleanup import (
     _active_temp_dirs_lock,
     _cleanup_temp,
 )
-from src.support.path_utils import _final_dest_path, _format_size
+from src.support.format_utils import _format_size
+from src.support.path_utils import _final_dest_path
 
 log = __import__("logging").getLogger(__name__)
 

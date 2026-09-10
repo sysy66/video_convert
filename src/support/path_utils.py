@@ -1,14 +1,10 @@
 """
-路径工具模块。提供路径唯一化（避免覆盖）、文件大小格式化、随机后缀生成与
-输出目标路径计算等通用工具函数。
+路径工具模块。提供路径唯一化（避免覆盖）与输出目标路径计算。
 
-Path utility module. Provides generic helpers for making paths unique (avoiding
-overwrites), formatting file sizes, generating random suffixes, and computing
-output destination paths.
+Path utility module. Provides helpers for making paths unique (avoiding
+overwrites) and computing output destination paths.
 """
 
-import random
-import string
 from pathlib import Path
 
 
@@ -32,33 +28,6 @@ def _unique_path(path):
         if not new.exists():
             return new
         counter += 1
-
-
-def _format_size(bytes_val):
-    """
-    将字节数格式化为人类可读的字符串（KB/MB/GB）。
-    Format bytes into a human-readable string (KB/MB/GB).
-
-    :param bytes_val: 字节数 (Number of bytes)
-    :return: 格式化后的字符串，如 "1.23 GB" (Formatted string, e.g. "1.23 GB")
-    """
-    for unit in ("B", "KB", "MB", "GB"):
-        if abs(bytes_val) < 1024:
-            return f"{bytes_val:.1f} {unit}"
-        bytes_val /= 1024
-    return f"{bytes_val:.1f} TB"
-
-
-def _random_suffix(length=6):
-    """
-    生成随机后缀，用于临时目录名称。
-    Generate a random suffix for temporary directory names.
-
-    :param length: 后缀长度 (Length of the suffix)
-    :return: 随机字符串 (Random string)
-    """
-    chars = string.ascii_lowercase + string.digits
-    return "".join(random.choices(chars, k=length))
 
 
 def _final_dest_path(filepath, output_filename, input_dir, output_dir):

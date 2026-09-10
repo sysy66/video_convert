@@ -26,8 +26,9 @@ from src.runtime.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
     _cleanup_temp,
+    _random_suffix,
 )
-from src.support.path_utils import _format_size, _random_suffix
+from src.support.format_utils import _format_size
 
 log = __import__("logging").getLogger(__name__)
 

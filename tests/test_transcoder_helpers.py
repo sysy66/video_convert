@@ -10,7 +10,7 @@ import pytest
 
 from src.media import ffmpeg_runner
 from src.runtime import process_guard, temp_cleanup
-from src.support import path_utils
+from src.support import format_utils, path_utils
 
 pytestmark = pytest.mark.unit
 
@@ -105,35 +105,35 @@ class TestUniquePath:
 
 class TestFormatSize:
     def test_bytes(self):
-        assert path_utils._format_size(512) == "512.0 B"
+        assert format_utils._format_size(512) == "512.0 B"
 
     def test_kilobytes(self):
-        assert path_utils._format_size(2048) == "2.0 KB"
+        assert format_utils._format_size(2048) == "2.0 KB"
 
     def test_megabytes(self):
-        assert path_utils._format_size(5 * 1024**2) == "5.0 MB"
+        assert format_utils._format_size(5 * 1024**2) == "5.0 MB"
 
     def test_gigabytes(self):
-        assert path_utils._format_size(3 * 1024**3) == "3.0 GB"
+        assert format_utils._format_size(3 * 1024**3) == "3.0 GB"
 
     def test_terabytes(self):
-        assert path_utils._format_size(2 * 1024**4) == "2.0 TB"
+        assert format_utils._format_size(2 * 1024**4) == "2.0 TB"
 
     def test_negative_values(self):
-        assert path_utils._format_size(-1024) == "-1.0 KB"
+        assert format_utils._format_size(-1024) == "-1.0 KB"
 
 
 class TestRandomSuffix:
     def test_default_length(self):
-        assert len(path_utils._random_suffix()) == 6
+        assert len(temp_cleanup._random_suffix()) == 6
 
     def test_custom_length(self):
-        assert len(path_utils._random_suffix(12)) == 12
+        assert len(temp_cleanup._random_suffix(12)) == 12
 
     def test_charset_limited(self):
         import string
 
-        suffix = path_utils._random_suffix(100)
+        suffix = temp_cleanup._random_suffix(100)
         allowed = set(string.ascii_lowercase + string.digits)
         assert all(c in allowed for c in suffix)
 

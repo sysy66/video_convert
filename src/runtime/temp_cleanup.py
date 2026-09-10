@@ -1,14 +1,17 @@
 """
-临时目录清理模块。清理中断/残留的转码临时工作目录，跳过仍在活跃使用的目录，
-并稳健处理删除失败（含只读文件与挂载点等情况）。
+临时目录生命周期模块。生成临时目录名称、登记活跃目录，并清理中断/残留的转码
+临时工作目录；跳过仍在活跃使用的目录，稳健处理删除失败（含只读文件与挂载点等情况）。
 
-Temp-directory cleanup module. Cleans up interrupted/stale transcode work dirs,
-skipping those still in active use, and robustly handles deletion failures
-(e.g., read-only files and mount points).
+Temp-directory lifecycle module. Generates temp-directory names, tracks active
+directories, and cleans up interrupted/stale transcode work dirs. It skips
+directories still in active use and handles deletion failures robustly (e.g.,
+read-only files and mount points).
 """
 
 import os
+import random
 import shutil
+import string
 import subprocess
 import threading
 from pathlib import Path
@@ -19,6 +22,18 @@ log = __import__("logging").getLogger(__name__)
 # Active temp work dirs; the stale-cleanup pass must skip these.
 _active_temp_dirs = set()
 _active_temp_dirs_lock = threading.Lock()
+
+
+def _random_suffix(length=6):
+    """
+    生成临时目录名称使用的随机后缀。
+    Generate a random suffix for temporary directory names.
+
+    :param length: 后缀长度 (Length of the suffix)
+    :return: 随机字符串 (Random string)
+    """
+    chars = string.ascii_lowercase + string.digits
+    return "".join(random.choices(chars, k=length))
 
 
 def active_temp_dirs_snapshot():
