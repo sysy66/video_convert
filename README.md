@@ -59,7 +59,7 @@ src/
   temp_cleanup.py  — stale .work_* cleanup (skips active jobs)
   shutdown.py      — graceful-shutdown flag
   quality.py       — VMAF computation and accept/reject decision
-  history.py       — SQLite-persisted state machine (started/pending_vmaf/success/rejected/failed/not required)
+  history.py       — SQLite-persisted state machine (pending_transcode/pending_postprocess/success/rejected/failed/not required)
   probe.py         — ffprobe wrapper for stream + codec detection
   validation.py    — startup validation of paths/executables/disk space
   ai_analyze.py    — optional LLM analysis of transcode logs

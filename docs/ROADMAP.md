@@ -80,6 +80,7 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 - [x] **async 先落盘后打分** — `--vmaf async` 改为 land-first inline 打分，打分对象为库中文件（所见即所得）；sync 保持先打分后落盘；判定规则两模式一致
 - [x] **后处理 dispatcher** — `post_process_stage` 按 `vmaf_mode` 路由 ratio-only/sync/async 三函数，唯一 try/except/finally 护栏
 - [x] **KEEP_TARGET** — 新增：reject（含 ratio 超标）时新文件仍落盘到目标库，仅记 `rejected`（默认关闭，需人工复核）
+- [x] **Async post-process resume** — async 产物落盘后记录 `pending_postprocess`；启动时直接恢复打分，缺失产物才回退转码
 
 ---
 

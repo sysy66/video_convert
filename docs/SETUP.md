@@ -260,11 +260,20 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 1. 转码成功 → 输出文件立即移入输出区，随后对库中文件打分（终态落定前源文件保留）。
 2. 打分完成：接受 → 删除源文件（除非 `--keep-source`），状态 `success`；拒绝 → 按 `KEEP_TARGET` 处置库中文件（默认删除），状态 `rejected`，源文件保留。
 3. `ratio` 超过 `ACCEPT_RATIO_MAX` 时必拒（`KEEP_TARGET=True` 时仍落盘，仅记 rejected）。
-4. 崩溃窗口：落盘与终态记录之间崩溃会在输出库留下孤儿文件（下次转码去重为 `.1` 后缀），属 land-first 固有代价。
+4. 输出落盘成功后先记为 `pending_postprocess`；进程中断后下次启动直接复用库中文件打分，不重转码。
+5. 恢复时源文件缺失记 `failed`；库中产物缺失降级为 `pending_transcode`，按普通转码重新入队。
+6. 落盘到写入 `pending_postprocess` 之间的极短窗口仍按旧逻辑重转码，可能产生 `.1` 去重文件。
+
+新增状态：
+
+| 状态 | 含义 |
+|---|---|
+| `pending_postprocess` | async 产物已落盘，源文件仍在，等待打分和终态处理 |
 
 注意事项：
 
 - **打分前输出文件已在库中**，采集器（Jellyfin/Plex）可能在 verdict 落定前扫到被拒文件。
+- `pending_postprocess` 仅表示 async 产物已落盘、终态尚未记录；启动恢复不依赖当前 VMAF 模式。
 - 关停中断的打分视同普通打分失败记 `rejected`（保留源文件，可手动重跑），不延后。
 
 ```

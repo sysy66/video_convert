@@ -21,6 +21,7 @@ from src.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
 from src.filter import should_process, should_submit
 from src.history import History
 from src.pipeline import TranscodePipeline
+from src.post_process import recover_pending_postprocess, resume_pending_postprocess
 from src.process_guard import kill_active_ffmpeg
 from src.quality import cleanup_vmaf_logs
 from src.shutdown import signal_shutdown
@@ -286,14 +287,21 @@ def main_loop():
     _pending = set()
 
     def post_process(job):
-        if not _running:
-            return
         try:
-            job.post_process()
+            if _running:
+                job.post_process()
         except Exception:
             log.exception("UNHANDLED ERROR: %s", job.key)
         finally:
             _pending.discard(job.key)
+
+    def resume_post_process(filepath, final_path):
+        key = str(Path(filepath).resolve())
+        try:
+            if _running:
+                resume_pending_postprocess(pipeline, filepath, final_path)
+        finally:
+            _pending.discard(key)
 
     def process_one(job, force=False):
         if not _running:
@@ -353,6 +361,18 @@ def main_loop():
                 _pending.add(job.key)
                 transcode_pool.submit(process_one, job, force=True)
                 log.info("REQUEUE ENTRY (queued): %s", path)
+
+        # pending_postprocess 行已经有库中产物。先提交后处理，再重入队
+        # pending_transcode，确保 recover 降级的记录能在本次启动中被重新提交。
+        # pending_postprocess rows already have library outputs. Submit post-process
+        # first, then requeue pending_transcode so demoted records are handled now.
+        for filepath, final_path in recover_pending_postprocess(history):
+            key = str(Path(filepath).resolve())
+            if key in _pending:
+                continue
+            _pending.add(key)
+            post_pool.submit(resume_post_process, filepath, final_path)
+            log.info("REQUEUE POSTPROCESS (queued): %s", Path(filepath))
 
         requeue_entry(history.iter_started())
         if config.RETRY_FAILED:

@@ -12,7 +12,11 @@ import pytest
 from src import config
 from src.job import TranscodeJob
 from src.pipeline import TranscodePipeline
-from src.post_process import post_process_stage
+from src.post_process import (
+    post_process_stage,
+    recover_pending_postprocess,
+    resume_pending_postprocess,
+)
 from src.temp_cleanup import (
     _active_temp_dirs,
     _active_temp_dirs_lock,
@@ -286,6 +290,29 @@ class TestPostTranscodeAsync:
             str(input_file), None, vmaf_score=None, rejected=True
         )
 
+    def test_ratio_over_max_keep_target_marks_async_landing(self, tmp_path):
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, vmaf_mode=config.VMAF_MODE_ASYNC
+        )
+        input_file.write_text("x" * 5)
+        with (
+            patch("src.post_process.config.KEEP_TARGET", True),
+            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+        ):
+            result = post_process_stage(pipeline, job)
+
+        landed = tmp_path / "test.mkv"
+        assert result is True
+        assert landed.exists()
+        history.mark_pending_postprocess.assert_called_once_with(
+            str(input_file), str(landed)
+        )
+        history.mark_done.assert_called_once_with(
+            str(input_file), str(landed), vmaf_score=None, rejected=True
+        )
+        calls = [call[0] for call in history.method_calls]
+        assert calls.index("mark_pending_postprocess") < calls.index("mark_done")
+
     def test_async_accept_scores_landed_file(self, tmp_path):
         # async 全链：先落盘→打分对象是库中文件→accept 不复拷→删源记终态。
         mock_vmaf = MagicMock(return_value=95.0)
@@ -301,6 +328,9 @@ class TestPostTranscodeAsync:
         assert not output.exists()
         # 打分对象是落盘文件而非 temp 产物（所见即所得）
         assert mock_vmaf.call_args[0][1] == landed
+        history.mark_pending_postprocess.assert_called_once_with(
+            str(input_file), str(landed)
+        )
         history.mark_failed.assert_not_called()
         history.mark_done.assert_called_once_with(
             str(input_file), str(landed), vmaf_score=95.0, rejected=False
@@ -321,6 +351,122 @@ class TestPostTranscodeAsync:
         history.mark_done.assert_called_once_with(
             str(input_file), None, vmaf_score=60.0, rejected=True
         )
+
+
+class TestAsyncPostprocessRecovery:
+    def test_recover_missing_source_marks_failed(self, tmp_path):
+        source = tmp_path / "missing.mp4"
+        history = MagicMock()
+        history.iter_pending_postprocess.return_value = [str(source)]
+
+        assert recover_pending_postprocess(history) == []
+
+        history.mark_failed.assert_called_once_with(
+            str(source), "source missing, cannot resume post-process"
+        )
+        history.get_output_path.assert_not_called()
+
+    def test_recover_missing_output_demotes_to_transcode(self, tmp_path):
+        source = tmp_path / "source.mp4"
+        source.write_text("source")
+        final = tmp_path / "missing.mkv"
+        history = MagicMock()
+        history.iter_pending_postprocess.return_value = [str(source)]
+        history.get_output_path.return_value = str(final)
+
+        assert recover_pending_postprocess(history) == []
+
+        history.mark_pending_transcode.assert_called_once_with(str(source), None)
+        history.mark_failed.assert_not_called()
+
+    def test_recover_returns_existing_source_and_output(self, tmp_path):
+        source = tmp_path / "source.mp4"
+        final = tmp_path / "final.mkv"
+        source.write_text("source")
+        final.write_text("landed")
+        history = MagicMock()
+        history.iter_pending_postprocess.return_value = [str(source)]
+        history.get_output_path.return_value = str(final)
+
+        assert recover_pending_postprocess(history) == [(str(source), str(final))]
+        history.mark_failed.assert_not_called()
+        history.mark_pending_transcode.assert_not_called()
+
+    def test_resume_accept_scores_and_settles_landed_file(self, tmp_path):
+        source = tmp_path / "source.mp4"
+        final = tmp_path / "final.mkv"
+        source.write_bytes(b"x" * 100)
+        final.write_bytes(b"y" * 50)
+        history = MagicMock()
+        pipeline = TranscodePipeline(
+            history=history,
+            ffmpeg_path="/ffmpeg",
+            ffprobe_path="/ffprobe",
+            compute_vmaf=MagicMock(),
+            keep_source=False,
+            vmaf_mode=config.VMAF_MODE_ASYNC,
+        )
+
+        with patch("src.post_process._score_inline", return_value=(95.0, 2.0)) as score:
+            result = resume_pending_postprocess(pipeline, source, final)
+
+        assert result is True
+        assert not source.exists()
+        assert final.exists()
+        assert score.call_args.args[2]["temp_dir"] is None
+        assert score.call_args.kwargs["dist_path"] == final
+        history.mark_done.assert_called_once_with(
+            str(source), str(final), vmaf_score=95.0, rejected=False
+        )
+
+    def test_resume_ratio_reject_skips_scoring(self, tmp_path):
+        source = tmp_path / "source.mp4"
+        final = tmp_path / "final.mkv"
+        source.write_bytes(b"x")
+        final.write_bytes(b"y" * 10)
+        history = MagicMock()
+        pipeline = TranscodePipeline(
+            history=history,
+            ffmpeg_path="/ffmpeg",
+            ffprobe_path="/ffprobe",
+            compute_vmaf=MagicMock(),
+            vmaf_mode=config.VMAF_MODE_ASYNC,
+        )
+
+        with (
+            patch("src.post_process.config.ACCEPT_RATIO_MAX", 0.5),
+            patch("src.post_process._score_inline") as score,
+        ):
+            result = resume_pending_postprocess(pipeline, source, final)
+
+        assert result is True
+        assert source.exists()
+        assert not final.exists()
+        score.assert_not_called()
+        history.mark_done.assert_called_once_with(
+            str(source), None, vmaf_score=None, rejected=True
+        )
+
+    def test_resume_failure_does_not_remove_library_directory(self, tmp_path):
+        source = tmp_path / "source.mp4"
+        output_dir = tmp_path / "library"
+        final = output_dir / "missing.mkv"
+        source.write_text("source")
+        output_dir.mkdir()
+        history = MagicMock()
+        pipeline = TranscodePipeline(
+            history=history,
+            ffmpeg_path="/ffmpeg",
+            ffprobe_path="/ffprobe",
+            compute_vmaf=MagicMock(),
+            vmaf_mode=config.VMAF_MODE_ASYNC,
+        )
+
+        result = resume_pending_postprocess(pipeline, source, final)
+
+        assert result is False
+        assert output_dir.is_dir()
+        history.mark_failed.assert_called_once()
 
 
 class TestPostTranscodeActiveTempDir:

@@ -146,6 +146,18 @@ class TestHistoryMarks:
         h.mark_failed("/v.mp4", "err")
         assert h.get_entry("/v.mp4")["started_at"] == started
 
+    def test_mark_pending_postprocess_preserves_started_at_and_output(self, make_history):
+        h = make_history()
+        h.mark_pending_transcode("/v.mp4", "/tmp/.work/v.mkv")
+        started = h.get_entry("/v.mp4")["started_at"]
+
+        h.mark_pending_postprocess("/v.mp4", "/library/v.mkv")
+
+        entry = h.get_entry("/v.mp4")
+        assert entry["status"] == "pending_postprocess"
+        assert entry["output_path"] == "/library/v.mkv"
+        assert entry["started_at"] == started
+
 
 class TestHistoryIter:
     def test_iter_started(self, make_history):
@@ -154,6 +166,15 @@ class TestHistoryIter:
         h.mark_pending_transcode("/b.mp4", "/b.mkv")
         h.mark_done("/c.mp4", "/c.mkv")
         assert set(h.iter_started()) == {"/a.mp4", "/b.mp4"}
+
+    def test_iter_pending_postprocess(self, make_history):
+        h = make_history()
+        h.mark_pending_postprocess("/a.mp4", "/a.mkv")
+        h.mark_pending_postprocess("/b.mp4", "/b.mkv")
+        h.mark_done("/c.mp4", "/c.mkv")
+        h.mark_pending_transcode("/d.mp4", "/d.mkv")
+
+        assert set(h.iter_pending_postprocess()) == {"/a.mp4", "/b.mp4"}
 
     def test_migrate_await_postprocess_to_pending(self, make_history):
         h = make_history()

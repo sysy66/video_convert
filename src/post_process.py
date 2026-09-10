@@ -2,6 +2,7 @@ import re
 import shutil
 import time as _time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,6 +91,13 @@ def _resolve_output(pipeline, job):
                 history.mark_failed(str(filepath), move_err)
                 return ctx, False
             landed_path = str(final_path)
+            # async + KEEP_TARGET 也会在写入终态前落盘。这里提前登记恢复点，
+            # 这样此处崩溃时可直接处置已落盘文件，无需再次转码。
+            # async + KEEP_TARGET also lands before the terminal state is written.
+            # Register the recovery point so a crash can handle the landed file directly.
+            mode = pipeline.vmaf_mode or config.VMAF_MODE
+            if mode not in (config.VMAF_MODE_OFF, config.VMAF_MODE_SYNC):
+                history.mark_pending_postprocess(str(filepath), landed_path)
         if output_path.exists():
             output_path.unlink()
         _cleanup_temp(temp_dir)
@@ -301,11 +309,10 @@ def _post_process_async(pipeline, job):
     temp_dir = ctx["temp_dir"] if ctx is not None else None
     if terminal is not None:
         return terminal, temp_dir
-    # 先落盘：后续打分与处置都针对库中文件（早落盘的孤儿窗口与扫描器可见性
-    # 为 land-first 固有代价，见评审）。temp 随即清理，打分不再依赖它。
-    # Land first: scoring and settling both target the library file (the
-    # orphan window and scanner visibility are inherent to land-first).
-    # Temp is cleaned right away; scoring no longer depends on it.
+    # 先落盘并立即登记 pending_postprocess；后续打分和处置都针对库中文件。
+    # Land first and register pending_postprocess immediately; scoring and settling
+    # both target the library file. A crash in the tiny land-to-mark window still
+    # falls back to the old re-transcode path; temp is then cleaned up.
     final_path, move_err = _land_output(
         ctx["output_path"],
         ctx["filepath"],
@@ -317,6 +324,9 @@ def _post_process_async(pipeline, job):
         _cleanup_temp(temp_dir)
         history.mark_failed(str(ctx["filepath"]), move_err)
         return False, temp_dir
+    # 落盘成功即认领：此后崩溃由 recover 直接打分→终态，不重转码
+    # Once landed, the file is claimed: recovery scores and settles it after a crash.
+    history.mark_pending_postprocess(str(ctx["filepath"]), str(final_path))
     if ctx["output_path"].exists():
         ctx["output_path"].unlink()
     _cleanup_temp(temp_dir)
@@ -326,6 +336,91 @@ def _post_process_async(pipeline, job):
         _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path),
         temp_dir,
     )
+
+
+def recover_pending_postprocess(history):
+    """
+    启动恢复：把 pending_postprocess 行（async 落盘后中断）挑出来直接打分→终态，
+    不重转码。返回 [(filepath, final_path)] 待提交；源缺失记 failed，
+    产物缺失降级 pending_transcode（重转）。
+
+    Startup recovery: resume pending_postprocess rows (async interrupted after
+    landing) straight to scoring, no re-transcode. Returns [(filepath,
+    final_path)] for submission; missing sources are marked failed, missing
+    outputs demoted to pending_transcode (re-transcode).
+    """
+    pending = []
+    for filepath in history.iter_pending_postprocess():
+        if not Path(filepath).exists():
+            history.mark_failed(filepath, "source missing, cannot resume post-process")
+            continue
+        raw_final = history.get_output_path(filepath)
+        if raw_final is None or not Path(raw_final).exists():
+            history.mark_pending_transcode(filepath, None)
+            log.warning(
+                "RESUME DEMOTED (output missing): %s requeued for transcode",
+                Path(filepath).name,
+            )
+            continue
+        pending.append((filepath, raw_final))
+    return pending
+
+
+def _resume_async_postprocess(pipeline, filepath, final_path):
+    """
+    恢复单文件 async 后处理：打分库中文件→verdict→终态（landed 已知，不复拷）。
+    lib 路径全程用不上，用 SimpleNamespace 承载打分上下文字段。返回 bool。
+
+    Resume one async post-process: score the library file → verdict → settle
+    (already landed, no second copy). lib paths are never needed; a
+    SimpleNamespace carries the scoring context fields. Returns bool.
+    """
+    filepath = Path(filepath)
+    final_path = Path(final_path)
+    output_size = final_path.stat().st_size
+    input_size = filepath.stat().st_size
+    ratio = output_size / input_size if input_size else 0
+    job = SimpleNamespace(elapsed=0.0, dist_frame_count=None, vmaf_score=None)
+    ctx = {
+        "filepath": filepath,
+        "output_path": final_path,
+        # 产物已经在目标库中，这里保持 None，避免通用异常清理把库目录误当临时目录。
+        # The output is already in the library; keep this None so generic cleanup
+        # never mistakes the library directory for a temporary directory.
+        "temp_dir": None,
+        "output_size": output_size,
+        "ratio": ratio,
+        "expect_filename": final_path.name,
+    }
+    if ratio > config.ACCEPT_RATIO_MAX:
+        return _settle(pipeline, job, ctx, "reject", None, None, landed=final_path)
+    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx, dist_path=final_path)
+    verdict = vmaf_verdict(vmaf_score, ratio)
+    return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path)
+
+
+def resume_pending_postprocess(pipeline, filepath, final_path):
+    """
+    带失败护栏的 async 后处理恢复入口。关停期间保留 pending 状态，普通异常记
+    failed，避免 post_pool 的 Future 异常被吞掉后留下无日志的 pending 行。
+
+    Guarded entry point for async post-process recovery.  A shutdown interruption
+    keeps the pending state; an ordinary exception is recorded as failed instead
+    of escaping an executor Future without updating history.
+    """
+    filepath = Path(filepath)
+    try:
+        return _resume_async_postprocess(pipeline, filepath, final_path)
+    except Exception as e:
+        if is_shutting_down():
+            log.warning("POSTPROCESS RESUME INTERRUPTED (shutting down): %s", filepath)
+            return False
+        try:
+            pipeline.history.mark_failed(str(filepath), str(e))
+        except Exception:
+            log.exception("mark_failed failed for resumed post-process %s", filepath)
+        log.exception("POSTPROCESS RESUME FAILED: %s", filepath)
+        return False
 
 
 def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:

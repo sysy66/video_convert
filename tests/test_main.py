@@ -503,6 +503,57 @@ class TestMainLoop:
 
         mock_history.return_value.migrate_await_postprocess_to_pending.assert_called_once_with()
 
+    def test_requeues_pending_postprocess_before_pending_transcode(self, tmp_path):
+        """启动时应把已落盘的 async 任务送入 post_pool。
+
+        At startup, submit landed async tasks to the post-process pool.
+        """
+        _reset_running()
+        source = tmp_path / "source.mp4"
+        final = tmp_path / "final.mkv"
+        source.write_text("source")
+        final.write_text("landed")
+        submitted = []
+        resume_called = threading.Event()
+        executor_cls = main.ThreadPoolExecutor
+
+        class RecordingExecutor(executor_cls):
+            def submit(self, fn, *args, **kwargs):
+                submitted.append((fn.__name__, args))
+                return super().submit(fn, *args, **kwargs)
+
+        def stop_after_walk(*_a, **_kw):
+            assert resume_called.wait(2)
+            main._running = False
+            return iter([])
+
+        def fake_resume(*_args):
+            resume_called.set()
+
+        with (
+            patch("main.History") as mock_history_cls,
+            patch("main.walk_directory", side_effect=stop_after_walk),
+            patch("main.should_submit"),
+            patch("main.should_process"),
+            patch("main.resume_pending_postprocess", side_effect=fake_resume) as mock_resume,
+            patch("main.validate_config", return_value=([], [])),
+            patch("main.cleanup_stale_temp_dirs"),
+            patch("main.cleanup_vmaf_logs"),
+            patch("main.ThreadPoolExecutor", RecordingExecutor),
+        ):
+            history = mock_history_cls.return_value
+            history.iter_pending_postprocess.return_value = [str(source)]
+            history.get_output_path.return_value = str(final)
+            history.iter_started.return_value = []
+            main.main_loop()
+
+        resume_submissions = [item for item in submitted if item[0] == "resume_post_process"]
+        assert resume_submissions == [("resume_post_process", (str(source), str(final)))]
+        mock_resume.assert_called_once()
+        assert mock_resume.call_args.args[1:] == (str(source), str(final))
+        calls = [call[0] for call in history.method_calls]
+        assert calls.index("iter_pending_postprocess") < calls.index("iter_started")
+
     def test_next_scan_starts_while_transcode_running(self):
         """转码仍在运行期间即应开始下一轮扫描（SCAN_INTERVAL=0，扫描与转码解耦）。"""
         _reset_running()

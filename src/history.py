@@ -1,10 +1,10 @@
 """
 历史记录模块。使用 SQLite 持久化每个文件的转码状态（pending_transcode/
-success/rejected/failed/not required 等），线程安全，
+pending_postprocess/success/rejected/failed/not required 等），线程安全，
 供扫描、转码与主循环使用。
 
 History tracking module. Persists each file's transcode status
-(pending_transcode/success/rejected/failed/not required,
+(pending_transcode/pending_postprocess/success/rejected/failed/not required,
 etc.) in SQLite, is thread-safe, and is used by the scanner, transcoder and
 main loop.
 """
@@ -55,7 +55,8 @@ class History:
             self._conn.execute("PRAGMA busy_timeout=5000")
             self._conn.execute(
                 """
-                -- status 取值：pending_transcode|success|rejected|failed|not required
+                -- status 取值：pending_transcode|pending_postprocess|success|rejected|
+                --        failed|not required
                 CREATE TABLE IF NOT EXISTS files (
                     filepath     TEXT PRIMARY KEY,   -- 文件绝对路径 / absolute file path
                     status       TEXT NOT NULL,
@@ -206,6 +207,37 @@ class History:
                 "VALUES (?, 'pending_transcode', ?, NULL, ?, NULL)",
                 (filepath, time.time(), output_path),
             )
+
+    def mark_pending_postprocess(self, filepath, output_path):
+        """
+        标记文件进入后处理认领：status = "pending_postprocess"，并把 output_path
+        指向已落盘产物。仅 async 落盘后调用（不变量：此状态 ⟺ 已落盘）。
+        Transition a file to post-process claimed: status = "pending_postprocess"
+        with output_path pointing at the landed file. Called only after the async
+        early landing (invariant: this status implies already landed).
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
+            ).fetchone()
+            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            self._conn.execute(
+                "INSERT OR REPLACE INTO files "
+                "(filepath, status, started_at, completed_at, output_path, error) "
+                "VALUES (?, 'pending_postprocess', ?, NULL, ?, NULL)",
+                (filepath, started_at, str(output_path)),
+            )
+
+    def iter_pending_postprocess(self):
+        """
+        遍历 status == "pending_postprocess" 的文件路径（启动 recover 用）。
+        Yield filepaths with status == "pending_postprocess" (startup recovery).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT filepath FROM files WHERE status='pending_postprocess'"
+            ).fetchall()
+        return [r["filepath"] for r in rows]
 
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
         with self._lock:

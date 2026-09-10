@@ -261,12 +261,12 @@ VMAF_HW_FALLBACK = True
 # VMAF 打分模式（--vmaf off|sync|async）：
 #   off   关闭（默认），仅按大小比接受
 #   sync  同步：转码线程内联打分，耗时阻塞转码池
-#   async 异步：产物先移入输出区保留源，后台 worker 打分后决定去留
+#   async 异步：产物先移入输出区保留源，post_pool 内联打分后决定去留
 # 默认关闭（VMAF 需通过 --vmaf sync|async 显式启用）。
 # VMAF scoring mode (--vmaf off|sync|async):
 #   off   disabled (default), accept on ratio check only
 #   sync  inline scoring in the transcode thread (blocks the transcode pool)
-#   async move output into place keeping the source; a background worker scores it
+#   async move output into place keeping the source; the post pool scores it
 VMAF_MODE_OFF = "off"
 VMAF_MODE_SYNC = "sync"
 VMAF_MODE_ASYNC = "async"
