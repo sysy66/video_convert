@@ -64,7 +64,7 @@ class TestTranscodeJob:
         assert job.key == str(Path(fp))
         assert job.output_path is None
         assert job.dist_frame_count is None
-        assert job.elapsed is None
+        assert job.transcode_elapsed is None
 
     def test_key_reflects_filepath(self, pipeline):
         job = TranscodeJob(
@@ -177,7 +177,7 @@ class TestTranscodePipelineTranscode:
         assert ok is True
         # 真实 transcode_stage 写回：帧数来自 ffmpeg 进度行，耗时非空，产物路径已定
         assert job.dist_frame_count == 5000
-        assert job.elapsed is not None
+        assert job.transcode_elapsed is not None
         assert job.output_path is not None
         assert Path(job.output_path).name == "a.mkv"
 
@@ -186,7 +186,7 @@ class TestTranscodePipelineTranscode:
         ok = self._run_real(pipeline, job, (1, "encode error"))
         assert ok is False
         assert job.dist_frame_count is None
-        assert job.elapsed is None
+        assert job.transcode_elapsed is None
 
     def test_transcode_forwards_keep_source_and_compute_vmaf(self, tmp_path, history):
         sentinel = MagicMock(return_value=88.0)
@@ -227,7 +227,7 @@ class TestTranscodePipelinePostProcess:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
             dist_frame_count=5000,
-            elapsed=2.5,
+            transcode_elapsed=2.5,
         )
         with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             result = pipeline.post_process(job)
@@ -248,7 +248,7 @@ class TestTranscodePipelinePostProcess:
             result = pipeline.post_process(job)
             mock_stage.assert_called_once_with(pipeline, job)
             assert job.dist_frame_count is None
-            assert job.elapsed is None
+            assert job.transcode_elapsed is None
             assert result is False
 
     def test_job_post_process_shortcut(self, pipeline, tmp_path):
@@ -256,7 +256,7 @@ class TestTranscodePipelinePostProcess:
         fp.write_text("x")
         job = pipeline.make_job(str(fp), {"input": "/in", "output": "/out", "cache": "/cache"})
         job.dist_frame_count = 100
-        job.elapsed = 1.0
+        job.transcode_elapsed = 1.0
         with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             assert job.post_process() is True
             mock_stage.assert_called_once_with(pipeline, job)
@@ -275,7 +275,7 @@ class TestTranscodePipelinePostProcess:
             lib_output=Path("/out"),
             lib_cache=Path("/cache"),
             dist_frame_count=10,
-            elapsed=0.2,
+            transcode_elapsed=0.2,
         )
         with patch("src.pipeline.post_process_stage", return_value=True) as mock_stage:
             pl.post_process(job)

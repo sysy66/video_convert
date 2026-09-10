@@ -42,7 +42,7 @@ def _write_log(temp_dir: Path, name: str, content: str) -> None:
 
 
 # 内部从 job.filepath / job.lib_* / pipeline.history 等取参
-# 成功：job.output_path/dist_frame_count/elapsed 写入 job，return True
+# 成功：job.output_path/dist_frame_count/transcode_elapsed 写入 job，return True
 # 失败：清理并 mark_failed，return False
 def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
@@ -50,7 +50,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     命令（含 QSV 软件缩放/软解码各一次的降级重试），成功时产物保留在
     cache 临时目录中，质量判定与落盘由 post_process_stage 接手。
       - 失败/超时/异常：清理临时目录并 mark_failed，返回 False
-      - 成功：返回 True，并把 output_path/dist_frame_count/elapsed 写入 job
+      - 成功：返回 True，并把 output_path/dist_frame_count/transcode_elapsed 写入 job
 
     注意：转码侧刻意不产生任何帧率规整参数——实验证明 -r 会导致 VMAF 虚低、
     -fps_mode cfr 会导致产物帧率翻倍（2026-08-13）；源/产物帧率对齐只在打分侧
@@ -86,7 +86,10 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
                 log.error("Failed to create temp dir: %s", e)
             raise
         op = td / output_filename
-        pipeline.history.mark_pending_transcode(str(job.filepath))
+        # 仅首次分配工作目录开始一次转码记录；fallback 仍属于同一次转码尝试。
+        # Record one transcode start; fallback retries remain part of the same attempt.
+        if old_td is None:
+            pipeline.history.mark_pending_transcode(str(job.filepath))
         return td, op
 
     try:
@@ -101,13 +104,17 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
 
     def _fail(msg: str, kind: str = "failed") -> bool:
         """统一失败出口：日志前缀按 kind 保留原样，DB 文案原样。"""
-        elapsed = _time.monotonic() - start_time
+        transcode_elapsed = _time.monotonic() - start_time
         if kind == "timeout":
-            log.error("TRANSCODE TIMEOUT: %s (%.1fs)", job.filepath.name, elapsed)
+            log.error("TRANSCODE TIMEOUT: %s (%.1fs)", job.filepath.name, transcode_elapsed)
         elif kind == "error":
-            log.error("TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, elapsed, msg)
+            log.error(
+                "TRANSCODE ERROR: %s (%.1fs) - %s", job.filepath.name, transcode_elapsed, msg
+            )
         else:
-            log.error("TRANSCODE FAILED: %s (%.1fs) - %s", job.filepath.name, elapsed, msg)
+            log.error(
+                "TRANSCODE FAILED: %s (%.1fs) - %s", job.filepath.name, transcode_elapsed, msg
+            )
         _cleanup_temp(temp_dir)
         pipeline.history.mark_failed(str(job.filepath), msg)
         return False
@@ -192,10 +199,11 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
             return _fail("Output file not found after transcode")
 
         dist_frame_count = parse_frame_count_from_stderr(stderr)
-        elapsed = _time.monotonic() - start_time
+        transcode_elapsed = _time.monotonic() - start_time
         job.output_path = output_path
         job.dist_frame_count = dist_frame_count
-        job.elapsed = elapsed
+        job.transcode_elapsed = transcode_elapsed
+        pipeline.history.mark_transcode_finished(str(job.filepath))
         success = True
         return True
 

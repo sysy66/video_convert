@@ -40,7 +40,7 @@ def _make(tmp_path, name="test.mp4", out_name="test.mkv"):
     output.parent.mkdir(parents=True)
     output.write_text("transcoded")
     history = _make_history(str(output))
-    info = {"dist_frame_count": None, "elapsed": 1.0}
+    info = {"dist_frame_count": None, "transcode_elapsed": 1.0}
     return input_file, output, history, info
 
 
@@ -72,7 +72,7 @@ def _make_stage(
         lib_cache=tmp_path / "cache",
         output_path=output,
         dist_frame_count=info["dist_frame_count"],
-        elapsed=info["elapsed"],
+        transcode_elapsed=info["transcode_elapsed"],
     )
     return pipeline, job, input_file, output, history
 
@@ -117,6 +117,8 @@ class TestPostTranscodeSync:
         assert (tmp_path / "test.mkv").exists()
         history.mark_done.assert_called_once()
         assert history.mark_done.call_args[1]["rejected"] is False
+        history.mark_vmaf_started.assert_not_called()
+        history.mark_vmaf_finished.assert_not_called()
 
     def test_post_process_uses_job_output_path(self, tmp_path):
         # 后处理使用 Job 中的临时产物，不依赖 history.output_path。
@@ -174,8 +176,9 @@ class TestPostTranscodeSync:
         )
 
     def test_score_none_during_shutdown_rejects(self, tmp_path):
-        # 关停中断的打分视同普通打分失败：记 rejected（保留源文件），
-        # 不再延后（await_postprocess/recover 已随 async 退役）。
+        # 关停中断的打分视同普通打分失败：记 rejected（保留源文件）。
+        # A shutdown interruption is treated as an ordinary scoring failure:
+        # record rejected and keep the source file.
         pipeline, job, input_file, output, history = _make_stage(
             tmp_path,
             compute_vmaf=MagicMock(return_value=None),
@@ -223,6 +226,8 @@ class TestPostTranscodeSync:
         history.mark_done.assert_called_once_with(
             str(input_file), str(tmp_path / "test.mkv"), vmaf_score=95.0, rejected=False
         )
+        history.mark_vmaf_started.assert_called_once_with(str(input_file))
+        history.mark_vmaf_finished.assert_called_once_with(str(input_file))
 
     def test_reject_keeps_source(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
@@ -349,6 +354,8 @@ class TestPostTranscodeAsync:
         history.mark_done.assert_called_once_with(
             str(input_file), str(landed), vmaf_score=95.0, rejected=False
         )
+        history.mark_vmaf_started.assert_called_once_with(str(input_file))
+        history.mark_vmaf_finished.assert_called_once_with(str(input_file))
 
     def test_async_reject_removes_landed_file(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
@@ -432,6 +439,8 @@ class TestAsyncPostprocessRecovery:
         history.mark_done.assert_called_once_with(
             str(source), str(final), vmaf_score=95.0, rejected=False
         )
+        history.mark_vmaf_started.assert_called_once_with(str(source))
+        history.mark_vmaf_finished.assert_called_once_with(str(source))
 
     def test_resume_ratio_reject_skips_scoring(self, tmp_path):
         source = tmp_path / "source.mp4"
@@ -457,6 +466,8 @@ class TestAsyncPostprocessRecovery:
         assert source.exists()
         assert not final.exists()
         score.assert_not_called()
+        history.mark_vmaf_started.assert_not_called()
+        history.mark_vmaf_finished.assert_not_called()
         history.mark_done.assert_called_once_with(
             str(source), None, vmaf_score=None, rejected=True
         )

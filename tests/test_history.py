@@ -30,35 +30,37 @@ class TestHistoryInit:
         make_history()
         assert (tmp_path / "history.db").exists()
 
-    def test_legacy_db_migrates_output_frames_column(self, tmp_path, make_history):
-        # 老库（无 output_frames 列）打开后自动 ALTER 补列，旧数据不丢。
-        # A legacy DB without output_frames must gain the column on open
-        # without losing existing rows.
-        conn = sqlite3.connect(str(tmp_path / "legacy.db"))
-        conn.execute(
-            "CREATE TABLE files ("
-            "filepath TEXT PRIMARY KEY, status TEXT NOT NULL, started_at REAL, "
-            "completed_at REAL, output_path TEXT, vmaf_score REAL, error TEXT, "
-            "retry_count INTEGER, codec TEXT, skipped_at REAL)"
-        )
-        conn.execute(
-            "INSERT INTO files (filepath, status, output_path) "
-            "VALUES ('/old.mp4', 'await_postprocess', '/library/old.mkv')"
-        )
-        conn.commit()
-        conn.close()
+    def test_schema_has_current_columns(self, make_history):
+        h = make_history()
+        columns = [r["name"] for r in h._conn.execute("PRAGMA table_info(files)").fetchall()]
 
-        h = make_history("legacy.db")
-        cols = {r["name"] for r in h._conn.execute("PRAGMA table_info(files)").fetchall()}
-        assert "output_frames" in cols
-        assert h.get_entry("/old.mp4")["status"] == "await_postprocess"
+        assert columns == [
+            "filepath",
+            "status",
+            "transcode_started_at",
+            "transcode_finished_at",
+            "vmaf_started_at",
+            "vmaf_finished_at",
+            "completed_at",
+            "output_path",
+            "vmaf_score",
+            "error",
+            "codec",
+            "skipped_at",
+        ]
 
-        # 残留 await_postprocess 行经一次性迁移转回 pending（幂等）
-        assert h.migrate_await_postprocess_to_pending() == 1
-        assert h.get_entry("/old.mp4")["status"] == "pending_transcode"
-        assert "output_path" not in h.get_entry("/old.mp4")
-        assert h.migrate_await_postprocess_to_pending() == 0
-        h.close()
+    def test_schema_rejects_unknown_status(self, make_history):
+        h = make_history()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            h._conn.execute(
+                "INSERT INTO files (filepath, status) VALUES ('/v.mp4', 'unknown')"
+            )
+
+        with pytest.raises(sqlite3.IntegrityError):
+            h._conn.execute(
+                "INSERT INTO files (filepath, status) VALUES ('/success.mp4', 'success')"
+            )
 
 
 class TestHistoryQueries:
@@ -80,7 +82,6 @@ class TestHistoryQueries:
         assert entry["status"] == "not required"
         assert entry["codec"] == "hevc"
         assert "completed_at" not in entry
-        assert "retry_count" not in entry
 
 
 class TestHistoryMarks:
@@ -144,31 +145,55 @@ class TestHistoryMarks:
         h.mark_skipped("/d.mp4", "hevc")
         assert h.iter_failed() == ["/a.mp4", "/b.mp4"]
 
-    def test_mark_started_then_done_preserves_started_at(self, make_history):
+    def test_mark_started_then_done_preserves_transcode_started_at(self, make_history):
         h = make_history()
         h.mark_pending_transcode("/v.mp4")
-        started = h.get_entry("/v.mp4")["started_at"]
+        started = h.get_entry("/v.mp4")["transcode_started_at"]
         h.mark_done("/v.mp4", "/v.mkv")
-        assert h.get_entry("/v.mp4")["started_at"] == started
+        entry = h.get_entry("/v.mp4")
+        assert entry["transcode_started_at"] == started
+        assert entry["transcode_finished_at"] is not None
 
-    def test_mark_started_then_failed_preserves_started_at(self, make_history):
+    def test_mark_started_then_failed_preserves_transcode_started_at(self, make_history):
         h = make_history()
         h.mark_pending_transcode("/v.mp4")
-        started = h.get_entry("/v.mp4")["started_at"]
+        started = h.get_entry("/v.mp4")["transcode_started_at"]
         h.mark_failed("/v.mp4", "err")
-        assert h.get_entry("/v.mp4")["started_at"] == started
+        entry = h.get_entry("/v.mp4")
+        assert entry["transcode_started_at"] == started
+        assert "transcode_finished_at" not in entry
 
-    def test_mark_pending_postprocess_preserves_started_at_and_output(self, make_history):
+    def test_mark_pending_postprocess_preserves_phase_times_and_output(self, make_history):
         h = make_history()
         h.mark_pending_transcode("/v.mp4")
-        started = h.get_entry("/v.mp4")["started_at"]
+        h.mark_transcode_finished("/v.mp4")
+        before = h.get_entry("/v.mp4")
 
         h.mark_pending_postprocess("/v.mp4", "/library/v.mkv")
 
         entry = h.get_entry("/v.mp4")
         assert entry["status"] == "pending_postprocess"
         assert entry["output_path"] == "/library/v.mkv"
-        assert entry["started_at"] == started
+        assert entry["transcode_started_at"] == before["transcode_started_at"]
+        assert entry["transcode_finished_at"] == before["transcode_finished_at"]
+
+    def test_vmaf_phase_timestamps_survive_terminal_mark(self, make_history):
+        h = make_history()
+        h.mark_pending_transcode("/v.mp4")
+        h.mark_transcode_finished("/v.mp4")
+        h.mark_pending_postprocess("/v.mp4", "/library/v.mkv")
+
+        h.mark_vmaf_started("/v.mp4")
+        started = h.get_entry("/v.mp4")["vmaf_started_at"]
+        assert "vmaf_finished_at" not in h.get_entry("/v.mp4")
+
+        h.mark_vmaf_finished("/v.mp4")
+        h.mark_done("/v.mp4", "/library/v.mkv", vmaf_score=95.0)
+
+        entry = h.get_entry("/v.mp4")
+        assert entry["vmaf_started_at"] == started
+        assert entry["vmaf_finished_at"] is not None
+        assert entry["completed_at"] is not None
 
     def test_mark_pending_transcode_clears_previous_output(self, make_history):
         h = make_history()
@@ -195,21 +220,6 @@ class TestHistoryIter:
         h.mark_pending_transcode("/d.mp4")
 
         assert set(h.iter_pending_postprocess()) == {"/a.mp4", "/b.mp4"}
-
-    def test_migrate_await_postprocess_to_pending(self, make_history):
-        h = make_history()
-        h._conn.execute(
-            "INSERT INTO files (filepath, status, output_path) "
-            "VALUES ('/p.mp4', 'await_postprocess', '/p.mkv')"
-        )
-        h._conn.execute(
-            "INSERT INTO files (filepath, status) VALUES ('/q.mp4', 'await_postprocess')"
-        )
-        h._conn.execute("INSERT INTO files (filepath, status) VALUES ('/ok.mp4', 'success')")
-        assert h.migrate_await_postprocess_to_pending() == 2
-        assert h.get_entry("/p.mp4")["status"] == "pending_transcode"
-        assert h.get_entry("/q.mp4")["status"] == "pending_transcode"
-        assert h.get_entry("/ok.mp4")["status"] == "success"
 
     def test_iter_final_states(self, make_history):
         h = make_history()

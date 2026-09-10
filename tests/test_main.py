@@ -481,28 +481,6 @@ class TestMainLoop:
         names = [name for _fn, name in submitted]
         assert names == ["a.mp4", "x.mp4"]
 
-    def test_startup_migrates_await_postprocess(self):
-        """启动时应把残留 await_postprocess 记录迁回 pending（一次性迁移）。"""
-        _reset_running()
-
-        def stop_after_walk(*_a, **_kw):
-            main._running = False
-            return iter([])
-
-        with (
-            patch("main.walk_directory", side_effect=stop_after_walk),
-            patch("main.should_submit"),
-            patch("main.should_process"),
-            patch("src.pipeline.transcode_stage"),
-            patch("main.History") as mock_history,
-            patch("main.validate_config", return_value=([], [])),
-            patch("main.cleanup_stale_temp_dirs"),
-            patch("main.cleanup_vmaf_logs"),
-        ):
-            main.main_loop()
-
-        mock_history.return_value.migrate_await_postprocess_to_pending.assert_called_once_with()
-
     def test_requeues_pending_postprocess_before_pending_transcode(self, tmp_path):
         """启动时应把已落盘的 async 任务送入 post_pool。
 

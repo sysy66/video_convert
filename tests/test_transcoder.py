@@ -290,7 +290,7 @@ class TestTranscode:
 
         assert result is True
         assert job.dist_frame_count is None
-        assert job.elapsed is not None
+        assert job.transcode_elapsed is not None
         assert input_file.exists()
         work_dirs = self._work_dirs(tmp_path)
         assert len(work_dirs) == 1
@@ -312,6 +312,7 @@ class TestTranscode:
             self._run_transcode(tmp_path, history, input_file)
 
         history.mark_pending_transcode.assert_called_once_with(str(input_file))
+        history.mark_transcode_finished.assert_called_once_with(str(input_file))
         history.mark_done.assert_not_called()
         assert not history.mark_failed.called
 

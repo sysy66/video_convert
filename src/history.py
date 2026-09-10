@@ -45,48 +45,68 @@ class History:
         self._init_db()
 
     def _init_db(self):
-        """建表并设置 PRAGMA。Create the table and set PRAGMAs."""
+        """初始化 SQLite 连接和表结构。Initialize SQLite and create the schema."""
         with self._lock:
-            # WAL：读不阻塞写；synchronous=NORMAL + WAL 在本地盘崩溃安全；busy_timeout 吸收锁等待。
-            # WAL: readers don't block the writer; NORMAL+WAL is crash-safe on local
-            # disk; busy_timeout absorbs any lock wait.
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.execute(
-                """
-                -- status 取值：pending_transcode|pending_postprocess|success|rejected|
-                --        failed|not required
-                CREATE TABLE IF NOT EXISTS files (
-                    filepath     TEXT PRIMARY KEY,   -- 文件绝对路径 / absolute file path
-                    status       TEXT NOT NULL,
-                    started_at   REAL,
-                    completed_at REAL,
-                    output_path  TEXT,             -- 已生成产物路径 / materialized output path
-                    vmaf_score   REAL,
-                    error        TEXT,
-                    retry_count  INTEGER,
-                    codec        TEXT,
-                    skipped_at   REAL,
-                    output_frames INTEGER             -- 转码时从 stderr 解析的产物帧数
-                )
-                """
+            self._configure_connection()
+            self._create_schema()
+
+    def _configure_connection(self):
+        """
+        配置连接级 PRAGMA；调用方必须已经持有 _lock。
+        Configure connection-level PRAGMAs; the caller must hold _lock.
+        """
+        # WAL：读不阻塞写；synchronous=NORMAL + WAL 在本地盘崩溃安全；busy_timeout 吸收锁等待。
+        # WAL: readers don't block the writer; NORMAL+WAL is crash-safe on local
+        # disk; busy_timeout absorbs any lock wait.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+
+    def _create_schema(self):
+        """
+        创建当前版本的 files 表；不负责旧库迁移。
+        Create the current files table; legacy database migration is out of scope.
+        """
+        self._conn.execute(
+            """
+            -- 当前状态 / Current states:
+            -- pending_transcode | pending_postprocess | success |
+            -- rejected | failed | not required
+            CREATE TABLE IF NOT EXISTS files (
+                filepath       TEXT PRIMARY KEY, -- 源文件绝对路径 / Absolute source path
+                status         TEXT NOT NULL CHECK (
+                    status IN (
+                        'pending_transcode',
+                        'pending_postprocess',
+                        'success',
+                        'rejected',
+                        'failed',
+                        'not required'
+                    )
+                ),
+                transcode_started_at  REAL,      -- 转码开始 / Transcode start
+                transcode_finished_at REAL,      -- 转码结束 / Transcode finish
+                vmaf_started_at       REAL,      -- VMAF 开始 / VMAF start
+                vmaf_finished_at      REAL,      -- VMAF 结束 / VMAF finish
+                completed_at          REAL,      -- 写入终态 / Terminal-state time
+                output_path    TEXT CHECK (
+                    (
+                        status IN ('success', 'pending_postprocess')
+                        AND output_path IS NOT NULL
+                    )
+                    OR status = 'rejected'
+                    OR (
+                        status IN ('pending_transcode', 'failed', 'not required')
+                        AND output_path IS NULL
+                    )
+                ),                              -- 已生成产物路径 / Materialized output path
+                vmaf_score     REAL,             -- VMAF 分数 / VMAF score
+                error          TEXT,             -- 错误信息 / Error message
+                codec          TEXT,             -- 跳过时的源编码 / Source codec when skipped
+                skipped_at     REAL              -- Unix 时间戳 / Unix timestamp
             )
-            # 老库迁移：补 output_frames 列（CREATE TABLE IF NOT EXISTS 不会为
-            # 已存在的表加列）。产物帧数是 recover 恢复打分时启用帧序对齐的关键，
-            # 缺失时打分侧回退 fps 网格投影。
-            # Migration for older DBs: add the output_frames column (CREATE TABLE
-            # IF NOT EXISTS does not alter existing tables). It lets recovered
-            # VMAF tasks enable frame-index alignment instead of grid projection.
-            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)").fetchall()}
-            if "output_frames" not in cols:
-                self._conn.execute("ALTER TABLE files ADD COLUMN output_frames INTEGER")
-            # 旧版本曾把临时输出路径写进 pending_transcode；新语义下该状态没有成功产物。
-            # Older versions stored temp paths in pending_transcode; the new state has
-            # no successful output yet, so clear those stale paths on database open.
-            self._conn.execute(
-                "UPDATE files SET output_path=NULL WHERE status='pending_transcode'"
-            )
+            """
+        )
 
     def close(self):
         """
@@ -138,6 +158,17 @@ class History:
                 "SELECT status FROM files WHERE filepath=?", (filepath,)
             ).fetchone()
         return row["status"] if row else None
+
+    def _get_phase_times(self, filepath):
+        """
+        读取阶段时间戳；调用方必须已经持有 _lock。
+        Read phase timestamps; callers must already hold _lock.
+        """
+        return self._conn.execute(
+            "SELECT transcode_started_at, transcode_finished_at, "
+            "vmaf_started_at, vmaf_finished_at FROM files WHERE filepath=?",
+            (filepath,),
+        ).fetchone()
 
     def iter_started(self):
         """
@@ -200,17 +231,32 @@ class History:
 
     def mark_pending_transcode(self, filepath):
         """
-        标记文件进入转码队列：status = "pending_transcode"，只记录开始时间。
+        标记一次新的转码尝试；清空上一轮阶段时间和终态信息。
         此时还没有成功产物，因此 output_path 必须保持 NULL。
-        Mark a file as pending transcode and record only its start timestamp.
+        Start a new transcode attempt and clear the previous phase/terminal data.
         No successful output exists yet, so output_path remains NULL.
         """
         with self._lock:
+            transcode_started_at = time.time()
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'pending_transcode', ?, NULL, NULL, NULL)",
-                (filepath, time.time()),
+                "(filepath, status, transcode_started_at, transcode_finished_at, "
+                "vmaf_started_at, vmaf_finished_at, completed_at, output_path, "
+                "vmaf_score, error, codec, skipped_at) "
+                "VALUES (?, 'pending_transcode', ?, NULL, NULL, NULL, NULL, NULL, "
+                "NULL, NULL, NULL, NULL)",
+                (filepath, transcode_started_at),
+            )
+
+    def mark_transcode_finished(self, filepath):
+        """
+        记录转码产物已经生成；不改变当前状态。
+        Record that the transcode output has been generated without changing status.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE files SET transcode_finished_at=? WHERE filepath=?",
+                (time.time(), filepath),
             )
 
     def mark_pending_postprocess(self, filepath, output_path):
@@ -222,15 +268,49 @@ class History:
         early landing (invariant: this status implies already landed).
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
-            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            row = self._get_phase_times(filepath)
+            now = time.time()
+            transcode_started_at = (
+                row["transcode_started_at"]
+                if row and row["transcode_started_at"] is not None
+                else now
+            )
+            transcode_finished_at = (
+                row["transcode_finished_at"]
+                if row and row["transcode_finished_at"] is not None
+                else now
+            )
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'pending_postprocess', ?, NULL, ?, NULL)",
-                (filepath, started_at, str(output_path)),
+                "(filepath, status, transcode_started_at, transcode_finished_at, "
+                "vmaf_started_at, vmaf_finished_at, completed_at, output_path, "
+                "vmaf_score, error, codec, skipped_at) "
+                "VALUES (?, 'pending_postprocess', ?, ?, NULL, NULL, NULL, ?, "
+                "NULL, NULL, NULL, NULL)",
+                (filepath, transcode_started_at, transcode_finished_at, str(output_path)),
+            )
+
+    def mark_vmaf_started(self, filepath):
+        """
+        记录一次 VMAF 尝试开始，并清除该尝试的结束时间。
+        Record the start of a VMAF attempt and clear its finish time.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE files SET vmaf_started_at=?, vmaf_finished_at=NULL WHERE filepath=?",
+                (time.time(), filepath),
+            )
+
+    def mark_vmaf_finished(self, filepath):
+        """
+        记录 VMAF 调用返回；分数是否可用由 vmaf_score 单独表示。
+        Record that the VMAF call returned; score availability is represented by
+        vmaf_score separately.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE files SET vmaf_finished_at=? WHERE filepath=?",
+                (time.time(), filepath),
             )
 
     def iter_pending_postprocess(self):
@@ -251,20 +331,35 @@ class History:
         whenever one was retained.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
-            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            row = self._get_phase_times(filepath)
+            now = time.time()
+            transcode_started_at = (
+                row["transcode_started_at"]
+                if row and row["transcode_started_at"] is not None
+                else now
+            )
+            transcode_finished_at = (
+                row["transcode_finished_at"]
+                if row and row["transcode_finished_at"] is not None
+                else now
+            )
+            vmaf_started_at = row["vmaf_started_at"] if row else None
+            vmaf_finished_at = row["vmaf_finished_at"] if row else None
             stored_output = str(output_path) if output_path is not None else None
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, vmaf_score, error) "
-                "VALUES (?, ?, ?, ?, ?, ?, NULL)",
+                "(filepath, status, transcode_started_at, transcode_finished_at, "
+                "vmaf_started_at, vmaf_finished_at, completed_at, output_path, "
+                "vmaf_score, error, codec, skipped_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
                 (
                     filepath,
                     "rejected" if rejected else "success",
-                    started_at,
-                    time.time(),
+                    transcode_started_at,
+                    transcode_finished_at,
+                    vmaf_started_at,
+                    vmaf_finished_at,
+                    now,
                     stored_output,
                     vmaf_score,
                 ),
@@ -273,37 +368,42 @@ class History:
     def mark_skipped(self, filepath, codec):
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO files (filepath, status, codec, skipped_at) "
-                "VALUES (?, 'not required', ?, ?)",
+                "INSERT OR REPLACE INTO files "
+                "(filepath, status, transcode_started_at, transcode_finished_at, "
+                "vmaf_started_at, vmaf_finished_at, completed_at, output_path, "
+                "vmaf_score, error, codec, skipped_at) "
+                "VALUES (?, 'not required', NULL, NULL, NULL, NULL, NULL, NULL, "
+                "NULL, NULL, ?, ?)",
                 (filepath, codec, time.time()),
             )
 
-    def migrate_await_postprocess_to_pending(self):
-        """
-        一次性迁移：把残留的 await_postprocess 记录转回 pending_transcode
-        （旧异步链路已删除，改由重转码收尾）。返回迁移行数。
-        One-time migration: move leftover await_postprocess records back to
-        pending_transcode (the async chain is gone; they are finalized by
-        re-transcoding instead). Returns the migrated row count.
-        """
-        with self._lock:
-            cur = self._conn.execute(
-                "UPDATE files SET status='pending_transcode', output_path=NULL "
-                "WHERE status='await_postprocess'"
-            )
-            return cur.rowcount
-
     def mark_failed(self, filepath, error):
         with self._lock:
-            row = self._conn.execute(
-                "SELECT started_at FROM files WHERE filepath=?", (filepath,)
-            ).fetchone()
-            started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            row = self._get_phase_times(filepath)
+            now = time.time()
+            transcode_started_at = (
+                row["transcode_started_at"]
+                if row and row["transcode_started_at"] is not None
+                else now
+            )
+            transcode_finished_at = row["transcode_finished_at"] if row else None
+            vmaf_started_at = row["vmaf_started_at"] if row else None
+            vmaf_finished_at = row["vmaf_finished_at"] if row else None
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
-                "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'failed', ?, ?, NULL, ?)",
-                (filepath, started_at, time.time(), str(error)),
+                "(filepath, status, transcode_started_at, transcode_finished_at, "
+                "vmaf_started_at, vmaf_finished_at, completed_at, output_path, "
+                "vmaf_score, error, codec, skipped_at) "
+                "VALUES (?, 'failed', ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL)",
+                (
+                    filepath,
+                    transcode_started_at,
+                    transcode_finished_at,
+                    vmaf_started_at,
+                    vmaf_finished_at,
+                    now,
+                    str(error),
+                ),
             )
 
     def iter_failed(self):

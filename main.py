@@ -270,12 +270,6 @@ def main_loop():
         log.info("  [%s] %s", name, ", ".join(parts))
     log.info("Scan interval: %ds", config.SCAN_INTERVAL)
     log.info("Max workers: %d", config.MAX_WORKERS)
-    migrated = history.migrate_await_postprocess_to_pending()
-    if migrated:
-        log.info(
-            "MIGRATION: %d leftover await_postprocess record(s) requeued for transcode",
-            migrated,
-        )
     log.info("=" * 50)
 
     # 转码池常驻整个进程生命周期：扫描周期独立于转码进度，

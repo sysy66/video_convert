@@ -21,7 +21,7 @@ class TranscodeJob:
     # 阶段产物：transcode() 写入，post_process() 读取
     output_path: Path | None = None
     dist_frame_count: int | None = None
-    elapsed: float | None = None
+    transcode_elapsed: float | None = None
     vmaf_score: float | None = None
 
     @property

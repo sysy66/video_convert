@@ -22,6 +22,15 @@ from src.temp_cleanup import (
 log = __import__("logging").getLogger(__name__)
 
 
+def _format_elapsed(value):
+    """
+    格式化可选的阶段耗时；恢复任务没有本进程内的转码耗时时显示 N/A。
+    Format an optional phase duration; resumed tasks show N/A because their
+    in-process transcode duration is unavailable.
+    """
+    return f"{value:.1f}s" if value is not None else "N/A"
+
+
 def _land_output(output_path, filepath, filename, input_dir, output_dir):
     """
     把 temp 区产物复制到目标库。成功返回 (final_path, None)，
@@ -147,6 +156,24 @@ def _score_inline(pipeline, job, ctx, dist_path=None):
     return vmaf_score, vmaf_elapsed
 
 
+def _score_with_history(pipeline, job, ctx, dist_path=None):
+    """
+    记录 VMAF 阶段的开始和结束，再调用现有打分逻辑。
+    Record VMAF phase boundaries around the existing scoring logic.
+
+    结束时间表示打分调用已经返回，即使返回值是 None；进程崩溃时则自然保持
+    vmaf_finished_at 为空，供 async resume 识别未完成阶段。
+    The finish time means the scoring call returned, even when its result is None;
+    a process crash leaves vmaf_finished_at NULL for async recovery to identify.
+    """
+    filepath = str(ctx["filepath"])
+    pipeline.history.mark_vmaf_started(filepath)
+    try:
+        return _score_inline(pipeline, job, ctx, dist_path=dist_path)
+    finally:
+        pipeline.history.mark_vmaf_finished(filepath)
+
+
 def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=None):
     """
     按 verdict 落盘/清理并记终态，返回 bool。landed 非空表示已提前落盘
@@ -164,7 +191,7 @@ def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=None):
     output_size = ctx["output_size"]
     ratio = ctx["ratio"]
     expect_filename = ctx["expect_filename"]
-    elapsed = job.elapsed
+    transcode_elapsed = job.transcode_elapsed
 
     if verdict == "accept":
         if landed is None:
@@ -189,23 +216,23 @@ def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=None):
         history.mark_done(str(filepath), str(final_path), vmaf_score=vmaf_score, rejected=False)
         if vmaf_elapsed is not None:
             log.info(
-                "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, codec %.1fs + vmaf %.1fs)",
+                "ACCEPT: %s (%s, %s, %.1f%%, VMAF %.2f, transcode %s + vmaf %.1fs)",
                 final_path.name,
                 _format_size(output_size),
                 "smaller" if ratio < 1 else "larger",
                 ratio * 100,
                 vmaf_score,
-                elapsed,
+                _format_elapsed(transcode_elapsed),
                 vmaf_elapsed,
             )
         else:
             log.info(
-                "ACCEPT: %s (%s, %s, %.1f%%, %.1fs)",
+                "ACCEPT: %s (%s, %s, %.1f%%, transcode %s)",
                 final_path.name,
                 _format_size(output_size),
                 "smaller" if ratio < 1 else "larger",
                 ratio * 100,
-                elapsed,
+                _format_elapsed(transcode_elapsed),
             )
     else:
         # KEEP_TARGET=True 时落盘到目标库但仍记 rejected（源保留，供人工复核）；
@@ -249,20 +276,20 @@ def _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=None):
         history.mark_done(str(filepath), landed_path, vmaf_score=vmaf_score, rejected=True)
         if vmaf_elapsed is not None:
             log.warning(
-                "REJECT: %s (VMAF %s, ratio %.1f%%, codec %.1fs + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
+                "REJECT: %s (VMAF %s, ratio %.1f%%, transcode %s + vmaf %.1fs, keeping original)",  # noqa: E501  # 日志格式串含多个 %s，换行破坏占位符对齐
                 filepath.name,
                 f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
                 ratio * 100,
-                elapsed,
+                _format_elapsed(transcode_elapsed),
                 vmaf_elapsed,
             )
         else:
             log.warning(
-                "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, %.1fs)",
+                "REJECT: %s (VMAF %s, ratio %.1f%%, keeping original, transcode %s)",
                 filepath.name,
                 f"{vmaf_score:.2f}" if vmaf_score is not None else "N/A",
                 ratio * 100,
-                elapsed,
+                _format_elapsed(transcode_elapsed),
             )
     return True
 
@@ -291,7 +318,7 @@ def _post_process_sync(pipeline, job):
     temp_dir = ctx["temp_dir"] if ctx is not None else None
     if terminal is not None:
         return terminal, temp_dir
-    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx)
+    vmaf_score, vmaf_elapsed = _score_with_history(pipeline, job, ctx)
     verdict = vmaf_verdict(vmaf_score, ctx["ratio"])
     return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed), temp_dir
 
@@ -333,7 +360,9 @@ def _post_process_async(pipeline, job):
     if ctx["output_path"].exists():
         ctx["output_path"].unlink()
     _cleanup_temp(temp_dir)
-    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx, dist_path=final_path)
+    vmaf_score, vmaf_elapsed = _score_with_history(
+        pipeline, job, ctx, dist_path=final_path
+    )
     verdict = vmaf_verdict(vmaf_score, ctx["ratio"])
     return (
         _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path),
@@ -383,7 +412,7 @@ def _resume_async_postprocess(pipeline, filepath, final_path):
     output_size = final_path.stat().st_size
     input_size = filepath.stat().st_size
     ratio = output_size / input_size if input_size else 0
-    job = SimpleNamespace(elapsed=0.0, dist_frame_count=None, vmaf_score=None)
+    job = SimpleNamespace(transcode_elapsed=None, dist_frame_count=None, vmaf_score=None)
     ctx = {
         "filepath": filepath,
         "output_path": final_path,
@@ -397,7 +426,9 @@ def _resume_async_postprocess(pipeline, filepath, final_path):
     }
     if ratio > config.ACCEPT_RATIO_MAX:
         return _settle(pipeline, job, ctx, "reject", None, None, landed=final_path)
-    vmaf_score, vmaf_elapsed = _score_inline(pipeline, job, ctx, dist_path=final_path)
+    vmaf_score, vmaf_elapsed = _score_with_history(
+        pipeline, job, ctx, dist_path=final_path
+    )
     verdict = vmaf_verdict(vmaf_score, ratio)
     return _settle(pipeline, job, ctx, verdict, vmaf_score, vmaf_elapsed, landed=final_path)
 
@@ -443,9 +474,9 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
                      (Process-wide shared context: history, ffprobe path,
                      keep_source flag, scoring callback and VMAF mode)
     :param job: 单文件任务：filepath/lib_* 定位文件，dist_frame_count/
-                elapsed 为转码段回填的阶段产物
+                transcode_elapsed 为转码段回填的阶段产物
                 (Per-file job: paths plus the transcode stage's
-                dist_frame_count/elapsed)
+                dist_frame_count/transcode_elapsed)
     :return: True 表示处理流程完成（含拒绝）；False 表示失败已记 failed
              (True if processing completed, including rejections; False if failed)
     :rtype: bool
