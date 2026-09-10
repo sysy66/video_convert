@@ -86,7 +86,7 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
                 log.error("Failed to create temp dir: %s", e)
             raise
         op = td / output_filename
-        pipeline.history.mark_pending_transcode(str(job.filepath), str(op))
+        pipeline.history.mark_pending_transcode(str(job.filepath))
         return td, op
 
     try:

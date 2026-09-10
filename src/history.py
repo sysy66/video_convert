@@ -62,7 +62,7 @@ class History:
                     status       TEXT NOT NULL,
                     started_at   REAL,
                     completed_at REAL,
-                    output_path  TEXT,
+                    output_path  TEXT,             -- 已生成产物路径 / materialized output path
                     vmaf_score   REAL,
                     error        TEXT,
                     retry_count  INTEGER,
@@ -81,6 +81,12 @@ class History:
             cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)").fetchall()}
             if "output_frames" not in cols:
                 self._conn.execute("ALTER TABLE files ADD COLUMN output_frames INTEGER")
+            # 旧版本曾把临时输出路径写进 pending_transcode；新语义下该状态没有成功产物。
+            # Older versions stored temp paths in pending_transcode; the new state has
+            # no successful output yet, so clear those stale paths on database open.
+            self._conn.execute(
+                "UPDATE files SET output_path=NULL WHERE status='pending_transcode'"
+            )
 
     def close(self):
         """
@@ -192,20 +198,19 @@ class History:
             ).fetchone()
         return row is not None
 
-    def mark_pending_transcode(self, filepath, output_path):
+    def mark_pending_transcode(self, filepath):
         """
-        标记文件进入转码就绪队头：status = "pending_transcode"，
-        记录转码开始时间戳。产物尚在 work 文件夹，未移动/打分。
-        Transition a file to the head of the transcode queue:
-        status = "pending_transcode", recording the start timestamp.
-        The output still sits in the work dir, not yet moved/scored.
+        标记文件进入转码队列：status = "pending_transcode"，只记录开始时间。
+        此时还没有成功产物，因此 output_path 必须保持 NULL。
+        Mark a file as pending transcode and record only its start timestamp.
+        No successful output exists yet, so output_path remains NULL.
         """
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
                 "(filepath, status, started_at, completed_at, output_path, error) "
-                "VALUES (?, 'pending_transcode', ?, NULL, ?, NULL)",
-                (filepath, time.time(), output_path),
+                "VALUES (?, 'pending_transcode', ?, NULL, NULL, NULL)",
+                (filepath, time.time()),
             )
 
     def mark_pending_postprocess(self, filepath, output_path):
@@ -240,11 +245,17 @@ class History:
         return [r["filepath"] for r in rows]
 
     def mark_done(self, filepath, output_path, vmaf_score=None, rejected=False):
+        """
+        记录终态；output_path 只保存实际存在的转码产物路径。
+        Record a terminal state; output_path stores an actual transcoded output
+        whenever one was retained.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT started_at FROM files WHERE filepath=?", (filepath,)
             ).fetchone()
             started_at = row["started_at"] if row and row["started_at"] is not None else time.time()
+            stored_output = str(output_path) if output_path is not None else None
             self._conn.execute(
                 "INSERT OR REPLACE INTO files "
                 "(filepath, status, started_at, completed_at, output_path, vmaf_score, error) "
@@ -254,7 +265,7 @@ class History:
                     "rejected" if rejected else "success",
                     started_at,
                     time.time(),
-                    None if rejected else output_path,
+                    stored_output,
                     vmaf_score,
                 ),
             )
@@ -277,7 +288,8 @@ class History:
         """
         with self._lock:
             cur = self._conn.execute(
-                "UPDATE files SET status='pending_transcode' WHERE status='await_postprocess'"
+                "UPDATE files SET status='pending_transcode', output_path=NULL "
+                "WHERE status='await_postprocess'"
             )
             return cur.rowcount
 
@@ -319,10 +331,12 @@ class History:
 
     def get_output_path(self, filepath):
         """
-        Retrieves the output path corresponding to the given file path from the database.
+        获取记录中的已生成/已落盘产物路径；转码进行中的临时路径不在此字段中保存。
+        Retrieve the materialized output path; temp paths for active transcoding are
+        not stored in this field.
 
-        This method queries the database using the provided file path to fetch the
-        associated output path. If no matching record is found, it returns None.
+        This method queries the database using the provided file path. If no matching
+        record is found, it returns None.
 
         :param filepath: The file path used to query the database for the associated
             output path.

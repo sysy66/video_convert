@@ -42,7 +42,8 @@ class TestHistoryInit:
             "retry_count INTEGER, codec TEXT, skipped_at REAL)"
         )
         conn.execute(
-            "INSERT INTO files (filepath, status) VALUES ('/old.mp4', 'await_postprocess')"
+            "INSERT INTO files (filepath, status, output_path) "
+            "VALUES ('/old.mp4', 'await_postprocess', '/library/old.mkv')"
         )
         conn.commit()
         conn.close()
@@ -55,6 +56,7 @@ class TestHistoryInit:
         # 残留 await_postprocess 行经一次性迁移转回 pending（幂等）
         assert h.migrate_await_postprocess_to_pending() == 1
         assert h.get_entry("/old.mp4")["status"] == "pending_transcode"
+        assert "output_path" not in h.get_entry("/old.mp4")
         assert h.migrate_await_postprocess_to_pending() == 0
         h.close()
 
@@ -84,11 +86,13 @@ class TestHistoryQueries:
 class TestHistoryMarks:
     def test_mark_started(self, make_history):
         h = make_history()
-        h.mark_pending_transcode("/v.mp4", "/v.mkv")
+        h.mark_pending_transcode("/v.mp4")
         assert h.exists("/v.mp4")
         assert h.is_started("/v.mp4")
         assert h.is_success("/v.mp4") is False
-        assert h.get_entry("/v.mp4")["status"] == "pending_transcode"
+        entry = h.get_entry("/v.mp4")
+        assert entry["status"] == "pending_transcode"
+        assert "output_path" not in entry
 
     def test_mark_done(self, make_history):
         h = make_history()
@@ -106,8 +110,16 @@ class TestHistoryMarks:
         entry = h.get_entry("/v.mp4")
         assert entry["vmaf_score"] == 65.0
         assert entry["completed_at"] is not None
-        # 拒绝时不保留输出路径。Rejected keeps no output path.
+        # 没有保留产物时不记录路径。No retained output means no output path.
         assert "output_path" not in entry
+
+    def test_mark_done_rejected_keeps_retained_output(self, make_history):
+        h = make_history()
+        h.mark_done("/v.mp4", "/library/v.mkv", vmaf_score=65.0, rejected=True)
+
+        entry = h.get_entry("/v.mp4")
+        assert entry["status"] == "rejected"
+        assert entry["output_path"] == "/library/v.mkv"
 
     def test_mark_skipped(self, make_history):
         h = make_history()
@@ -128,27 +140,27 @@ class TestHistoryMarks:
         h = make_history()
         h.mark_failed("/a.mp4", "err")
         h.mark_failed("/b.mp4", "err")
-        h.mark_pending_transcode("/c.mp4", "/c.mkv")
+        h.mark_pending_transcode("/c.mp4")
         h.mark_skipped("/d.mp4", "hevc")
         assert h.iter_failed() == ["/a.mp4", "/b.mp4"]
 
     def test_mark_started_then_done_preserves_started_at(self, make_history):
         h = make_history()
-        h.mark_pending_transcode("/v.mp4", "/v.mkv")
+        h.mark_pending_transcode("/v.mp4")
         started = h.get_entry("/v.mp4")["started_at"]
         h.mark_done("/v.mp4", "/v.mkv")
         assert h.get_entry("/v.mp4")["started_at"] == started
 
     def test_mark_started_then_failed_preserves_started_at(self, make_history):
         h = make_history()
-        h.mark_pending_transcode("/v.mp4", "/v.mkv")
+        h.mark_pending_transcode("/v.mp4")
         started = h.get_entry("/v.mp4")["started_at"]
         h.mark_failed("/v.mp4", "err")
         assert h.get_entry("/v.mp4")["started_at"] == started
 
     def test_mark_pending_postprocess_preserves_started_at_and_output(self, make_history):
         h = make_history()
-        h.mark_pending_transcode("/v.mp4", "/tmp/.work/v.mkv")
+        h.mark_pending_transcode("/v.mp4")
         started = h.get_entry("/v.mp4")["started_at"]
 
         h.mark_pending_postprocess("/v.mp4", "/library/v.mkv")
@@ -158,12 +170,20 @@ class TestHistoryMarks:
         assert entry["output_path"] == "/library/v.mkv"
         assert entry["started_at"] == started
 
+    def test_mark_pending_transcode_clears_previous_output(self, make_history):
+        h = make_history()
+        h.mark_pending_postprocess("/v.mp4", "/library/v.mkv")
+
+        h.mark_pending_transcode("/v.mp4")
+
+        assert "output_path" not in h.get_entry("/v.mp4")
+
 
 class TestHistoryIter:
     def test_iter_started(self, make_history):
         h = make_history()
-        h.mark_pending_transcode("/a.mp4", "/a.mkv")
-        h.mark_pending_transcode("/b.mp4", "/b.mkv")
+        h.mark_pending_transcode("/a.mp4")
+        h.mark_pending_transcode("/b.mp4")
         h.mark_done("/c.mp4", "/c.mkv")
         assert set(h.iter_started()) == {"/a.mp4", "/b.mp4"}
 
@@ -172,14 +192,15 @@ class TestHistoryIter:
         h.mark_pending_postprocess("/a.mp4", "/a.mkv")
         h.mark_pending_postprocess("/b.mp4", "/b.mkv")
         h.mark_done("/c.mp4", "/c.mkv")
-        h.mark_pending_transcode("/d.mp4", "/d.mkv")
+        h.mark_pending_transcode("/d.mp4")
 
         assert set(h.iter_pending_postprocess()) == {"/a.mp4", "/b.mp4"}
 
     def test_migrate_await_postprocess_to_pending(self, make_history):
         h = make_history()
         h._conn.execute(
-            "INSERT INTO files (filepath, status) VALUES ('/p.mp4', 'await_postprocess')"
+            "INSERT INTO files (filepath, status, output_path) "
+            "VALUES ('/p.mp4', 'await_postprocess', '/p.mkv')"
         )
         h._conn.execute(
             "INSERT INTO files (filepath, status) VALUES ('/q.mp4', 'await_postprocess')"
@@ -196,8 +217,8 @@ class TestHistoryIter:
         h.mark_failed("/fail.mp4", "err")
         h.mark_skipped("/skip.mp4", "hevc")
         h.mark_done("/ok.mp4", "/ok.mkv")
-        h.mark_pending_transcode("/start.mp4", "/start.mkv")
-        h.mark_pending_transcode("/pend.mp4", "/pend.mkv")
+        h.mark_pending_transcode("/start.mp4")
+        h.mark_pending_transcode("/pend.mp4")
         assert set(h.iter_final_states()) == {"/rej.mp4", "/fail.mp4", "/skip.mp4"}
 
     def test_delete_removes_record(self, make_history):

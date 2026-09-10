@@ -59,7 +59,10 @@ def _resolve_output(pipeline, job):
     stem = filepath.stem
     expect_filename = f"{stem}.mkv"
     input_size = filepath.stat().st_size
-    raw_output = history.get_output_path(str(filepath))
+    # 转码成功后的临时产物由 Job 持有；history.output_path 只表示已落盘产物。
+    # The Job owns the successful transcode output in the work area; history.output_path
+    # is reserved for outputs that have already been landed.
+    raw_output = job.output_path
     if raw_output is None or not Path(raw_output).exists():
         history.mark_failed(str(filepath), "output path missing after transcode")
         return None, False
@@ -356,7 +359,7 @@ def recover_pending_postprocess(history):
             continue
         raw_final = history.get_output_path(filepath)
         if raw_final is None or not Path(raw_final).exists():
-            history.mark_pending_transcode(filepath, None)
+            history.mark_pending_transcode(filepath)
             log.warning(
                 "RESUME DEMOTED (output missing): %s requeued for transcode",
                 Path(filepath).name,

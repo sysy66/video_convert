@@ -70,6 +70,7 @@ def _make_stage(
         lib_input=Path(input_dir) if input_dir else tmp_path,
         lib_output=Path(output_dir) if output_dir else tmp_path,
         lib_cache=tmp_path / "cache",
+        output_path=output,
         dist_frame_count=info["dist_frame_count"],
         elapsed=info["elapsed"],
     )
@@ -116,6 +117,19 @@ class TestPostTranscodeSync:
         assert (tmp_path / "test.mkv").exists()
         history.mark_done.assert_called_once()
         assert history.mark_done.call_args[1]["rejected"] is False
+
+    def test_post_process_uses_job_output_path(self, tmp_path):
+        # 后处理使用 Job 中的临时产物，不依赖 history.output_path。
+        # Post-process uses the Job's temp output and does not depend on history.output_path.
+        pipeline, job, input_file, output, history = _make_stage(
+            tmp_path, vmaf_mode=config.VMAF_MODE_OFF
+        )
+        history.get_output_path.side_effect = lambda _: str(tmp_path / "wrong.mkv")
+
+        assert post_process_stage(pipeline, job) is True
+        assert not input_file.exists()
+        assert (tmp_path / "test.mkv").exists()
+        history.get_output_path.assert_not_called()
 
     def test_accept_keeps_source_when_keep_source(self, tmp_path):
         pipeline, job, input_file, output, history = _make_stage(
@@ -376,7 +390,7 @@ class TestAsyncPostprocessRecovery:
 
         assert recover_pending_postprocess(history) == []
 
-        history.mark_pending_transcode.assert_called_once_with(str(source), None)
+        history.mark_pending_transcode.assert_called_once_with(str(source))
         history.mark_failed.assert_not_called()
 
     def test_recover_returns_existing_source_and_output(self, tmp_path):

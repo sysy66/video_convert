@@ -297,7 +297,9 @@ class TestTranscode:
         assert (work_dirs[0] / "test.mkv").read_text() == "transcoded"
 
     def test_success_calls_mark_pending_transcode(self, tmp_path):
-        # 编码阶段只写 pending_transcode（含产物路径），不写 done，也不删源。
+        # 编码开始只写 pending_transcode，不写临时 output_path、done 或删源。
+        # Transcode start records pending_transcode without a temp output_path,
+        # terminal state, or source deletion.
         input_file = tmp_path / "test.mp4"
         input_file.write_text("fake video")
 
@@ -309,10 +311,7 @@ class TestTranscode:
         ):
             self._run_transcode(tmp_path, history, input_file)
 
-        history.mark_pending_transcode.assert_called_once()
-        out_path = history.mark_pending_transcode.call_args[0][1]
-        assert Path(out_path).parent.parent == Path(self._cache(tmp_path))
-        assert Path(out_path).name == "test.mkv"
+        history.mark_pending_transcode.assert_called_once_with(str(input_file))
         history.mark_done.assert_not_called()
         assert not history.mark_failed.called
 
