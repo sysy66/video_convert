@@ -19,7 +19,12 @@ from pathlib import Path
 log = __import__("logging").getLogger(__name__)
 
 # 活跃临时工作目录（转码进行中），cleanup 必须跳过，防止删除正在使用的目录。
-# Active temp work dirs; the stale-cleanup pass must skip these.
+# 本模块只持有这个共享集合并提供只读快照；调用方（transcoder.py/post_process.py）
+# 直接 import 后对集合本身 add/discard，此处没有单独的 register/unregister 函数。
+# Active temp work dirs; the stale-cleanup pass must skip these. This module
+# only owns the shared set and exposes a read-only snapshot; callers
+# (transcoder.py/post_process.py) import the set directly and add/discard on
+# it themselves — there are no register/unregister wrapper functions here.
 _active_temp_dirs = set()
 _active_temp_dirs_lock = threading.Lock()
 
