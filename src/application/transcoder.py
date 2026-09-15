@@ -1,10 +1,13 @@
 """
-转码模块。实现单个视频文件的完整转码流程：构建 FFmpeg 命令、执行并实时
-记录进度、成功时替换源文件，失败时清理并标记历史状态。
+转码模块。实现单个视频文件的编码阶段：构建 FFmpeg 命令、执行并实时记录
+进度；成功时把产物路径/帧数/耗时写回 job（质量判定与落盘交给
+post_process_stage），失败时清理临时目录并标记历史状态。
 
-Transcoding module. Implements the full transcode workflow for a single video:
-build the FFmpeg command, run it with live progress logging, replace the source
-on success, and clean up / mark history on failure.
+Transcoding module. Implements the encoding phase for a single video: build
+the FFmpeg command and run it with live progress logging. On success, writes
+the output path/frame count/elapsed time back onto the job (quality
+verdict and landing are handled by post_process_stage); on failure, cleans up
+the temp dir and marks history.
 """
 
 import subprocess
@@ -41,9 +44,6 @@ def _write_log(temp_dir: Path, name: str, content: str) -> None:
         pass
 
 
-# 内部从 job.filepath / job.lib_* / pipeline.history 等取参
-# 成功：job.output_path/dist_frame_count/transcode_elapsed 写入 job，return True
-# 失败：清理并 mark_failed，return False
 def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
     """
     对单个视频执行转码（仅编码阶段）：创建临时工作目录、构建并运行 FFmpeg
@@ -52,9 +52,9 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
       - 失败/超时/异常：清理临时目录并 mark_failed，返回 False
       - 成功：返回 True，并把 output_path/dist_frame_count/transcode_elapsed 写入 job
 
-    注意：转码侧刻意不产生任何帧率规整参数——实验证明 -r 会导致 VMAF 虚低、
-    -fps_mode cfr 会导致产物帧率翻倍（2026-08-13）；源/产物帧率对齐只在打分侧
-    按帧序号进行。
+    注意：转码侧刻意不加任何帧率规整参数（-r 会导致 VMAF 虚低，-fps_mode cfr
+    会让产物帧率翻倍）；源/产物帧率对齐只在打分侧按帧序号进行，见
+    FfmpegVMAFScorer._frame_index_align_string。
     """
     cache_dir = Path(job.lib_cache)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -121,6 +121,11 @@ def transcode_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bool:
         # 软件降级重试状态（防双重重试：每种最多一次）
         fallback_done = {"scale": False, "decode": False}
 
+        # 编码已知 QSV 无法硬解时，首轮直接走软解码，不必先跑一次必然失败的
+        # 硬解再触发重试；同时标记 fallback_done，避免下面再重试一次 decode。
+        # For codecs known to be QSV-incompatible, use software decode on the
+        # first attempt instead of a doomed hardware attempt followed by a
+        # retry; this also marks fallback_done so decode isn't retried again.
         codec = pipeline.probe.get_codec(job.filepath)
         if codec in config.SW_DECODE_FALLBACK_CODECS:
             fallback_done["decode"] = True
