@@ -12,13 +12,12 @@ log = __import__("logging").getLogger(__name__)
 
 class FfmpegVMAFScorer:
     """
-    封装 ffmpeg libvmaf 打分：构建 filter_complex（帧序对齐 + scale2ref +
-    hwdownload）、执行命令、解析 stderr/json 分数。HW 失败按 VMAF_HW_FALLBACK
-    回退软解。
+    封装 ffmpeg libvmaf 打分。`compute_vmaf` 是唯一入口：若启用 HW 解码，
+    先尝试硬件路径，失败时按 `vmaf_hw_fallback` 决定是否回退到软件解码路径。
 
-    Wraps ffmpeg libvmaf scoring: builds the filter_complex (frame-index
-    alignment + scale2ref + hwdownload), runs the command, parses the score
-    from stderr/json; HW failures fall back to software per VMAF_HW_FALLBACK.
+    Wraps ffmpeg libvmaf scoring. `compute_vmaf` is the sole entry point: if
+    HW decode is enabled, it tries the hardware path first and, on failure,
+    falls back to the software path according to `vmaf_hw_fallback`.
     """
 
     def __init__(
@@ -34,8 +33,8 @@ class FfmpegVMAFScorer:
         vmaf_hw_fallback: bool,
     ):
         self.ffprobe_path = ffprobe_path
-        # The wrapper is stateless; one scorer-level instance serves all VMAF jobs.
-        # 封装没有可变状态；一个 scorer 实例即可服务所有 VMAF 任务。
+        # 无状态封装，单个实例可安全服务所有 VMAF 任务。
+        # Stateless wrapper; a single instance can safely serve all VMAF jobs.
         self.probe = VideoProbe(ffprobe_path)
         self.vmaf_ffmpeg_path = vmaf_ffmpeg_path
         self.vmaf_model_path = vmaf_model_path
@@ -48,15 +47,14 @@ class FfmpegVMAFScorer:
 
     def _hw_download_format(self, filepath):
         """
-        探测视频真实 pix_fmt，决定 hwdownload 应该按 8bit(nv12) 还是 10bit(p010le) 取帧。
-        不能假定输入位深——新番生肉常见 10bit x265，老番/自制转码常见 8bit。
-        探测失败时默认按 8bit 处理：猜错的后果只是 hwdownload 报错安全回退到软件路径，
-        不会产生错误分数。
+        探测视频真实 pix_fmt，决定 hwdownload 应按 8bit(nv12) 还是 10bit(p010le) 取帧
+        （不能假定输入位深，8bit/10bit 源都常见）。探测失败时默认 8bit：猜错的后果只是
+        hwdownload 报错、安全回退到软件路径，不会产生错误分数。
 
         Probe the real pix_fmt to decide whether hwdownload should request 8bit(nv12)
-        or 10bit(p010le). Never assume bit depth — 10bit x265 raw releases are common.
-        Defaults to 8bit on probe failure: a wrong guess only makes hwdownload fail
-        and fall back to software, never a corrupted score.
+        or 10bit(p010le) — bit depth can't be assumed from the source. Defaults to
+        8bit on probe failure: a wrong guess only makes hwdownload fail and fall back
+        to software, never a corrupted score.
         """
         pix_fmt = self.probe.get_pix_fmt(filepath) or ""
         if "10le" in pix_fmt or "10be" in pix_fmt or pix_fmt == "p010le":
@@ -70,7 +68,6 @@ class FfmpegVMAFScorer:
         Read the aggregate mean score from a libvmaf json log; more reliable than
         scraping stderr.
 
-        :param self:
         :param log_path: json 日志路径 (Path to the json log)
         :return: (mean, minimum) 元组，读取失败时返回 (None, None)
                  (mean, minimum) tuple, or (None, None) on failure
@@ -91,12 +88,12 @@ class FfmpegVMAFScorer:
     def _frame_index_align_string(self):
         """
         构建帧序对齐 setpts 字符串：把每路的帧时间戳按帧序号线性化
-        （setpts=N/30/TB，参考帧率 30 仅用于归一化、数值任意），使得两路第 n 帧
-        时间戳相等、逐帧配对对比，与源/产物的容器 tbr 声明、真实帧率完全无关。
+        （setpts=N/30/TB；这里的 30 只是归一化基准，取任何值效果相同），使得
+        两路第 n 帧时间戳相等、逐帧配对对比，与源/产物的容器 tbr 声明、真实帧率无关。
 
         Build the frame-index alignment setpts string: linearizes each stream's
-        frame timestamps by frame index (setpts=N/30/TB; the 30fps reference is only
-        for normalization and its value is arbitrary), so frame n of both inputs
+        frame timestamps by frame index (setpts=N/30/TB — the 30 is just a
+        normalization base and any value would work), so frame n of both inputs
         gets identical timestamps and is compared pairwise, independent of the
         container tbr declaration and true frame rates.
         """
@@ -104,11 +101,12 @@ class FfmpegVMAFScorer:
 
     def _frame_counts_check(self, ref_frame_count, dist_frame_count):
         """
-        仅诊断：记录两路帧数是否可得。纯日志，不返回判据，
-        也不影响打分——VMAF 始终用帧序对齐打分，帧数差只反映在日志里。
-        Diagnostic only: logs whether the two frame counts are available. Purely a logger;
-        it returns no verdict and
-        never gates scoring.
+        仅供日志诊断：记录两路帧数是否可得、是否一致。不返回值、不影响打分——
+        打分始终走帧序对齐，帧数差异只体现在日志里，不会阻断或改变分数。
+
+        Diagnostic only: logs whether the two frame counts are available and equal.
+        Returns nothing and never gates scoring — frame-count differences show up
+        only in the log, never in the score.
         """
         if ref_frame_count is None or dist_frame_count is None:
             log.info(
@@ -130,25 +128,18 @@ class FfmpegVMAFScorer:
     ):
         """
         内部：构建并执行单次 ffmpeg VMAF 命令。
-        对齐策略：始终用 setpts=N/30/TB 把两路帧时间戳按帧序号线性化，
-        第 n 帧与第 n 帧逐帧配对——不依赖任何 tbr 声明/帧率网格，VFR 源不再
-        产生假低分（实测 62.37→92.09）。尾部帧数不一致由 framesync 的
-        shortest=1:repeatlast=0 以短流为准截断配对，不再以帧数差设门（1% 阈值
-        无依据，帧数差异应反映在分数里而非阻断打分）。
+        对齐策略：始终用 setpts=N/30/TB 把两路帧时间戳按帧序号线性化，第 n 帧与
+        第 n 帧逐帧配对，不依赖 tbr 声明或帧率网格。尾部帧数不一致时，由 framesync
+        的 shortest=1:repeatlast=0 以短流为准截断配对（帧数差异只体现在日志里，
+        不会阻断打分）。
         HW 模式下 hwdownload 按每路各自探测到的真实原生位深取帧（8bit → nv12，
-        10bit → p010le），全程不经过 vpp_qsv 等有损转换，分数与纯软件路径逐位一致。
-        若某路源编码 QSV 无法硬解（如老番 avi 的 mpeg4），hwdownload 会直接失败
-        （不会静默降级成软解再上传），从而安全回退到软件路径。
+        10bit → p010le），不经过 vpp_qsv 等有损转换。若某路源编码 QSV 无法硬解，
+        hwdownload 会直接失败（不会静默降级成软解再上传），从而安全回退到软件路径。
 
         :param hwaccel: True 时启用 QSV 硬件解码（hwdownload 后接软件 libvmaf）
         :param ref_frame_count: 参考帧数（仅日志诊断，不影响打分）
         :param dist_frame_count: 失真帧数（仅日志诊断，不影响打分）
         """
-        # 对齐链：始终帧序对齐（setpts=N/30/TB，与 tbr 无关）；帧数仅作日志
-        # 诊断（_frame_counts_check），不设任何打分门。
-        # Alignment: always frame-index (setpts=N/30/TB, independent of tbr);
-        # frame counts are logged by _frame_counts_check for diagnostics only
-        # and never gate scoring.
         _align = self._frame_index_align_string()
         self._frame_counts_check(ref_frame_count, dist_frame_count)
 
@@ -185,11 +176,10 @@ class FfmpegVMAFScorer:
             opts.append(f"model='path={self.vmaf_model_path}'")
         opts.append(f"n_subsample={self.n_subsample}")
         opts.append(f"n_threads={self.n_threads}")
-        # framesync 语义与 fqm 对齐：shortest=1 以短流为准截断尾部、repeatlast=0
-        # 尾部帧不足时不重复最后一帧（帧序对齐放行 ≤1% 差异时即依赖此截断配对）。
-        # framesync semantics aligned with fqm: shortest=1 truncates at the shorter
-        # stream, repeatlast=0 does not pad with the last frame (the frame-index
-        # path relies on this when it permits a <=1% tail difference).
+        # shortest=1 以短流为准截断尾部，repeatlast=0 表示尾部帧不足时不重复
+        # 最后一帧填充——两路帧数不一致时靠这对参数决定如何截断配对。
+        # shortest=1 truncates at the shorter stream; repeatlast=0 means it does
+        # not pad the tail by repeating the last frame when counts differ.
         opts.append("shortest=1:repeatlast=0")
 
         if log_path is not None:
@@ -221,13 +211,10 @@ class FfmpegVMAFScorer:
                 )
                 return None
 
-            # 分数唯一来源是 libvmaf json 日志的 pooled_metrics.vmaf.mean。
-            # 该值由 libvmaf 聚合（libvmaf 3.2+ 在 subsample 模式下聚合正确，
-            # 实测与逐帧均值一致），不再解析 stderr。
+            # 分数唯一来源是 libvmaf json 日志的 pooled_metrics.vmaf.mean，
+            # stderr 不参与取分。
             # The only score source is pooled_metrics.vmaf.mean from the libvmaf
-            # json log. Aggregation is done inside libvmaf (3.2+ aggregates correctly
-            # under n_subsample; verified identical to a per-frame average), so
-            # stderr is no longer parsed for scoring.
+            # json log; stderr is never parsed for scoring.
             if log_path is not None:
                 mean, _minimum = self._read_vmaf_from_json(log_path)
                 if mean is not None:
