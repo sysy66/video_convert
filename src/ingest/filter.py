@@ -28,6 +28,13 @@ def _history_allows(filepath, history):
     if entry:
         status = entry.get("status")
 
+        # 两组当前处理结果相同（均不可处理），按语义分组书写便于阅读：
+        # 终态（success/rejected/not required）与进行中或失败
+        # （pending_transcode/pending_postprocess/failed）。
+        # Both groups currently produce the same result (not processable); kept
+        # as separate branches for readability by semantic category: terminal
+        # (success/rejected/not required) vs. in-progress or failed
+        # (pending_transcode/pending_postprocess/failed).
         if status in ("success", "rejected", "not required"):
             return False
 
