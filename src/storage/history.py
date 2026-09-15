@@ -435,17 +435,11 @@ class History:
         Retrieve the materialized output path; temp paths for active transcoding are
         not stored in this field.
 
-        This method queries the database using the provided file path. If no matching
-        record is found, it returns None.
-
-        :param filepath: The file path used to query the database for the associated
-            output path.
-        :type filepath: str
-        :return: The output path associated with the given file path if it exists, or
-            None if no match is found.
-        :rtype: str or None
+        :param filepath: 源文件路径 (Source file path)
+        :return: 产物路径，无记录时返回 None (Output path, or None if no record exists)
         """
-        row = self._conn.execute(
-            "SELECT output_path FROM files WHERE filepath=?", (filepath,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT output_path FROM files WHERE filepath=?", (filepath,)
+            ).fetchone()
         return row["output_path"] if row else None
