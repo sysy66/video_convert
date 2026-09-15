@@ -398,12 +398,16 @@ def recover_pending_postprocess(history):
 
 def _resume_async_postprocess(pipeline, filepath, final_path):
     """
-    恢复单文件 async 后处理：打分库中文件→verdict→终态（landed 已知，不复拷）。
-    lib 路径全程用不上，用 SimpleNamespace 承载打分上下文字段。返回 bool。
+    恢复单文件 async 后处理：先复算 ratio 门（镜像 _resolve_output 的早期拒绝，
+    超标直接 reject、不打分），否则打分库中文件→verdict→终态
+    （landed 已知，不复拷）。lib 路径全程用不上，用 SimpleNamespace 承载打分
+    上下文字段。返回 bool。
 
-    Resume one async post-process: score the library file → verdict → settle
-    (already landed, no second copy). lib paths are never needed; a
-    SimpleNamespace carries the scoring context fields. Returns bool.
+    Resume one async post-process: first re-checks the ratio gate (mirrors
+    _resolve_output's early rejection — over-ratio skips scoring), otherwise
+    scores the library file → verdict → settle (already landed, no second
+    copy). lib paths are never needed; a SimpleNamespace carries the scoring
+    context fields. Returns bool.
     """
     filepath = Path(filepath)
     final_path = Path(final_path)
@@ -475,7 +479,6 @@ def post_process_stage(pipeline: "TranscodePipeline", job: "TranscodeJob") -> bo
                 dist_frame_count/transcode_elapsed)
     :return: True 表示处理流程完成（含拒绝）；False 表示失败已记 failed
              (True if processing completed, including rejections; False if failed)
-    :rtype: bool
     """
     temp_dir = None
     try:
