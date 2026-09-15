@@ -1,9 +1,10 @@
 """
-FFmpeg 执行模块。构建 FFmpeg 命令行、执行转码并实时解析进度（时长、fps），
-以及把失败的 stderr 归纳为简洁摘要。
+FFmpeg 执行模块。构建 FFmpeg 命令行、执行转码并实时解析进度（时长、fps、
+输出帧数），以及把失败的 stderr 归纳为简洁摘要。
 
 FFmpeg runner module. Builds the FFmpeg command line, runs the transcode while
-parsing live progress (time, fps), and summarizes failed stderr output.
+parsing live progress (time, fps, output frame count), and summarizes failed
+stderr output.
 """
 
 import re
@@ -43,6 +44,11 @@ def _build_ffmpeg_cmd(
     :param sw_scale_fallback: 是否使用软件缩放回退（绕开 vpp_qsv 滤镜在 hwaccel 切换时的兼容性问题）
                         Whether to use software-scale fallback (bypass vpp_qsv filter
                         compatibility issues during hwaccel reconfiguration)
+    :param sw_decode_fallback: 是否强制软件解码（探测输入编码后按该编码名指定解码器，
+                        用于 config.SW_DECODE_FALLBACK_CODECS 中 QSV 硬解不支持的编码）
+                        Whether to force software decode (probes the input codec and pins
+                        the decoder to it; used for codecs in config.SW_DECODE_FALLBACK_CODECS
+                        that QSV can't hardware-decode)
     :param probe: 可复用的 VideoProbe 实例；省略时按 ffprobe_path 创建
                   Reusable VideoProbe instance; created from ffprobe_path when omitted
     :return: (cmd_list, total_duration) — 命令列表和视频总时长（秒）
