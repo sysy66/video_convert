@@ -149,8 +149,8 @@ class VideoProbe:
         并用 duration×avg_frame_rate 交叉校验（偏差 >1% 视为索引虚高，如
         文件尾损坏/流式未 finalize，自动降级兜底计数）；mkv/webm 无
         nb_frames 字段或校验失败时回退 ffprobe -count_packets 读包计数
-        （不解码只数 demux 包，mkv 帧级容器 1 包=1 帧，NFS 实测 2.6 GB
-        约 12 秒；mp4/mkv/webm 均适用，TS 等切片流不适用）。计数失败返回 None。
+        （不解码只数 demux 包，帧级容器下 1 包=1 帧，对 mp4/mkv/webm 均适用，
+        但 TS 等切片流不适用）。计数失败返回 None。
 
         Video-stream frame count: prefer the container moov index nb_frames
         (instant on mp4/mov), cross-checked against duration×avg_frame_rate
@@ -158,9 +158,9 @@ class VideoProbe:
         unfinalized stream, and falls back to counting); mkv/webm have no
         nb_frames field, and any check failure falls back to ffprobe
         -count_packets (demux-level packet counting without decode; on
-        frame-based containers like mkv/mp4 one packet is one video frame,
-        measured ~12 s for a 2.6 GB file on NFS; not applicable to sliced
-        streams like MPEG-TS). Returns None on failure.
+        frame-based containers one packet is one video frame, applicable to
+        mp4/mkv/webm but not to sliced streams like MPEG-TS). Returns None on
+        failure.
 
         :param filepath: 视频文件路径 (Path to the video file)
         :return: 帧数整数，失败时返回 None (int frame count, or None on failure)
