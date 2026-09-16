@@ -11,8 +11,8 @@ Watches directories for new video files, transcodes them via Intel Quick Sync Vi
 - **Multi-library** — each library can have independent input, output, and cache directories, configured in `libraries.conf`
 - **Audio passthrough** — all-AAC sources copy audio; mixed codecs re-encode to AAC
 - **Subtitle + attachment passthrough** — keeps fonts and subs intact
-- **Exponential-backoff retry** — failed entries wait longer each cycle, never retry-spam
-- **Crash-safe** — stale `.work_*` temp dirs and `started` history entries are cleaned on startup
+- **Manual failed-entry retry** — `--retry-failed` requeues all `failed` history entries once at startup; no automatic backoff yet
+- **Crash-safe** — stale `.work_*` temp dirs are cleaned on startup/each scan cycle; interrupted (`pending_transcode`) entries are automatically requeued for re-transcoding
 - **Per-file 5-hour timeout** — prevents NFS hangs from freezing the daemon forever
 - **SQLite history** — thread-safe, WAL-mode, zero dependencies beyond stdlib
 - **Async VMAF scoring** — `--vmaf async`: land first, then score the library file (what you see is what you score); same verdict rules as sync
@@ -29,8 +29,10 @@ git clone <url> video_convert
 cd video_convert
 
 # 3. Configure libraries — run once to auto-generate a sample libraries.conf
-#    in the project root, then fill in your media paths.
-python3 main.py --help  # generates libraries.conf if missing
+#    in the project root (Ctrl+C after the warning; --help exits before the
+#    template is written, so don't use it for this step), then fill in your
+#    media paths.
+python3 main.py
 # 每行一个库：名称 = 输入[, 输出[, 缓存]]。输出/缓存省略时与输入相同。
 #   movies = /mnt/movies
 #   shows  = /mnt/shows, /mnt/out, /mnt/cache
