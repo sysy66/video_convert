@@ -9,9 +9,9 @@
 - [x] **Subtitle + attachment stream passthrough**
 - [x] **Recursive directory scanner** — `os.walk`-based discovery with codec/history filtering
 - [x] **SQLite-persisted state machine** (`started` / `success` / `rejected` / `failed` / `not required`)
-- [x] **Exponential-backoff retry** for failed entries
+- [x] **Manual retry for failed entries** — `--retry-failed` requeues all `failed` history rows once at startup (no automatic backoff; see v1.7 retry rework)
 - [x] **Stale temp dir cleanup** — `.work_*` dirs cleaned on each scan cycle
-- [x] **Power outage resilience** — stale `started` entries marked `failed` on startup
+- [x] **Power outage resilience** — stale `started` (`pending_transcode`) entries are requeued for re-transcoding on startup
 - [x] **Per-file timeout** — kill stuck transcodes individually (default 5 h) instead of halting the entire batch
 - [x] **VMAF audit logs** — per-transcode JSON logs with 7-day auto-purge
 - [x] **Thread-safe History** — SQLite WAL mode + RLock
@@ -64,10 +64,10 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 - [x] **媒体库配置外置 `libraries.conf`** — 从代码迁移到项目根目录配置文件（每行一个库：`名称 = 输入[, 输出[, 缓存]]`），首次运行自动生成带注释模板，开箱即用；`--library` CLI 优先于配置文件
 - [x] **VMAF CLI 三态重构（`--vmaf off|sync|async`）** — 默认关闭（`VMAF_MODE=off`），需显式启用；VMAF hwaccel 解码默认开启，失败自动回退软件（`--no-vmaf-hwaccel` / `--no-vmaf-hw-fallback` 可关）
-- [x] **VMAF 打分帧序对齐** — 打分前对源与产物按帧号线性化（`setpts=N/30/TB`），消除 VFR→CFR 帧序漂移导致的逐帧错位；实测（Arc A310 + av1_qsv）同源分数 63.19 → 94.83 且三次一致；删去 fps 网格投影兜底，帧数不可得或 >1% 时不下分
-- [x] **VMAF 取分可靠性** — 优先解析 stderr（规避 libvmaf 2.3.0 json pooled 聚合 bug）、仅使用 json `pooled_metrics` 取分、`log_path` 补默认值
+- [x] **VMAF 打分帧序对齐** — 打分前对源与产物按帧号线性化（`setpts=N/30/TB`），消除 VFR→CFR 帧序漂移导致的逐帧错位；实测（Arc A310 + av1_qsv）同源分数 63.19 → 94.83 且三次一致；删去 fps 网格投影兜底，帧数只做日志诊断，从不阻断或改变打分结果
+- [x] **VMAF 取分可靠性** — 只用 json 日志的 `pooled_metrics.vmaf.mean` 取分，不解析 stderr（stderr 正则脆弱，且 libvmaf 2.3.0 曾有 json pooled 聚合 bug，已通过升级规避）；`log_path` 补默认值
 - [x] **VMAF 模型移入 `/opt/ffmpeg-qsv-vmaf/models/`** — 随自编译统一版安装，默认模型 `vmaf_v0.6.1neg.json`；清理过时的 johnvansickle 与旧模型上下文
-- [x] **sync/async 打分决策统一** — 两条路径共用同一决策逻辑；打分失败（None）与极端低分（`VMAF_EXTREME_LOW`）统一按 failed 退避重试，不再永久 rejected
+- [x] **sync/async 打分决策统一** — 两条路径共用同一 `vmaf_verdict` 决策逻辑：打分失败（None）与低分都归类为 reject（保留源文件），没有单独的失败退避重试路径
 - [x] **libvmaf 多线程（`--vmaf-threads` / `VMAF_N_THREADS`）** — 0=auto（默认留 1 核给转码），>0 显式指定；>4 线程收益递减
 - [x] **帧数校验闸门（引入→根治→移除）** — vpp_qsv 静默失败曾导致截断输出（帧数校验 + 视频尾窗探测拦截，含单元测试）；升级自编译 ffmpeg 到 release/8.1（n8.1.2，修复附件流截断 bug）后根治，校验层移除
 - [x] **Async VMAF 日志补全** — 转码耗时（codec + vmaf 双计时）写入异步打分日志
