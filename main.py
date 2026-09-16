@@ -216,15 +216,21 @@ def _apply_cli_overrides():
 
 
 def main_loop():
-    """运行主监控循环：校验配置、扫描库目录并调度转码。
+    """运行主监控循环：校验配置→启动恢复（pending_postprocess 直接打分、
+    pending_transcode 无条件重入队、failed 视 --retry-failed 重入队）→
+    进入扫描循环。
 
     循环内定期清理临时目录/过期记录，遍历各库目录，把应处理的文件提交到
     转码线程池。收到退出信号后优雅关闭并返回历史对象。
 
-    Run the main monitoring loop: validate config, scan the
-    library directories and schedule transcodes. Cleans up temp dirs/stale records
-    each cycle, submits processable files to the transcode pool, then shuts down
-    gracefully on exit signal and returns the History object.
+    Run the main monitoring loop: validate config → startup recovery
+    (pending_postprocess rows go straight to scoring, pending_transcode rows
+    are unconditionally requeued, failed rows are requeued only with
+    --retry-failed) → enter the scan loop.
+
+    Cleans up temp dirs/stale records each cycle, submits processable files to
+    the transcode pool, then shuts down gracefully on exit signal and returns
+    the History object.
     """
     global _running
 
@@ -304,6 +310,7 @@ def main_loop():
             if not force and not should_process(
                 job.filepath, job.pipeline.history, config.SKIP_CODECS, pipeline.probe
             ):
+                _pending.discard(job.key)
                 return
             if job.transcode():
                 post_pool.submit(post_process, job)
