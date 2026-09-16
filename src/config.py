@@ -218,33 +218,27 @@ VMAF_N_SUBSAMPLE = 30
 # diminish beyond ~4 threads.
 VMAF_N_THREADS = ((os.cpu_count() or 1) + 1) // 2
 
-# VMAF 打分帧序对齐。打分侧按帧序号逐帧配对（两路帧数相对差 ≤1% 时放行，
-# 与容器 tbr/帧率网格无关，VFR 源不再假低分）；帧数不可得或差异过大（如
-# 流式未 finalize 的索引虚高）视为内容不可信，不下分（返回 None 记 failed），
-# 不再做 fps 网格投影兜底——投影会重采样改帧，异常源得到的分数无意义。
-# 转码侧不产生任何帧率规整参数（实验证明 -r/-fps_mode cfr 分别致 VMAF 虚低/
-# 产物双倍帧），对齐只在打分侧进行。实测（2026-08-13 全片）：帧序
-# 对齐 92.09 vs fps=30/1 投影 62.37。
-# Scoring uses frame-index alignment: frames are paired by index when the two
-# frame counts agree within 1%, independent of the container tbr/frame-rate
-# grid, so VFR sources are no longer falsely deflated; when counts are missing
-# or diverge too much (e.g. a bloated index from an unfinalized stream) the
-# content is considered untrustworthy and no score is produced (None marks the
-# entry failed) — the legacy fps-grid projection is gone because it resamples
-# frames and yields meaningless scores on anomalous sources. Transcoding adds
-# no frame-rate regularization (experiments showed -r deflates scores and
-# -fps_mode cfr doubles output frames); alignment happens on the scoring side
-# only. Measured (2026-08-13 full movie): frame-index 92.09 vs
-# fps=30/1 projection 62.37.
+# VMAF 打分帧序对齐：始终按帧序号逐帧配对（setpts=N/30/TB），与容器 tbr/
+# 帧率网格无关；两路帧数不一致时由 framesync 以短流为准截断配对。帧数只做
+# 日志诊断（不可得或差异大都只记日志），不会阻断或改变打分结果，也没有
+# fps 网格投影兜底（已移除）。转码侧不加任何帧率规整参数（-r 会致 VMAF
+# 虚低，-fps_mode cfr 会使产物帧率翻倍），对齐只在打分侧进行。
+# VMAF frame-index alignment: frames are always paired by index
+# (setpts=N/30/TB), independent of the container tbr/frame-rate grid; framesync
+# truncates at the shorter stream when the two frame counts differ. Frame
+# counts are logged for diagnostics only (whether missing or divergent) and
+# never gate or change the score; there is no fps-grid projection fallback
+# (removed). Transcoding adds no frame-rate regularization (-r deflates VMAF,
+# -fps_mode cfr doubles the output frame rate); alignment happens only on the
+# scoring side.
 
-# 打分前帧数探测（get_frame_count / -count_packets）超时秒数：读包计数不解码，
-# 实测 2.6 GB mkv 走 NFS 约 12 秒，600 秒为最慢网络场景的余量；卡死文件
-# 10 分钟后放弃（探测失败 → 不下分），避免后台 worker 长期挂起。
+# 打分前帧数探测（get_frame_count / -count_packets）超时秒数：读包计数不
+# 解码，600 秒为最慢网络场景的余量；探测超时只影响日志诊断（ref_frame_count
+# 记为 None），不影响是否打分。
 # Timeout (seconds) for the pre-scoring frame count probe (get_frame_count /
-# -count_packets), which counts demux packets without decoding (~12 s for a
-# 2.6 GB mkv over NFS); 600 s leaves headroom for the slowest network case.
-# A stalled file is given up after 10 minutes to fall back to fps-grid
-# projection instead of hanging the background worker.
+# -count_packets), which counts demux packets without decoding; 600 s leaves
+# headroom for the slowest network case. A timeout here only affects the log
+# diagnostic (ref_frame_count becomes None); it never blocks scoring.
 FRAME_COUNT_TIMEOUT = 600
 
 # VMAF 逐帧 json 日志目录：即使转码结果被拒绝也持久保留，用于事后审计判定是否可信。
@@ -276,9 +270,11 @@ VMAF_MODE = VMAF_MODE_OFF
 # Async scoring worker threads (VMAF is decode-heavy; 1 is enough by default).
 VMAF_WORKERS = 1
 
-# 转换成功后保留源文件：True=不删除原文件，仅移入输出（常用于验证或临时批量转码）。
-# Keep the source file after a successful transcode: True=do not delete the original,
-# only place the output into the output directory (useful for verification or batches).
+# 转换成功后保留源文件：True=产物复制到输出目录后不删除源文件（常用于验证
+# 或临时批量转码）；False=复制后删除源文件。
+# Keep the source file after a successful transcode: True=copy the output into
+# the output directory without deleting the source (useful for verification or
+# batches); False=delete the source after copying.
 KEEP_SOURCE = False
 
 # 拒绝时新文件仍落盘到目标库：True=reject（含 ratio 超标）时把转码产物放入输出库，
@@ -290,10 +286,11 @@ KEEP_SOURCE = False
 KEEP_TARGET = False
 
 # 质量接受规则阈值 / Quality acceptance thresholds
-# 极端低分阈值：VMAF 低于此值视为输入/产物异常（如写入中残缺文件），记 failed
-# 永久排除，仅 --retry-failed 启动时手动重试。
-# Extreme-low threshold: VMAF below this suggests an incomplete input/output; mark
-# failed (permanently excluded, retried only via --retry-failed).
+# 当前未被任何代码路径读取（v1.6 删除旧异步 worker 链时一并失去了调用方），
+# 保留在此仅为兼容旧配置引用；如需恢复"极端低分记 failed"的行为需要重新接入。
+# Currently unread by any code path (its caller was removed along with the old
+# async worker chain in v1.6); kept only for backward-compat references. Re-wiring
+# is needed to restore the "extreme-low score marks failed" behavior.
 VMAF_EXTREME_LOW = 60
 VMAF_ACCEPT_HIGH = 93  # VMAF ≥ 此值时检查 ACCEPT_RATIO_MAX
 VMAF_ACCEPT_LOW = 80  # VMAF < 此值时直接拒绝
