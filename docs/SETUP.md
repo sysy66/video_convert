@@ -155,6 +155,7 @@ video_convert/
 │   │   └── history.py
 │   ├── support/
 │   │   ├── __init__.py
+│   │   ├── format_utils.py
 │   │   ├── path_utils.py
 │   │   └── validation.py
 │   └── tools/
@@ -166,9 +167,12 @@ video_convert/
 │   ├── test_ai_analyze.py
 │   ├── test_benchmarks.py
 │   ├── test_config.py
+│   ├── test_ffmpeg_vmaf_scorer.py
 │   ├── test_filter.py
 │   ├── test_history.py
 │   ├── test_main.py
+│   ├── test_pipeline.py
+│   ├── test_post_transcode.py
 │   ├── test_probe.py
 │   ├── test_probe_integration.py
 │   ├── test_quality.py
@@ -211,8 +215,8 @@ video_convert/
 | `AUDIO_PASSTHROUGH_CODECS` | `{"aac"}` | Audio codecs to copy instead of re-encode |
 | `KEEP_SUBTITLES` | `True` | Passthrough subtitle streams |
 | `KEEP_ATTACHMENTS` | `True` | Passthrough attachment streams (fonts, etc.) |
-| `SW_DECODE_FALLBACK_CODECS` | `{"vc1"}` | Codecs that fall back to software decode + hwupload when QSV decode crashes |
-| `VMAF_SUBSAMPLE` | 30 | Evaluate 1 frame every N frames |
+| `SW_DECODE_FALLBACK_CODECS` | `{"vc1", "mpeg4", "vp9"}` | Codecs that fall back to software decode + hwupload when QSV decode crashes |
+| `VMAF_N_SUBSAMPLE` | 30 | Evaluate 1 frame every N frames |
 | `VMAF_N_THREADS` | 0 | libvmaf threads: 0 = auto (leave 1 core for transcoding), >0 explicit. CLI: `--vmaf-threads` |
 | `VMAF_FFMPEG_PATH` | `/opt/ffmpeg-qsv-vmaf/bin/ffmpeg` | ffmpeg binary used for VMAF scoring (must include libvmaf) |
 | `VMAF_MODEL_PATH` | `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json` | VMAF model (negative-float features). CLI: `--vmaf-model` |
@@ -220,7 +224,7 @@ video_convert/
 | `VMAF_HWACCEL` | `True` | QSV hardware-accelerated decode for VMAF; falls back to software on failure (`VMAF_HW_FALLBACK`) |
 | `VMAF_MODE` | `"off"` | VMAF scoring mode: `off` (ratio check only) / `sync` (score temp, then land) / `async` (land first, then score the landed file). CLI: `--vmaf off|sync|async` |
 | `VMAF_WORKERS` | 1 | Post-process pool threads (`post_pool` max_workers) |
-| `VMAF_EXTREME_LOW` | 60 | 保留参数（历史阈值说明）；当前打分失败与极端低分均按拒绝处理（保留源文件，记 rejected） |
+| `VMAF_EXTREME_LOW` | 60 | 当前未被任何代码路径读取（旧异步 worker 链的调用方在 v1.6 一并删除）；极低分数目前和其他低分一样，只是被 `VMAF_ACCEPT_LOW`（<80 拒绝）覆盖，不存在额外的"极端低分"判定 |
 | `VMAF_ACCEPT_HIGH` | 93 | VMAF ≥ this → accept if ratio ≤ `ACCEPT_RATIO_MAX` |
 | `VMAF_ACCEPT_LOW` | 80 | VMAF < this → reject |
 | `ACCEPT_RATIO_MAX` | 1.00 | Max output/input size ratio for high-VMAF accept |
@@ -257,13 +261,13 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 ### Behaviour / 行为
 
 - VMAF 默认关闭，需显式启用：`--vmaf sync`（先打分后落盘）或 `--vmaf async`（先落盘后打分，见下）。
-- 打分前对源与产物做帧序对齐（`setpts=N/30/TB` 按帧号线性化），消除 VFR→CFR 帧序漂移造成的分数虚低；两路帧数相对差 >1% 或不可得时不下分（判为异常）。
+- 打分前对源与产物做帧序对齐（`setpts=N/30/TB` 按帧号线性化），消除 VFR→CFR 帧序漂移造成的分数虚低；两路帧数不一致时由 framesync 以短流为准截断配对，帧数只做日志诊断，从不阻断或改变打分结果。
 - If VMAF is unavailable (binary missing, timeout, or error) and `VMAF_MODE != "off"`, the result is **REJECTED** — no score means no accept.
 - The score is stored in `data/history.db` under the `vmaf_score` column.
 - ACCEPT/REJECT log lines include VMAF when available:
   ```
-  ACCEPT: foo.mkv (856 MB, smaller, 33.1%, VMAF 96.54, 1627.3s)
-  REJECT: foo.mkv (VMAF 82.61, ratio 54.2%, keeping original, 4365.9s)
+  ACCEPT: foo.mkv (856 MB, smaller, 33.1%, VMAF 96.54, transcode 1627.3s + vmaf 42.1s)
+  REJECT: foo.mkv (VMAF 82.61, ratio 54.2%, transcode 4365.9s + vmaf 38.2s, keeping original)
   ```
 - Per-frame JSON logs are written to `data/vmaf_logs/` and auto-purged after 7 days.
 - libvmaf 多线程可通过 `--vmaf-threads N` 调整（0=auto，默认留 1 核给转码）。
@@ -272,7 +276,6 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
   - VMAF 80–92 → accept only if output is ≥25% smaller (ratio ≤ 0.75)
   - VMAF < 80 → reject
   - VMAF unavailable → reject (仅当 `VMAF_MODE != "off"`)
-  - VMAF < 60（`VMAF_EXTREME_LOW`）→ 同样拒绝（保留源文件，记 rejected）
 
 ### Async mode / 异步模式（`--vmaf async`）
 
@@ -295,7 +298,7 @@ VMAF 模型文件为 `/opt/ffmpeg-qsv-vmaf/models/vmaf_v0.6.1neg.json`（负浮�
 
 - **打分前输出文件已在库中**，采集器（Jellyfin/Plex）可能在 verdict 落定前扫到被拒文件。
 - `pending_postprocess` 仅表示 async 产物已落盘、终态尚未记录；启动恢复不依赖当前 VMAF 模式。
-- 关停中断的打分视同普通打分失败记 `rejected`（保留源文件，可手动重跑），不延后。
+- 关停中断的打分**不会**记为任何终态（不是 `rejected` 也不是 `failed`）：记录保持原状态，下次启动时按 `pending_postprocess` 恢复逻辑直接复用库中文件重新打分，不重转码。
 
 ```
 python3 main.py --vmaf async ...（其余参数照常）
@@ -333,6 +336,6 @@ nohup python3 main.py > data/app.log 2>&1 &
 | Unexpectedly low VMAF | Corrupt source or frame misalignment | Inspect `data/vmaf_logs/<stem>.json` for per-frame scores |
 | `SKIP (codec=hevc)` | Already HEVC, no re-encode needed | Normal behaviour |
 | 转码输出仅数帧 | 自编译版为 git-master 构建（附件流截断 bug，2026-07 曾引入） | 升级到 release/8.1 稳定版（n8.1.2）重编，见 [1.2](#12-ffmpeg--自编译qsv--libvmaf-统一版--unified-build)；已修复版本无此问题 |
-| Stale `.work_*` dirs | Process crash or power outage | Auto-cleaned each scan cycle; `mark_stale_started_as_failed` resets stuck entries |
+| Stale `.work_*` dirs | Process crash or power outage | Auto-cleaned each scan cycle (`cleanup_stale_temp_dirs`); interrupted `pending_transcode` history entries are requeued for re-transcoding at startup |
 | NFS locked `.nfs*` files | NFS file handle leak | `lsof +D /path/to/dir` to find the holding process |
-| 转码卡死超时（5h） | NFS hang or very large file | Per-file timeout kills the stuck task; it retries next cycle with backoff (`--codec-timeout` 可调） |
+| 转码卡死超时（5h） | NFS hang or very large file | Per-file timeout kills the stuck task and marks it `failed`; retry only via `--retry-failed` at next startup, no automatic backoff (`--codec-timeout` 可调） |
