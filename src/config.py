@@ -266,9 +266,9 @@ VMAF_MODE_SYNC = "sync"
 VMAF_MODE_ASYNC = "async"
 VMAF_MODE = VMAF_MODE_OFF
 
-# 异步打分 worker 线程数（VMAF 极耗解码器资源，默认 1 即可）。
-# Async scoring worker threads (VMAF is decode-heavy; 1 is enough by default).
-VMAF_WORKERS = 1
+# 后处理 worker 线程数（VMAF 打分 + 落盘等，默认 1 即可）。
+# Post-process worker threads (VMAF scoring + landing, etc.; 1 is enough by default).
+POST_PROCESS_WORKERS = 1
 
 # 转换成功后保留源文件：True=产物复制到输出目录后不删除源文件（常用于验证
 # 或临时批量转码）；False=复制后删除源文件。

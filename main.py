@@ -144,6 +144,12 @@ def _apply_cli_overrides():
         help="libvmaf threads: 0=auto (default, leave 1 core for transcoding) | >0 explicit",
     )
     parser.add_argument(
+        "--post-process-workers",
+        type=int,
+        metavar="N",
+        help="Concurrent post-process tasks (VMAF scoring + landing, default: 1)",
+    )
+    parser.add_argument(
         "--retry-failed",
         action="store_true",
         help="Retry failed transcodes entries",
@@ -188,6 +194,8 @@ def _apply_cli_overrides():
         config.KEEP_TARGET = True
     if args.vmaf_threads is not None:
         config.VMAF_N_THREADS = args.vmaf_threads
+    if args.post_process_workers is not None:
+        config.POST_PROCESS_WORKERS = args.post_process_workers
     if args.retry_failed:
         config.RETRY_FAILED = True
     if args.libraries:
@@ -283,7 +291,7 @@ def main_loop():
     # Transcode pool lives for the whole process; scan cadence is decoupled from
     # transcode progress so newly added files queue up within one scan interval.
     transcode_pool = ThreadPoolExecutor(max_workers=config.MAX_WORKERS)
-    post_pool = ThreadPoolExecutor(max_workers=config.VMAF_WORKERS)
+    post_pool = ThreadPoolExecutor(max_workers=config.POST_PROCESS_WORKERS)
     _pending = set()
 
     def post_process(job):
