@@ -237,6 +237,9 @@ video_convert/
 # Simple: input = output = cache
 movies = /mnt/media/movies
 
+# Separate output (cache defaults to output)
+series = /mnt/media/series, /mnt/out/series
+
 # Per-directory: separate output and cache
 shows = /mnt/media/shows, /mnt/out/shows, /mnt/cache
 

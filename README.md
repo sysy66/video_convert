@@ -33,8 +33,9 @@ cd video_convert
 #    template is written, so don't use it for this step), then fill in your
 #    media paths.
 python3 main.py
-# 每行一个库：名称 = 输入[, 输出[, 缓存]]。输出/缓存省略时与输入相同。
+# 每行一个库：名称 = 输入[, 输出[, 缓存]]。输出省略时默认与输入相同；缓存省略时默认与输出相同。
 #   movies = /mnt/movies
+#   series = /mnt/series, /mnt/series_out
 #   shows  = /mnt/shows, /mnt/out, /mnt/cache
 # 优先级：--library CLI 参数 > libraries.conf > (无内置默认)
 

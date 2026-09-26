@@ -16,7 +16,7 @@ import os
 #   # 名称 = 输入[, 输出[, 缓存]]
 #   movies = /mnt/movies
 #   shows  = /mnt/shows, /mnt/out, /mnt/cache
-# 输出/缓存省略时与输入相同；以 # 开头的行是注释。
+# 输出省略时默认与输入相同；缓存省略时默认与输出相同；以 # 开头的行是注释。
 # Libraries are read from libraries.conf in the project root (one per line),
 # so users never edit source. Format: name = input[, output[, cache]].
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,22 +27,26 @@ LIBRARIES_CONF_TEMPLATE = """\
 #
 # 格式：名称 = 输入[, 输出[, 缓存]]
 # Format: name = input[, output[, cache]]
-# 输出/缓存省略时与输入相同；以 # 开头的行是注释。
-# output/cache default to input when omitted; lines starting with # are comments.
+# 输出省略时默认与输入相同；缓存省略时默认与输出相同。以 # 开头的行是注释。
+# output defaults to input when omitted; cache defaults to output when omitted.
+# Lines starting with # are comments.
 #
 # 示例 / Examples:
 # movies = /mnt/movies
+# series = /mnt/series, /mnt/series_out
 # shows  = /mnt/shows, /mnt/out, /mnt/cache
 """
 
 
 def _normalize_libraries(raw):
-    """把两种外部表示（纯字符串或 {input, output, cache} 字典）统一为完整字段。
-    纯字符串表示 input=output=cache；字典缺失的字段默认与 input 相同。
+    """把外部表示（纯字符串或 {input, output, cache} 字典）统一为完整字段。
+    纯字符串表示 input=output=cache；字典中 output 省略时默认与 input 相同，
+    cache 省略时默认与 output 相同。
 
-    Normalize both external representations (a plain string or an
+    Normalize external representations (a plain string or an
     {input, output, cache} dict) into a complete field set. A plain string means
-    input=output=cache; missing dict fields default to the input value.
+    input=output=cache; missing output defaults to input, missing cache defaults
+    to output.
     """
     normalized = {}
     for name, value in raw.items():
@@ -50,10 +54,11 @@ def _normalize_libraries(raw):
             normalized[name] = {"input": value, "output": value, "cache": value}
         elif isinstance(value, dict):
             inp = value["input"]
+            outp = value.get("output", inp)
             normalized[name] = {
                 "input": inp,
-                "output": value.get("output", inp),
-                "cache": value.get("cache", inp),
+                "output": outp,
+                "cache": value.get("cache", outp),
             }
         else:
             raise TypeError(f"Invalid LIBRARIES entry for {name}: {value!r}")
@@ -67,15 +72,18 @@ def _parse_library_value(name, value):
     only) or an {input, output, cache} dict.
     """
     parts = [p.strip() for p in value.split(",")]
+    if len(parts) not in (1, 2, 3):
+        raise ValueError(
+            f"Library [{name}]: invalid value {value!r}; "
+            "expected PATH, input,output, or input,output,cache"
+        )
+    if not all(parts):
+        raise ValueError(f"Library [{name}]: empty path in {value!r}")
     if len(parts) == 1:
-        if not parts[0]:
-            raise ValueError(f"Library [{name}]: empty path")
         return parts[0]
-    if len(parts) == 3 and all(parts):
-        return {"input": parts[0], "output": parts[1], "cache": parts[2]}
-    raise ValueError(
-        f"Library [{name}]: invalid value {value!r}; expected PATH or input,output,cache"
-    )
+    if len(parts) == 2:
+        return {"input": parts[0], "output": parts[1]}
+    return {"input": parts[0], "output": parts[1], "cache": parts[2]}
 
 
 def load_libraries_from_conf(path=None):

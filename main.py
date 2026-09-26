@@ -203,20 +203,38 @@ def _apply_cli_overrides():
         for lib_def in args.libraries:
             if "=" not in lib_def:
                 print(
-                    f"error: --library must be NAME=PATH or NAME=input:output:cache, got {lib_def!r}"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
+                    f"error: --library must be NAME=PATH, NAME=input:output, or NAME=input:output:cache, got {lib_def!r}"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
                 )
                 sys.exit(1)
             name, rest = lib_def.split("=", 1)
-            parts = rest.split(":")
-            if len(parts) == 1:
-                raw[name] = parts[0]
-            elif len(parts) == 3:
-                raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
-            else:
+            name = name.strip()
+            if not name:
                 print(
-                    f"error: invalid library format {lib_def!r}; use NAME=PATH or NAME=input:output:cache"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
+                    f"error: invalid library format {lib_def!r}; library name cannot be empty"
                 )
                 sys.exit(1)
+            parts = [p.strip() for p in rest.split(":")]
+            # 1. 结构段数校验：仅支持 1、2 或 3 段格式；超出范围（如 4 段）直接在此拦截，
+            # 避免绕入下游非空校验或映射分支
+            if len(parts) not in (1, 2, 3):
+                print(
+                    f"error: invalid library format {lib_def!r}; use NAME=PATH, NAME=input:output, or NAME=input:output:cache"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
+                )
+                sys.exit(1)
+            # 2. 内容非空校验：段数合法后，确保每个路径字段均非空
+            # （防 "lib1=:"、"lib1=in::cache"、纯空白字段等）
+            if not all(parts):
+                print(
+                    f"error: invalid library format {lib_def!r}; path components cannot be empty"
+                )
+                sys.exit(1)
+
+            if len(parts) == 1:
+                raw[name] = parts[0]
+            elif len(parts) == 2:
+                raw[name] = {"input": parts[0], "output": parts[1]}
+            else:
+                raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
         config._LIBRARIES_RAW = raw
         config.LIBRARIES = config._normalize_libraries(raw)
 

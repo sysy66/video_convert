@@ -263,6 +263,14 @@ class TestCliOverridesLibraries:
             "lib1": {"input": "/mnt/lib1", "output": "/mnt/lib1", "cache": "/mnt/lib1"}
         }
 
+    def test_two_part_path(self):
+        """两段路径（NAME=in:out）应分别解析 input/output，cache 默认设为 output。"""
+        with patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out"]):
+            main._apply_cli_overrides()
+        assert config.LIBRARIES == {
+            "lib1": {"input": "/mnt/in", "output": "/mnt/out", "cache": "/mnt/out"}
+        }
+
     def test_three_part_path(self):
         """三段路径（NAME=in:out:cache）应分别解析 input/output/cache。"""
         with patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out:/mnt/cache"]):
@@ -288,9 +296,50 @@ class TestCliOverridesLibraries:
         mock_exit.assert_called_once_with(1)
 
     def test_invalid_parts_exits(self):
-        """路径段数非法（既非 1 也非 3）的库定义应调用 sys.exit(1)。"""
+        """路径段数非法（非 1、2 或 3 段）的库定义应调用 sys.exit(1)。"""
         with (
-            patch.object(sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out"]),
+            patch.object(
+                sys, "argv", ["main", "--library", "lib1=/mnt/in:/mnt/out:/mnt/cache:/mnt/extra"]
+            ),
+            patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
+            pytest.raises(SystemExit),
+        ):
+            main._apply_cli_overrides()
+        mock_exit.assert_called_once_with(1)
+
+    def test_whitespace_around_entries_stripped(self):
+        """防御性测试：用户在带引号传参时（如 --library "lib1= /mnt/in" 或首尾含空格），
+        库名和路径两端的空格应被自动去除。"""
+        # 1. 真实场景：等号后带有空格的传参
+        with patch.object(sys, "argv", ["main", "--library", "lib1= /mnt/in"]):
+            main._apply_cli_overrides()
+        assert config.LIBRARIES == {
+            "lib1": {"input": "/mnt/in", "output": "/mnt/in", "cache": "/mnt/in"}
+        }
+
+        # 2. 防御性场景：两端含空格以及冒号两侧含空格的完整多段输入
+        with patch.object(sys, "argv", ["main", "--library", " lib2 = /mnt/in : /mnt/out "]):
+            main._apply_cli_overrides()
+        assert config.LIBRARIES["lib2"] == {
+            "input": "/mnt/in", "output": "/mnt/out", "cache": "/mnt/out"
+        }
+
+    @pytest.mark.parametrize(
+        "bad_lib",
+        [
+            "=path",
+            "   =path",
+            "lib1=:",
+            "lib1=/mnt/in:",
+            "lib1 = /mnt/in :   ",
+            "lib1=:/mnt/out",
+            "lib1=/mnt/in::/mnt/cache",
+        ],
+    )
+    def test_empty_components_exit(self, bad_lib):
+        """库名或路径为空分段（包括纯空白）时应调用 sys.exit(1)。"""
+        with (
+            patch.object(sys, "argv", ["main", "--library", bad_lib]),
             patch("main.sys.exit", side_effect=SystemExit) as mock_exit,
             pytest.raises(SystemExit),
         ):
