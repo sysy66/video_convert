@@ -65,3 +65,4 @@ src/
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed setup, configuration reference, and troubleshooting.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for development roadmap and known issues.
+See [docs/ARCHITECTURE_PLAN.md](docs/ARCHITECTURE_PLAN.md) for the target architecture and phased migration plan.

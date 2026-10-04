@@ -1,5 +1,7 @@
 # Roadmap / 开发路线图
 
+> 目标架构与分阶段实施路径见 [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md)。
+
 ## ✔ v1.0 — Core Stable (已发布)
 
 - [x] **Intel QSV hardware encoding** (`hevc_qsv`, main10) with automatic software-scale fallback
@@ -86,6 +88,8 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 
 ## ◐ v1.7 — 稳定性、调度与质量策略
 
+各条目对应的架构组件与实施阶段（A–F）见 [ARCHITECTURE_PLAN.md §5–6](ARCHITECTURE_PLAN.md#5-v17-条目--架构落点)。
+
 - [ ] **VMAF 子进程可中断** — 将转码、VMAF 和 ffprobe 子进程纳入统一进程守卫；关停时及时终止子进程，避免等待整个超时时间
 - [ ] **输出原子落盘与并发冲突保护** — 目标文件名保留、临时文件复制和最终提交保持原子性，避免同名任务互相覆盖或留下半成品
 - [ ] **转码产物完整性检查** — 落盘前用 ffprobe 检查文件可读性、视频流和附属流，校验位深、像素格式及基本流信息
@@ -97,7 +101,49 @@ See [TEST_PLAN.md](TEST_PLAN.md) for the detailed phased plan.
 - [ ] **按媒体库配置编码策略** — 允许不同媒体库分别配置编码器、质量参数、音频策略和 VMAF 阈值
 - [ ] **运行控制与可观测性** — 增加单次扫描、试运行、队列状态和失败记录查询；日志补充活动任务、排队数量和阶段耗时
 - [ ] **故障注入和文档同步** — 覆盖关停中断、VMAF 超时、输出冲突、源文件消失和网络存储失败；清理路线图及安装文档中的退役状态和旧流程说明
-- [ ] **可选：智能码率（ab-av1）** — 根据目标 VMAF 分数（全平台默认 93）自动测算最佳压制参数，支持 **10-bit** 深度；不作为 v1.7 完成条件
+- [ ] **可选：智能码率（ab-av1）** — 根据目标 VMAF 分数（全平台默认 93）自动测算最佳压制参数，支持 **10-bit** 深度；不作为 v1.7 完成条件（v1.7 未完成则并入 v1.8“目标 VMAF 参数搜索”）
+
+---
+
+## 🗺 v1.8 — 编码决策前移（规划中）
+
+详见 [ARCHITECTURE_PLAN.md §7.2](ARCHITECTURE_PLAN.md#72-v18--编码决策前移pre-flight--smart-encoding)。
+
+- [ ] **抽样预检（pre-flight）** — 正式转码前抽样编码 + 打分，预测 verdict，明显会被 reject 的文件不再全片转码
+- [ ] **目标 VMAF 参数搜索** — 承接 v1.7 的“可选：ab-av1”：在抽样片段上搜索满足目标 VMAF 的 QSV `quality`
+- [ ] **分辨率分档参数** — 按 ≤720p / 1080p / 2160p 分档设置编码参数
+- [ ] **HDR / 色彩元数据保真** — HDR10 / HLG 元数据透传，Dolby Vision 按库 `skip` / `strip`，verify 校验色彩字段
+- [ ] **编码 profile 版本化** — history 记录 `profile_id`，为存量重评估做准备
+- [ ] **转码参数可回放** — history 记录实际执行的命令摘要与降级路径
+
+---
+
+## 🗺 v1.9 — 生态集成与安全运维（规划中）
+
+详见 [ARCHITECTURE_PLAN.md §7.3](ARCHITECTURE_PLAN.md#73-v19--生态集成与安全运维integration--safe-operations)。
+
+- [ ] **源文件回收站** — ACCEPT 后源文件移入 `trash`，保留期内可恢复（优先实现）
+- [ ] **媒体服务器联动** — 落盘后刷新 Jellyfin / Emby / Plex 媒体库；可选：播放中延迟替换
+- [ ] **通知** — webhook / ntfy / Telegram：failed、连续 reject、每日摘要
+- [ ] **指标导出** — Prometheus `/metrics` 或 textfile
+- [ ] **运行时间窗与资源感知** — 按时段派发任务；磁盘余量不足时暂停
+- [ ] **部署形态** — systemd（notify + watchdog）与 Docker 镜像
+- [ ] **多 GPU / 设备选择** — 按库或按 worker 指定 render 设备
+
+---
+
+## 🗺 v1.10 — 数据驱动与存量治理（规划中）
+
+详见 [ARCHITECTURE_PLAN.md §7.4](ARCHITECTURE_PLAN.md#74-v110--数据驱动与存量治理data--backlog)。
+
+- [ ] **统计报表 CLI** — 节省空间、accept 率、按编码 / 分辨率 / profile 分组的 VMAF 与 ratio
+- [ ] **`ai_analyze` 改用结构化输入** — 以报表 JSON 代替原始日志作为 LLM 输入
+- [ ] **阈值回放模拟** — 用历史数据评估新阈值的效果
+- [ ] **rejected 存量重评估** — profile 或阈值变化后，重新入队源文件仍在的临界 rejected 记录
+- [ ] **history 归档与维护** — 归档旧终态记录、清理事件、定期备份
+- [ ] **配置变更审计** — 记录每次启动生效配置的差异
+
+> v1.10 之后设一个决策点：建议 v3.0（API / Web）先于 v2.0（Go 移植），理由与 v2.0 立项条件见 [ARCHITECTURE_PLAN.md §7.5](ARCHITECTURE_PLAN.md#75-v1x-收尾v20--v30-决策点)。
 
 ---
 
