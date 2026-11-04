@@ -455,9 +455,11 @@ def main_loop():
                     break
                 time.sleep(1)
     finally:
-        # 优雅关闭：等待运行中的转码完成，取消排队未启动的任务（下次启动重新扫描）。
-        # Graceful shutdown: let running transcodes finish, cancel queued ones
-        # (they are re-discovered on next startup).
+        # 优雅关闭：先终止正在运行的 ffmpeg/VMAF 子进程，使阻塞在子进程上的 worker 线程迅速解开，
+        # 随后等待运行中的任务线程退出并取消队列中未启动的任务（下次启动重新扫描）。
+        # Graceful shutdown: terminate running ffmpeg child processes first to unblock
+        # worker threads, then wait for running task threads to exit and cancel queued ones.
+        kill_active_ffmpeg()
         transcode_pool.shutdown(wait=True, cancel_futures=True)
         post_pool.shutdown(wait=True, cancel_futures=True)
 

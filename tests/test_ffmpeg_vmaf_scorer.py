@@ -133,12 +133,10 @@ class TestRunVmaf:
         log_path = tmp_path / "out.json"
         scorer = _make_scorer(tmp_path)
 
-        result = MagicMock()
-        result.returncode = 0
-        result.stderr = b""
-        result.stdout = b""
+        mock_proc = MagicMock(returncode=0, pid=101)
+        mock_proc.communicate.return_value = (b"", b"")
         with (
-            patch("subprocess.run", return_value=result),
+            patch("subprocess.Popen", return_value=mock_proc),
             patch(
                 "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(94.0, 90.0),
@@ -155,12 +153,10 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer()
 
-        result = MagicMock()
-        result.returncode = 0
-        result.stderr = b"VMAF score: 88.5"
-        result.stdout = b""
+        mock_proc = MagicMock(returncode=0, pid=102)
+        mock_proc.communicate.return_value = (b"", b"VMAF score: 88.5")
         with (
-            patch("subprocess.run", return_value=result),
+            patch("subprocess.Popen", return_value=mock_proc),
             patch(
                 "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
@@ -176,9 +172,9 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer()
 
-        result = MagicMock()
-        result.returncode = 1
-        with patch("subprocess.run", return_value=result):
+        mock_proc = MagicMock(returncode=1, pid=103)
+        mock_proc.communicate.return_value = (b"", b"")
+        with patch("subprocess.Popen", return_value=mock_proc):
             score = self._run(scorer, ref, dist, None, ref_frame_count=1, dist_frame_count=1)
         assert score is None
 
@@ -190,13 +186,11 @@ class TestRunVmaf:
         log_path = tmp_path / "out.json"
         scorer = _make_scorer(tmp_path)
 
-        result = MagicMock()
-        result.returncode = 0
-        result.stderr = b""
-        result.stdout = b""
+        mock_proc = MagicMock(returncode=0, pid=104)
+        mock_proc.communicate.return_value = (b"", b"")
         with (
             patch.object(scorer, "_hw_download_format", return_value="nv12"),
-            patch("subprocess.run", return_value=result) as mock_run,
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
             patch(
                 "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
@@ -206,7 +200,7 @@ class TestRunVmaf:
                 scorer, ref, dist, log_path, hwaccel=True, ref_frame_count=1, dist_frame_count=1
             )
 
-        call_args = mock_run.call_args[0][0]
+        call_args = mock_popen.call_args[0][0]
         filter_idx = call_args.index("-filter_complex")
         assert "hwdownload" in call_args[filter_idx + 1]
         assert "-hwaccel" in call_args
@@ -220,9 +214,11 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer()
 
-        with patch("subprocess.run") as mock_run:
+        mock_proc = MagicMock(returncode=0, pid=105)
+        mock_proc.communicate.return_value = (b"", b"")
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
             self._run(scorer, ref, dist, None, ref_frame_count=10000, dist_frame_count=10200)
-        mock_run.assert_called()
+        mock_popen.assert_called()
 
     def test_scores_when_counts_unavailable(self, tmp_path):
         """任一帧数不可得（None）不再阻断打分：仍调用 ffmpeg。"""
@@ -232,9 +228,11 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer()
 
-        with patch("subprocess.run") as mock_run:
+        mock_proc = MagicMock(returncode=0, pid=106)
+        mock_proc.communicate.return_value = (b"", b"")
+        with patch("subprocess.Popen", return_value=mock_proc) as mock_popen:
             self._run(scorer, ref, dist, None, ref_frame_count=None, dist_frame_count=1826)
-        mock_run.assert_called()
+        mock_popen.assert_called()
 
     def test_libvmaf_opts_pin_fqm_framesync_semantics(self, tmp_path):
         """libvmaf opts 恒带 shortest=1:repeatlast=0（与 ffmpeg-quality-metrics
@@ -245,9 +243,10 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer()
 
-        result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_proc = MagicMock(returncode=0, pid=107)
+        mock_proc.communicate.return_value = (b"", b"")
         with (
-            patch("subprocess.run", return_value=result) as mock_run,
+            patch("subprocess.Popen", return_value=mock_proc) as mock_popen,
             patch(
                 "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(None, None),
@@ -255,7 +254,7 @@ class TestRunVmaf:
         ):
             self._run(scorer, ref, dist, None, ref_frame_count=1, dist_frame_count=1)
 
-        call_args = mock_run.call_args[0][0]
+        call_args = mock_popen.call_args[0][0]
         fc = call_args[call_args.index("-filter_complex") + 1]
         assert "shortest=1:repeatlast=0" in fc
 
@@ -266,9 +265,10 @@ class TestRunVmaf:
         dist.write_text("x")
         scorer = _make_scorer(vmaf_timeout=1234)
 
-        result = MagicMock(returncode=0, stderr=b"", stdout=b"")
+        mock_proc = MagicMock(returncode=0, pid=108)
+        mock_proc.communicate.return_value = (b"", b"")
         with (
-            patch("subprocess.run", return_value=result) as mock_run,
+            patch("subprocess.Popen", return_value=mock_proc),
             patch(
                 "src.media.ffmpeg_vmaf_scorer.FfmpegVMAFScorer._read_vmaf_from_json",
                 return_value=(94.0, 90.0),
@@ -283,7 +283,7 @@ class TestRunVmaf:
                 dist_frame_count=1,
             )
 
-        assert mock_run.call_args[1]["timeout"] == 1234
+        assert mock_proc.communicate.call_args[1]["timeout"] == 1234
 
 
 class TestComputeVmaf:

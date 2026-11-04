@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from src.media.probe import VideoProbe
+from src.runtime.process_guard import register_ffmpeg_pid, unregister_ffmpeg_pid
 
 log = __import__("logging").getLogger(__name__)
 
@@ -200,37 +201,51 @@ class FfmpegVMAFScorer:
 
         tag = "HW" if hwaccel else "SW"
 
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        register_ffmpeg_pid(proc.pid)
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=self.timeout)
-            if result.returncode != 0:
-                log.warning(
-                    "VMAF [%s] failed (rc=%d) for %s",
-                    tag,
-                    result.returncode,
-                    os.path.basename(str(dist_path)),
-                )
-                return None
+            stdout, stderr = proc.communicate(timeout=self.timeout)
+            result_rc = proc.returncode
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            unregister_ffmpeg_pid(proc.pid)
+            log.warning("VMAF [%s] timed out for %s", tag, os.path.basename(str(dist_path)))
+            return None
+        except Exception as e:
+            unregister_ffmpeg_pid(proc.pid)
+            log.warning("VMAF [%s] failed for %s: %s", tag, os.path.basename(str(dist_path)), e)
+            return None
+        finally:
+            unregister_ffmpeg_pid(proc.pid)
 
-            # 分数唯一来源是 libvmaf json 日志的 pooled_metrics.vmaf.mean，
-            # stderr 不参与取分。
-            # The only score source is pooled_metrics.vmaf.mean from the libvmaf
-            # json log; stderr is never parsed for scoring.
-            if log_path is not None:
-                mean, _minimum = self._read_vmaf_from_json(log_path)
-                if mean is not None:
-                    return mean
-
+        if result_rc != 0:
             log.warning(
-                "VMAF [%s] score not found in json log for %s",
+                "VMAF [%s] failed (rc=%d) for %s",
                 tag,
+                result_rc,
                 os.path.basename(str(dist_path)),
             )
             return None
-        except subprocess.TimeoutExpired:
-            log.warning("VMAF [%s] timed out for %s", tag, os.path.basename(str(dist_path)))
-        except Exception as e:
-            log.warning("VMAF [%s] failed for %s: %s", tag, os.path.basename(str(dist_path)), e)
 
+        # 分数唯一来源是 libvmaf json 日志的 pooled_metrics.vmaf.mean，
+        # stderr 不参与取分。
+        # The only score source is pooled_metrics.vmaf.mean from the libvmaf
+        # json log; stderr is never parsed for scoring.
+        if log_path is not None:
+            mean, _minimum = self._read_vmaf_from_json(log_path)
+            if mean is not None:
+                return mean
+
+        log.warning(
+            "VMAF [%s] score not found in json log for %s",
+            tag,
+            os.path.basename(str(dist_path)),
+        )
         return None
 
     def compute_vmaf(
