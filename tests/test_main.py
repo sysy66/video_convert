@@ -321,7 +321,9 @@ class TestCliOverridesLibraries:
         with patch.object(sys, "argv", ["main", "--library", " lib2 = /mnt/in : /mnt/out "]):
             main._apply_cli_overrides()
         assert config.LIBRARIES["lib2"] == {
-            "input": "/mnt/in", "output": "/mnt/out", "cache": "/mnt/out"
+            "input": "/mnt/in",
+            "output": "/mnt/out",
+            "cache": "/mnt/out",
         }
 
     @pytest.mark.parametrize(

@@ -129,29 +129,42 @@ codec 命中 SKIP_CODECS ──▶ not required
 
 ```python
 @dataclass(frozen=True)
-class EncodingProfile:      # 取代 VIDEO_ENCODER + ENCODER_PARAMS + AUDIO_* 全局量
-    encoder: str            # av1 | hevc
+class EncodingProfile:  # 取代 VIDEO_ENCODER + ENCODER_PARAMS + AUDIO_* 全局量
+    encoder: str  # av1 | hevc
     params: Mapping[str, str]
-    audio_codec: str; audio_bitrate: str; audio_passthrough: frozenset[str]
-    keep_subtitles: bool; keep_attachments: bool
+    audio_codec: str
+    audio_bitrate: str
+    audio_passthrough: frozenset[str]
+    keep_subtitles: bool
+    keep_attachments: bool
+
 
 @dataclass(frozen=True)
-class QualityPolicy:        # 取代 VMAF_* / ACCEPT_RATIO_* / KEEP_TARGET
+class QualityPolicy:  # 取代 VMAF_* / ACCEPT_RATIO_* / KEEP_TARGET
     vmaf_mode: Literal["off", "sync", "async"]
-    accept_high: float; accept_low: float; extreme_low: float
-    ratio_max: float; ratio_low: float
+    accept_high: float
+    accept_low: float
+    extreme_low: float
+    ratio_max: float
+    ratio_low: float
     keep_target: bool
+
 
 @dataclass(frozen=True)
 class LibraryProfile:
-    name: str; input: Path; output: Path; cache: Path
-    encoding: EncodingProfile; quality: QualityPolicy
+    name: str
+    input: Path
+    output: Path
+    cache: Path
+    encoding: EncodingProfile
+    quality: QualityPolicy
     skip_codecs: frozenset[str]
+
 
 @dataclass(frozen=True)
 class Settings:
     libraries: tuple[LibraryProfile, ...]
-    runtime: RuntimeSettings      # 并发、超时、扫描间隔、路径
+    runtime: RuntimeSettings  # 并发、超时、扫描间隔、路径
 ```
 
 - `libraries.conf` 保持现有单行语法向后兼容；新增可选的分节语法（`[movies]` + `key = value`）承载按库覆盖项，未覆盖项继承全局默认。
@@ -210,9 +223,14 @@ Recovery ──offer(job)─▶ │ inflight: set[key]（去重）          │
 
 ```python
 class ProcessRunner(Protocol):
-    def run(self, cmd: Sequence[str], *, timeout: float | None,
-            on_stderr_line: Callable[[str], None] | None = None,
-            cancel: CancelToken) -> ProcessResult: ...
+    def run(
+        self,
+        cmd: Sequence[str],
+        *,
+        timeout: float | None,
+        on_stderr_line: Callable[[str], None] | None = None,
+        cancel: CancelToken,
+    ) -> ProcessResult: ...
 ```
 
 - 唯一实现基于 `Popen`：登记 PID → 读取 stderr（可选逐行回调，用于转码进度）→ 轮询 `cancel` 与超时 → SIGTERM → 宽限期 → SIGKILL。
@@ -249,11 +267,11 @@ class ProcessRunner(Protocol):
 
 ```python
 class ErrorKind(Enum):
-    TRANSIENT       # 超时、NFS I/O 错误、设备忙 → 指数退避重试
-    INPUT_CORRUPT   # 解码失败、probe 失败 → 不自动重试
+    TRANSIENT  # 超时、NFS I/O 错误、设备忙 → 指数退避重试
+    INPUT_CORRUPT  # 解码失败、probe 失败 → 不自动重试
     OUTPUT_INVALID  # verify 不通过 → 有限次重试（可能换降级路径）
-    CONFIG          # 编码器不可用、路径无权限 → 不重试，启动/首次即告警
-    INTERRUPTED     # 关停打断 → 不写终态
+    CONFIG  # 编码器不可用、路径无权限 → 不重试，启动/首次即告警
+    INTERRUPTED  # 关停打断 → 不写终态
 ```
 
 - 分类器集中在一处：基于异常类型 + ffmpeg stderr 特征（复用 `_summarize_error_stderr` 的已有知识）。

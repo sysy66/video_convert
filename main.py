@@ -209,9 +209,7 @@ def _apply_cli_overrides():
             name, rest = lib_def.split("=", 1)
             name = name.strip()
             if not name:
-                print(
-                    f"error: invalid library format {lib_def!r}; library name cannot be empty"
-                )
+                print(f"error: invalid library format {lib_def!r}; library name cannot be empty")
                 sys.exit(1)
             parts = [p.strip() for p in rest.split(":")]
             # 1. 结构段数校验：仅支持 1、2 或 3 段格式；超出范围（如 4 段）直接在此拦截，
@@ -224,9 +222,7 @@ def _apply_cli_overrides():
             # 2. 内容非空校验：段数合法后，确保每个路径字段均非空
             # （防 "lib1=:"、"lib1=in::cache"、纯空白字段等）
             if not all(parts):
-                print(
-                    f"error: invalid library format {lib_def!r}; path components cannot be empty"
-                )
+                print(f"error: invalid library format {lib_def!r}; path components cannot be empty")
                 sys.exit(1)
 
             if len(parts) == 1:
