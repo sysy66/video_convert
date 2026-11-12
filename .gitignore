@@ -17,4 +17,9 @@ libraries.conf
 *.egg-info/*
 
 .coverage
-.context/
+# Hub/Spoke 任务规范：模板、待办与归档入库；TASK_ACTIVE.md 是流转中的工作副本，不入库
+.context/*
+!.context/TEMPLATE.md
+!.context/backlog/
+!.context/archive/
+.junie/
