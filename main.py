@@ -19,6 +19,7 @@ from pathlib import Path
 from src import config
 from src.application.pipeline import TranscodePipeline
 from src.application.post_process import recover_pending_postprocess, resume_pending_postprocess
+from src.config import parse_cli_libraries
 from src.ingest.filter import should_process, should_submit
 from src.ingest.walker import walk_directory
 from src.media.ffmpeg_vmaf_scorer import FfmpegVMAFScorer
@@ -61,11 +62,8 @@ def _setup_logging():
     )
 
 
-def _apply_cli_overrides():
-    """解析命令行参数并用其覆盖配置中的对应项。
-
-    Parse CLI arguments and apply them as overrides to the runtime configuration.
-    """
+def _parse_args(argv=None):
+    """解析命令行参数，返回 argparse.Namespace。只做 argparse，不写全局变量。"""
     parser = argparse.ArgumentParser(description="Video Transcoder")
     parser.add_argument(
         "-L",
@@ -154,86 +152,26 @@ def _apply_cli_overrides():
         action="store_true",
         help="Retry failed transcodes entries",
     )
+    return parser.parse_args(argv)
 
-    args = parser.parse_args()
 
-    if args.log:
-        config.LOG_FILE = args.log
-    if args.history:
-        config.HISTORY_FILE = args.history
-    if args.ffmpeg:
-        config.FFMPEG_PATH = args.ffmpeg
-    if args.ffprobe:
-        config.FFPROBE_PATH = args.ffprobe
-    if args.scan_interval is not None:
-        config.SCAN_INTERVAL = args.scan_interval
-    if args.max_workers is not None:
-        config.MAX_WORKERS = args.max_workers
-    if args.codec_timeout is not None:
-        config.CODEC_TIMEOUT = args.codec_timeout
-    if args.vmaf_timeout is not None:
-        config.VMAF_TIMEOUT = args.vmaf_timeout
-    if args.encoder:
-        config.VIDEO_ENCODER = args.encoder
-    config.SKIP_CODECS.add(config.VIDEO_ENCODER)
-    if args.skip_codecs:
-        config.SKIP_CODECS.update(args.skip_codecs)
-    if args.vmaf_ffmpeg:
-        config.VMAF_FFMPEG_PATH = args.vmaf_ffmpeg
-    if args.vmaf_model:
-        config.VMAF_MODEL_PATH = args.vmaf_model
-    if args.vmaf is not None:
-        config.VMAF_MODE = args.vmaf
-    if args.no_vmaf_hwaccel:
-        config.VMAF_HWACCEL = False
-    if args.no_vmaf_hw_fallback:
-        config.VMAF_HW_FALLBACK = False
-    if args.keep_source:
-        config.KEEP_SOURCE = True
-    if args.keep_target:
-        config.KEEP_TARGET = True
-    if args.vmaf_threads is not None:
-        config.VMAF_N_THREADS = args.vmaf_threads
-    if args.post_process_workers is not None:
-        config.POST_PROCESS_WORKERS = args.post_process_workers
-    if args.retry_failed:
-        config.RETRY_FAILED = True
+def _apply_cli_overrides(argv=None):
+    """过渡兼容包装：解析 → build_settings → apply_legacy_globals。
+
+    # TODO(v1.7-settings-05): remove, callers switch to build_settings directly
+    """
+    args = _parse_args(argv)
+    # --library 错误处理
     if args.libraries:
-        raw = {}
-        for lib_def in args.libraries:
-            if "=" not in lib_def:
-                print(
-                    f"error: --library must be NAME=PATH, NAME=input:output, or NAME=input:output:cache, got {lib_def!r}"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
-                )
-                sys.exit(1)
-            name, rest = lib_def.split("=", 1)
-            name = name.strip()
-            if not name:
-                print(f"error: invalid library format {lib_def!r}; library name cannot be empty")
-                sys.exit(1)
-            parts = [p.strip() for p in rest.split(":")]
-            # 1. 结构段数校验：仅支持 1、2 或 3 段格式；超出范围（如 4 段）直接在此拦截，
-            # 避免绕入下游非空校验或映射分支
-            if len(parts) not in (1, 2, 3):
-                print(
-                    f"error: invalid library format {lib_def!r}; use NAME=PATH, NAME=input:output, or NAME=input:output:cache"  # noqa: E501  # 用户可见错误信息，保留单行便于阅读
-                )
-                sys.exit(1)
-            # 2. 内容非空校验：段数合法后，确保每个路径字段均非空
-            # （防 "lib1=:"、"lib1=in::cache"、纯空白字段等）
-            if not all(parts):
-                print(f"error: invalid library format {lib_def!r}; path components cannot be empty")
-                sys.exit(1)
-
-            if len(parts) == 1:
-                raw[name] = parts[0]
-            elif len(parts) == 2:
-                raw[name] = {"input": parts[0], "output": parts[1]}
-            else:
-                raw[name] = {"input": parts[0], "output": parts[1], "cache": parts[2]}
-        config._LIBRARIES_RAW = raw
-        config.LIBRARIES = config._normalize_libraries(raw)
-
+        try:
+            libraries_raw = parse_cli_libraries(args.libraries)
+        except ValueError as e:
+            print(str(e))
+            sys.exit(1)
+    else:
+        libraries_raw = None
+    settings = config.build_settings(args, libraries_raw=libraries_raw)
+    config.apply_legacy_globals(settings)
     return args
 
 

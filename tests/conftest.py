@@ -186,3 +186,45 @@ def make_video_tree(tmp_path):
         return tmp_path
 
     return _make_video_tree
+
+
+@pytest.fixture
+def settings_factory():
+    """工厂 fixture：基于 build_settings() 默认值，用 dataclasses.replace 覆盖子配置。
+
+    Factory fixture: start from build_settings() defaults and override sub-configs
+    with dataclasses.replace, as agreed in ARCHITECTURE_PLAN §9 point 5.
+
+    Usage::
+        def test_foo(settings_factory):
+            s = settings_factory(quality={"vmaf_mode": "sync"})
+    """
+    import dataclasses
+
+    from src.config import build_settings
+    from src.domain.settings import (
+        EncodingProfile,
+        PathsSettings,
+        QualityPolicy,
+        RuntimeSettings,
+    )
+
+    _sub_types = {
+        "paths": PathsSettings,
+        "runtime": RuntimeSettings,
+        "encoding": EncodingProfile,
+        "quality": QualityPolicy,
+    }
+
+    def _factory(**overrides):
+        base = build_settings()
+        sub_overrides = {}
+        for field, changes in overrides.items():
+            if field in _sub_types and isinstance(changes, dict):
+                sub = getattr(base, field)
+                sub_overrides[field] = dataclasses.replace(sub, **changes)
+            else:
+                sub_overrides[field] = changes
+        return dataclasses.replace(base, **sub_overrides)
+
+    return _factory

@@ -144,7 +144,6 @@ class QualityPolicy:  # 取代 VMAF_* / ACCEPT_RATIO_* / KEEP_TARGET
     vmaf_mode: Literal["off", "sync", "async"]
     accept_high: float
     accept_low: float
-    extreme_low: float
     ratio_max: float
     ratio_low: float
     keep_target: bool
@@ -166,6 +165,16 @@ class Settings:
     libraries: tuple[LibraryProfile, ...]
     runtime: RuntimeSettings  # 并发、超时、扫描间隔、路径
 ```
+
+**Phase A 落地说明（2026-11-12）**
+
+- 实际位置与规划一致：`src/domain/settings.py`。
+- 当前为扁平结构：`Settings` 持有全局的 `encoding`/`quality`，各 `LibraryProfile` 仅含路径。
+  已落地类：`Settings`、`PathsSettings`、`RuntimeSettings`、`EncodingProfile`、`QualityPolicy`、`LibraryProfile`；
+  字段名与 `config.py` 常量一一对应（如 `vmaf_accept_high` 对应 `VMAF_ACCEPT_HIGH`）。
+- `LibraryProfile` 内嵌 `encoding`/`quality`/`skip_codecs` 留到 Phase E。
+- VMAF 模式常量（`VMAF_MODE_OFF/SYNC/ASYNC`）现定义于 `src/domain/settings.py`，`config.py` 重新导出。
+- v1.6 起无调用方的废弃常量已从 `config.py` 和文档中清理删除。
 
 - `libraries.conf` 保持现有单行语法向后兼容；新增可选的分节语法（`[movies]` + `key = value`）承载按库覆盖项，未覆盖项继承全局默认。
 - 启动校验（`support/validation.py`）改为校验 `Settings` 对象，并新增**输入目录重叠检测**（一个库的 input 是另一个库 input 的祖先时报错），这是“媒体库边界”条目的前置条件。

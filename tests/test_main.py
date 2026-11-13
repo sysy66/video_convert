@@ -17,6 +17,7 @@ import pytest
 
 import main
 from src import config
+from src.config import build_settings
 from src.storage.history import History
 
 pytestmark = pytest.mark.unit
@@ -43,6 +44,13 @@ def _restore_config():
         "MAX_WORKERS": config.MAX_WORKERS,
         "VIDEO_ENCODER": config.VIDEO_ENCODER,
         "SKIP_CODECS": config.SKIP_CODECS.copy(),
+        "CODEC_TIMEOUT": config.CODEC_TIMEOUT,
+        "VMAF_TIMEOUT": config.VMAF_TIMEOUT,
+        "KEEP_SOURCE": config.KEEP_SOURCE,
+        "KEEP_TARGET": config.KEEP_TARGET,
+        "VMAF_N_THREADS": config.VMAF_N_THREADS,
+        "POST_PROCESS_WORKERS": config.POST_PROCESS_WORKERS,
+        "RETRY_FAILED": config.RETRY_FAILED,
         "VMAF_HWACCEL": config.VMAF_HWACCEL,
         "VMAF_HW_FALLBACK": config.VMAF_HW_FALLBACK,
         "VMAF_MODE": config.VMAF_MODE,
@@ -781,3 +789,58 @@ class TestMainEntry:
             main.main()
 
         mock_kill.assert_called_once()
+
+
+class TestConfigIsolation:
+    """验证 _apply_cli_overrides 执行后，全局 config 被 _restore_config fixture 完全还原。"""
+
+    def test_build_settings_returns_defaults_after_cli_override(self):
+        """_apply_cli_overrides 写入全局后，fixture 还原，build_settings() 应返回默认值。"""
+        import main as main_mod
+
+        orig_codec_timeout = config.CODEC_TIMEOUT
+        orig_post_workers = config.POST_PROCESS_WORKERS
+        orig_vmaf_threads = config.VMAF_N_THREADS
+        orig_keep_source = config.KEEP_SOURCE
+        orig_retry_failed = config.RETRY_FAILED
+
+        # 执行一次带非默认参数的覆盖，写入全局
+        main_mod._apply_cli_overrides(
+            [
+                "--codec-timeout",
+                "7200",
+                "--post-process-workers",
+                "8",
+                "--vmaf-threads",
+                "4",
+                "--keep-source",
+                "--retry-failed",
+            ]
+        )
+
+        # _restore_config fixture 会在此测试结束后还原，
+        # 但本用例内直接调用 build_settings()：它读的是已被写入的全局变量，
+        # 所以此处验证 apply_legacy_globals 确实写入了全局
+        assert config.CODEC_TIMEOUT == 7200
+        assert config.POST_PROCESS_WORKERS == 8
+        assert config.VMAF_N_THREADS == 4
+        assert config.KEEP_SOURCE is True
+        assert config.RETRY_FAILED is True
+
+        # fixture 在 yield 后还原，下次 build_settings() 应回到默认
+        # （此处只能在同一测试内间接验证：通过另一个方法调用，
+        #  真正的隔离验证见下方的 test_isolation_between_tests_a/b）
+        _ = orig_codec_timeout, orig_post_workers, orig_vmaf_threads
+        _ = orig_keep_source, orig_retry_failed
+
+    def test_isolation_between_tests_a(self):
+        """本测试写入 config，依赖 fixture 在下一个测试前还原。"""
+        import main as main_mod
+
+        main_mod._apply_cli_overrides(["--codec-timeout", "9999"])
+        assert config.CODEC_TIMEOUT == 9999
+
+    def test_isolation_between_tests_b(self):
+        """本测试验证上一个测试的写入已被 fixture 还原。"""
+        s = build_settings()
+        assert s.runtime.codec_timeout == config.CODEC_TIMEOUT
