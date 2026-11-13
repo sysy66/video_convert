@@ -6,6 +6,7 @@ handling, orphan-record cleanup, main-loop scheduling (scan/transcode/VMAF
 lifecycle/dedup/shutdown) and the program entry point.
 """
 
+import contextlib
 import signal
 import sys
 import threading
@@ -31,35 +32,49 @@ def _reset_running():
     }
 
 
+# apply_legacy_globals 会写入的全部全局变量（TODO(v1.7-settings-05): 随兼容层一起删除）
+_LEGACY_GLOBALS = (
+    "LOG_FILE",
+    "HISTORY_FILE",
+    "FFMPEG_PATH",
+    "FFPROBE_PATH",
+    "VMAF_FFMPEG_PATH",
+    "VMAF_MODEL_PATH",
+    "SCAN_INTERVAL",
+    "MAX_WORKERS",
+    "VIDEO_ENCODER",
+    "SKIP_CODECS",
+    "CODEC_TIMEOUT",
+    "VMAF_TIMEOUT",
+    "KEEP_SOURCE",
+    "KEEP_TARGET",
+    "VMAF_N_THREADS",
+    "POST_PROCESS_WORKERS",
+    "RETRY_FAILED",
+    "VMAF_HWACCEL",
+    "VMAF_HW_FALLBACK",
+    "VMAF_MODE",
+    "LIBRARIES",
+    "_LIBRARIES_RAW",
+)
+
+
+@contextlib.contextmanager
+def restore_config():
+    """保存并在退出时还原 _LEGACY_GLOBALS（SKIP_CODECS 保存副本，防原地修改）。"""
+    saved = {name: getattr(config, name) for name in _LEGACY_GLOBALS}
+    saved["SKIP_CODECS"] = set(saved["SKIP_CODECS"])
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            setattr(config, name, value)
+
+
 @pytest.fixture(autouse=True)
 def _restore_config():
-    saved = {
-        "LOG_FILE": config.LOG_FILE,
-        "HISTORY_FILE": config.HISTORY_FILE,
-        "FFMPEG_PATH": config.FFMPEG_PATH,
-        "FFPROBE_PATH": config.FFPROBE_PATH,
-        "VMAF_FFMPEG_PATH": config.VMAF_FFMPEG_PATH,
-        "VMAF_MODEL_PATH": config.VMAF_MODEL_PATH,
-        "SCAN_INTERVAL": config.SCAN_INTERVAL,
-        "MAX_WORKERS": config.MAX_WORKERS,
-        "VIDEO_ENCODER": config.VIDEO_ENCODER,
-        "SKIP_CODECS": config.SKIP_CODECS.copy(),
-        "CODEC_TIMEOUT": config.CODEC_TIMEOUT,
-        "VMAF_TIMEOUT": config.VMAF_TIMEOUT,
-        "KEEP_SOURCE": config.KEEP_SOURCE,
-        "KEEP_TARGET": config.KEEP_TARGET,
-        "VMAF_N_THREADS": config.VMAF_N_THREADS,
-        "POST_PROCESS_WORKERS": config.POST_PROCESS_WORKERS,
-        "RETRY_FAILED": config.RETRY_FAILED,
-        "VMAF_HWACCEL": config.VMAF_HWACCEL,
-        "VMAF_HW_FALLBACK": config.VMAF_HW_FALLBACK,
-        "VMAF_MODE": config.VMAF_MODE,
-        "LIBRARIES": config.LIBRARIES,
-        "_LIBRARIES_RAW": config._LIBRARIES_RAW,
-    }
-    yield
-    for name, value in saved.items():
-        setattr(config, name, value)
+    with restore_config():
+        yield
 
 
 class TestSetupLogging:
@@ -792,55 +807,44 @@ class TestMainEntry:
 
 
 class TestConfigIsolation:
-    """验证 _apply_cli_overrides 执行后，全局 config 被 _restore_config fixture 完全还原。"""
+    """验证 restore_config 能完整还原 _apply_cli_overrides 写入的全局变量。"""
 
-    def test_build_settings_returns_defaults_after_cli_override(self):
-        """_apply_cli_overrides 写入全局后，fixture 还原，build_settings() 应返回默认值。"""
-        import main as main_mod
+    def test_apply_legacy_globals_writes_globals(self):
+        with restore_config():
+            main._apply_cli_overrides(
+                ["--codec-timeout", "7200", "--post-process-workers", "8", "--keep-source"]
+            )
+            assert config.CODEC_TIMEOUT == 7200
+            assert config.POST_PROCESS_WORKERS == 8
+            assert config.KEEP_SOURCE is True
 
-        orig_codec_timeout = config.CODEC_TIMEOUT
-        orig_post_workers = config.POST_PROCESS_WORKERS
-        orig_vmaf_threads = config.VMAF_N_THREADS
-        orig_keep_source = config.KEEP_SOURCE
-        orig_retry_failed = config.RETRY_FAILED
-
-        # 执行一次带非默认参数的覆盖，写入全局
-        main_mod._apply_cli_overrides(
-            [
-                "--codec-timeout",
-                "7200",
-                "--post-process-workers",
-                "8",
-                "--vmaf-threads",
-                "4",
-                "--keep-source",
-                "--retry-failed",
-            ]
-        )
-
-        # _restore_config fixture 会在此测试结束后还原，
-        # 但本用例内直接调用 build_settings()：它读的是已被写入的全局变量，
-        # 所以此处验证 apply_legacy_globals 确实写入了全局
-        assert config.CODEC_TIMEOUT == 7200
-        assert config.POST_PROCESS_WORKERS == 8
-        assert config.VMAF_N_THREADS == 4
-        assert config.KEEP_SOURCE is True
-        assert config.RETRY_FAILED is True
-
-        # fixture 在 yield 后还原，下次 build_settings() 应回到默认
-        # （此处只能在同一测试内间接验证：通过另一个方法调用，
-        #  真正的隔离验证见下方的 test_isolation_between_tests_a/b）
-        _ = orig_codec_timeout, orig_post_workers, orig_vmaf_threads
-        _ = orig_keep_source, orig_retry_failed
-
-    def test_isolation_between_tests_a(self):
-        """本测试写入 config，依赖 fixture 在下一个测试前还原。"""
-        import main as main_mod
-
-        main_mod._apply_cli_overrides(["--codec-timeout", "9999"])
-        assert config.CODEC_TIMEOUT == 9999
-
-    def test_isolation_between_tests_b(self):
-        """本测试验证上一个测试的写入已被 fixture 还原。"""
-        s = build_settings()
-        assert s.runtime.codec_timeout == config.CODEC_TIMEOUT
+    def test_build_settings_unchanged_after_restore(self):
+        before = build_settings()
+        with restore_config():
+            main._apply_cli_overrides(
+                [
+                    "--codec-timeout",
+                    "9999",
+                    "--vmaf-timeout",
+                    "1",
+                    "--vmaf-threads",
+                    "4",
+                    "--post-process-workers",
+                    "8",
+                    "--keep-source",
+                    "--keep-target",
+                    "--retry-failed",
+                    "--encoder",
+                    "hevc",
+                    "--skip-codecs",
+                    "vp9",
+                    "--vmaf",
+                    "async",
+                    "--log",
+                    "/tmp/x.log",
+                    "--library",
+                    "iso=/tmp/iso-in:/tmp/iso-out",
+                ]
+            )
+            assert build_settings() != before
+        assert build_settings() == before
