@@ -65,4 +65,4 @@ src/
 
 See [docs/SETUP.md](docs/SETUP.md) for detailed setup, configuration reference, and troubleshooting.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for development roadmap and known issues.
-See [docs/ARCHITECTURE_PLAN.md](docs/ARCHITECTURE_PLAN.md) for the target architecture and phased migration plan.
+See [docs/ARCHITECTURE_PLAN.md](docs/ARCHITECTURE_PLAN.md) for the v1.7 implementation plan, and [AGENTS.md](AGENTS.md) for project scope and contribution rules (for humans and AI assistants alike).
